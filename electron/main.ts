@@ -99,6 +99,62 @@ app.whenReady().then(() => {
     }
   })
 
+  // Write text content to a file
+  ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string) => {
+    try {
+      const { writeFileSync } = await import('fs')
+      writeFileSync(filePath, content, 'utf-8')
+      return { success: true }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error)
+      return { success: false, message: msg }
+    }
+  })
+
+  // Search a directory (and one level of subdirectories) for StartServer64.bat
+  // This helps users who point at a Steam library folder instead of the server root
+  ipcMain.handle('fs:findServerBat', async (_event, dir: string) => {
+    try {
+      const { readdirSync, existsSync, statSync } = await import('fs')
+      const { join } = await import('path')
+      const targets = ['StartServer64.bat', 'ProjectZomboidServer.bat', 'start-server.sh']
+
+      // Check the dir itself first
+      for (const t of targets) {
+        if (existsSync(join(dir, t))) return { success: true, path: dir }
+      }
+
+      // Search one level deep
+      try {
+        const entries = readdirSync(dir)
+        for (const entry of entries) {
+          const sub = join(dir, entry)
+          try {
+            if (statSync(sub).isDirectory()) {
+              for (const t of targets) {
+                if (existsSync(join(sub, t))) return { success: true, path: sub }
+              }
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* skip */ }
+
+      return { success: false, message: 'StartServer64.bat not found in selected directory or immediate subdirectories.' }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error)
+      return { success: false, message: msg }
+    }
+  })
+
+  // Save file dialog
+  ipcMain.handle('dialog:saveFile', async (_event, defaultName: string, filters?: Electron.FileFilter[]) => {
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      defaultPath: defaultName,
+      filters: filters || [{ name: 'All Files', extensions: ['*'] }],
+    })
+    return result.canceled ? null : result.filePath
+  })
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

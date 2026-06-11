@@ -1,12 +1,17 @@
 import { ipcMain, app, BrowserWindow, shell } from 'electron'
 import https from 'https'
+import http from 'http'
 import fs from 'fs'
 import path from 'path'
-import { execSync } from 'child_process'
+import { spawn } from 'child_process'
 
 const GITHUB_OWNER = 'Naftaliro'
 const GITHUB_REPO = 'pz-server-manager'
-const CURRENT_VERSION = app.getVersion()
+
+// Read the version fresh each time from the app — never cache at module load
+function getCurrentVersion(): string {
+  try { return app.getVersion() } catch { return '0.0.0' }
+}
 
 interface GithubRelease {
   tag_name: string
@@ -33,40 +38,96 @@ interface UpdateInfo {
   publishedAt: string
 }
 
-function httpsGetJson(url: string): Promise<unknown> {
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
+
+function httpsGetJson(url: string, redirectCount = 0): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    if (redirectCount > 5) { reject(new Error('Too many redirects')); return }
+
     const options = {
       headers: {
-        'User-Agent': `PZServerManager/${CURRENT_VERSION}`,
+        'User-Agent': `PZServerManager/${getCurrentVersion()}`,
         'Accept': 'application/vnd.github.v3+json',
       },
     }
 
-    const req = https.get(url, options, (res) => {
-      // Follow redirects
-      if ((res.statusCode === 301 || res.statusCode === 302) && res.headers.location) {
-        httpsGetJson(res.headers.location).then(resolve).catch(reject)
+    const lib = url.startsWith('https') ? https : http
+    const req = (lib as typeof https).get(url, options, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode || 0) && res.headers.location) {
+        httpsGetJson(res.headers.location, redirectCount + 1).then(resolve).catch(reject)
         return
       }
       if (res.statusCode !== 200) {
-        reject(new Error(`GitHub API returned ${res.statusCode}`))
+        // Drain the body so the socket can be reused, then reject
+        res.resume()
+        reject(new Error(`GitHub API returned HTTP ${res.statusCode} for ${url}`))
         return
       }
       let data = ''
-      res.on('data', (chunk: Buffer) => { data += chunk })
+      res.on('data', (chunk: Buffer) => { data += chunk.toString() })
       res.on('end', () => {
         try { resolve(JSON.parse(data)) }
-        catch (e) { reject(e) }
+        catch (e) { reject(new Error(`Failed to parse JSON from ${url}: ${(e as Error).message}`)) }
       })
       res.on('error', reject)
     })
     req.on('error', reject)
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Request timed out')) })
+    req.end()
+  })
+}
+
+function downloadFile(
+  url: string,
+  destPath: string,
+  onProgress: (pct: number) => void,
+  redirectCount = 0
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 10) { reject(new Error('Too many redirects during download')); return }
+
+    const lib = url.startsWith('https') ? https : http
+    const req = (lib as typeof https).get(url, {
+      headers: { 'User-Agent': `PZServerManager/${getCurrentVersion()}` }
+    }, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode || 0) && res.headers.location) {
+        res.resume()
+        downloadFile(res.headers.location, destPath, onProgress, redirectCount + 1)
+          .then(resolve).catch(reject)
+        return
+      }
+      if (res.statusCode !== 200) {
+        res.resume()
+        reject(new Error(`Download failed: HTTP ${res.statusCode}`))
+        return
+      }
+
+      const total = parseInt(res.headers['content-length'] || '0', 10)
+      let received = 0
+
+      const file = fs.createWriteStream(destPath)
+      res.on('data', (chunk: Buffer) => {
+        received += chunk.length
+        if (!file.write(chunk)) {
+          res.pause()
+          file.once('drain', () => res.resume())
+        }
+        if (total > 0) onProgress(Math.round((received / total) * 100))
+      })
+      res.on('end', () => {
+        file.end()
+        file.on('finish', resolve)
+        file.on('error', reject)
+      })
+      res.on('error', (err) => { file.destroy(); reject(err) })
+    })
+    req.on('error', reject)
+    req.setTimeout(120000, () => { req.destroy(); reject(new Error('Download timed out')) })
     req.end()
   })
 }
 
 function compareVersions(a: string, b: string): number {
-  // Strip leading 'v'
   const clean = (v: string) => v.replace(/^v/, '').split('.').map(Number)
   const pa = clean(a)
   const pb = clean(b)
@@ -77,156 +138,171 @@ function compareVersions(a: string, b: string): number {
   return 0
 }
 
-function downloadFile(url: string, destPath: string, onProgress: (pct: number) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const doDownload = (downloadUrl: string) => {
-      https.get(downloadUrl, { headers: { 'User-Agent': `PZServerManager/${CURRENT_VERSION}` } }, (res) => {
-        // Follow redirects (GitHub assets redirect to S3)
-        if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307) && res.headers.location) {
-          doDownload(res.headers.location)
-          return
-        }
-        if (res.statusCode !== 200) {
-          reject(new Error(`Download failed with status ${res.statusCode}`))
-          return
-        }
-
-        const total = parseInt(res.headers['content-length'] || '0', 10)
-        let received = 0
-
-        const file = fs.createWriteStream(destPath)
-        res.on('data', (chunk: Buffer) => {
-          received += chunk.length
-          file.write(chunk)
-          if (total > 0) onProgress(Math.round((received / total) * 100))
-        })
-        res.on('end', () => {
-          file.end()
-          file.on('finish', resolve)
-          file.on('error', reject)
-        })
-        res.on('error', (err) => {
-          file.destroy()
-          reject(err)
-        })
-      }).on('error', reject)
-    }
-    doDownload(url)
-  })
-}
+// ── IPC handlers ──────────────────────────────────────────────────────────────
 
 export function setupUpdaterHandlers(mainWindow: BrowserWindow | null) {
-  // Check for updates — returns UpdateInfo
+
+  // Check for updates
   ipcMain.handle('updater:check', async () => {
+    const currentVersion = getCurrentVersion()
     try {
       const release = await httpsGetJson(
         `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
       ) as GithubRelease
 
       const latestVersion = release.tag_name.replace(/^v/, '')
-      const isNewer = compareVersions(latestVersion, CURRENT_VERSION) > 0
+      const isNewer = compareVersions(latestVersion, currentVersion) > 0
 
-      // Find the Windows zip asset
-      const asset = release.assets.find(a => a.name.endsWith('-win.zip') || a.name.toLowerCase().includes('win'))
+      // Pick the best Windows zip asset — prefer exact name match, then any win zip
+      const asset =
+        release.assets.find(a => a.name.match(/win.*\.zip$/i)) ||
+        release.assets.find(a => a.name.endsWith('.zip')) ||
+        null
+
+      if (!asset) {
+        // No downloadable asset found — still report if newer, just no auto-install
+        return {
+          success: true,
+          available: isNewer,
+          currentVersion,
+          latestVersion,
+          releaseNotes: release.body || '',
+          releaseUrl: release.html_url,
+          downloadUrl: '',
+          assetName: '',
+          assetSize: 0,
+          publishedAt: release.published_at,
+        } as UpdateInfo & { success: boolean }
+      }
 
       const info: UpdateInfo = {
         available: isNewer,
-        currentVersion: CURRENT_VERSION,
+        currentVersion,
         latestVersion,
         releaseNotes: release.body || '',
         releaseUrl: release.html_url,
-        downloadUrl: asset?.browser_download_url || release.html_url,
-        assetName: asset?.name || '',
-        assetSize: asset?.size || 0,
+        downloadUrl: asset.browser_download_url,
+        assetName: asset.name,
+        assetSize: asset.size,
         publishedAt: release.published_at,
       }
 
       return { success: true, ...info }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error)
-      return { success: false, message: msg, available: false, currentVersion: CURRENT_VERSION }
+      return { success: false, message: msg, available: false, currentVersion }
     }
   })
 
   // Download and install update
-  // Strategy: download zip → extract to a temp folder → run a helper batch script
-  // that waits for the app to close, copies new files over (skipping userData), then relaunches.
-  // User data (profiles, settings) lives in app.getPath('userData') which is NEVER touched.
+  // Strategy:
+  //   1. Download the zip to %TEMP%\pz-manager-update\
+  //   2. Write a .bat that: waits 4s, extracts via PowerShell, robocopy/xcopy new files
+  //      over the install dir (skipping userData), then relaunches the exe
+  //   3. Launch the bat detached, then quit the app
+  //
+  // User data lives in app.getPath('userData') and is NEVER touched.
   ipcMain.handle('updater:install', async (_event, downloadUrl: string, assetName: string) => {
+    const sendProgress = (stage: string, pct: number) => {
+      mainWindow?.webContents.send('updater:progress', { stage, pct })
+    }
+
     try {
+      if (!downloadUrl || !assetName) {
+        return { success: false, message: 'No download URL available. Please update manually from the GitHub releases page.' }
+      }
+
       const tempDir = path.join(app.getPath('temp'), 'pz-manager-update')
       const zipPath = path.join(tempDir, assetName)
       const extractDir = path.join(tempDir, 'extracted')
 
-      // Clean up any previous update attempt
+      // Clean up any previous attempt
       if (fs.existsSync(tempDir)) {
         fs.rmSync(tempDir, { recursive: true, force: true })
       }
       fs.mkdirSync(tempDir, { recursive: true })
       fs.mkdirSync(extractDir, { recursive: true })
 
-      // Report progress to renderer
-      const sendProgress = (stage: string, pct: number) => {
-        mainWindow?.webContents.send('updater:progress', { stage, pct })
-      }
-
       sendProgress('Downloading update...', 0)
 
-      // Download the zip
       await downloadFile(downloadUrl, zipPath, (pct) => {
         sendProgress('Downloading update...', pct)
       })
 
-      sendProgress('Preparing update...', 100)
+      sendProgress('Preparing installer...', 100)
 
-      // Get current app install path
-      const appPath = path.dirname(app.getPath('exe'))
-      const userDataPath = app.getPath('userData')
+      // Verify the downloaded file looks like a zip (PK magic bytes)
+      const header = Buffer.alloc(4)
+      const fd = fs.openSync(zipPath, 'r')
+      fs.readSync(fd, header, 0, 4, 0)
+      fs.closeSync(fd)
+      if (header[0] !== 0x50 || header[1] !== 0x4B) {
+        return { success: false, message: 'Downloaded file is not a valid zip archive. The release asset may be missing or corrupt.' }
+      }
 
-      // Write a Windows batch script that:
-      // 1. Waits for the app to exit
-      // 2. Extracts the zip (using PowerShell's Expand-Archive)
-      // 3. Copies new files over the install dir (excluding userData)
-      // 4. Relaunches the app
+      const appExe = app.getPath('exe')
+      const appDir = path.dirname(appExe)
+
+      // Escape paths for batch — wrap in quotes, no backslash doubling needed inside quotes
       const batchScript = `@echo off
-echo PZ Server Manager Updater
-echo Waiting for app to close...
-timeout /t 3 /nobreak > nul
+setlocal enabledelayedexpansion
+title PZ Server Manager - Updating...
+echo ================================================
+echo  PZ Server Manager Auto-Updater
+echo ================================================
+echo.
+echo Waiting for the app to close...
+timeout /t 4 /nobreak > nul
 
-echo Extracting update...
-powershell -Command "Expand-Archive -Path '${zipPath.replace(/\\/g, '\\\\')}' -DestinationPath '${extractDir.replace(/\\/g, '\\\\')}' -Force"
-if errorlevel 1 (
-  echo Extraction failed!
+echo Extracting update package...
+powershell -NoProfile -NonInteractive -Command ^
+  "try { Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${extractDir}' -Force; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
+if %errorlevel% neq 0 (
+  echo.
+  echo ERROR: Extraction failed. Please update manually.
   pause
   exit /b 1
 )
 
-echo Finding extracted app folder...
-for /d %%i in ("${extractDir.replace(/\\/g, '\\\\')}\\*") do set EXTRACTED=%%i
+echo Finding extracted folder...
+set "EXTRACTED="
+for /d %%i in ("${extractDir}\\*") do (
+  if not defined EXTRACTED set "EXTRACTED=%%i"
+)
 
-echo Copying new files to ${appPath.replace(/\\/g, '\\\\')}...
-xcopy /E /Y /I "%EXTRACTED%\\*" "${appPath.replace(/\\/g, '\\\\')}\\"
+if not defined EXTRACTED (
+  echo ERROR: Could not find extracted folder.
+  pause
+  exit /b 1
+)
 
+echo Copying new files to: ${appDir}
+robocopy "!EXTRACTED!" "${appDir}" /E /IS /IT /IM /NP /NJH /NJS 2>nul
+if %errorlevel% geq 8 (
+  echo Robocopy failed, trying xcopy...
+  xcopy /E /Y /I "!EXTRACTED!\\*" "${appDir}\\" > nul
+)
+
+echo.
 echo Update complete! Relaunching...
-start "" "${app.getPath('exe').replace(/\\/g, '\\\\')}"
+timeout /t 1 /nobreak > nul
+start "" "${appExe}"
 del "%~f0"
+exit /b 0
 `
 
-      const batchPath = path.join(tempDir, 'update.bat')
-      fs.writeFileSync(batchPath, batchScript)
+      const batchPath = path.join(tempDir, 'pz-update.bat')
+      fs.writeFileSync(batchPath, batchScript, 'utf-8')
 
-      // Launch the batch script detached (it will wait for us to close)
-      const { spawn } = require('child_process')
-      spawn('cmd.exe', ['/c', batchPath], {
+      // Launch the batch script in a visible window so the user can see progress
+      spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', batchPath], {
         detached: true,
         stdio: 'ignore',
-        windowsHide: false,
+        shell: false,
       }).unref()
 
-      // Quit the app so the batch script can proceed
-      setTimeout(() => {
-        app.quit()
-      }, 500)
+      // Give the batch a moment to start, then quit
+      setTimeout(() => app.quit(), 1000)
 
       return { success: true }
     } catch (error: unknown) {
@@ -235,14 +311,14 @@ del "%~f0"
     }
   })
 
-  // Open release page in browser (fallback / manual update)
+  // Open release page in browser (manual fallback)
   ipcMain.handle('updater:openReleasePage', async (_event, url: string) => {
     shell.openExternal(url)
     return { success: true }
   })
 
-  // Get current version
+  // Get current version (always live from app)
   ipcMain.handle('updater:getVersion', () => {
-    return { version: CURRENT_VERSION }
+    return { version: getCurrentVersion() }
   })
 }

@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dialog: {
     openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
     openFile: (filters?: Array<{ name: string; extensions: string[] }>) => ipcRenderer.invoke('dialog:openFile', filters),
+    saveFile: (defaultName: string, filters?: Array<{ name: string; extensions: string[] }>) => ipcRenderer.invoke('dialog:saveFile', defaultName, filters),
   },
 
   // SteamCMD
@@ -100,6 +101,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // File system helpers
   fs: {
     readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
+    writeFile: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeFile', filePath, content),
+    findServerBat: (dir: string) => ipcRenderer.invoke('fs:findServerBat', dir),
   },
 
 })
