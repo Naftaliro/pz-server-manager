@@ -8,11 +8,15 @@ export interface ModEntry {
   thumbnailUrl?: string
 }
 
+export type BuildVersion = 'b41' | 'b42'
+
 export interface ServerProfile {
   id: string
   name: string
   description: string
+  buildVersion: BuildVersion
   serverInstallPath: string
+  worldSavePath?: string
   port: number
   udpPort: number
   memory: number
@@ -79,7 +83,6 @@ export const useAppStore = create<AppState>((set) => ({
   appendConsoleLog: (profileId, line) => set((state) => {
     const existing = state.consoleLogs[profileId] || []
     const newLogs = [...existing, line]
-    // Keep last 2000 lines
     const trimmed = newLogs.length > 2000 ? newLogs.slice(-2000) : newLogs
     return { consoleLogs: { ...state.consoleLogs, [profileId]: trimmed } }
   }),

@@ -16,8 +16,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Dialog
   dialog: {
     openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
-    openFile: (filters?: Array<{ name: string; extensions: string[] }>) => ipcRenderer.invoke('dialog:openFile', filters),
-    saveFile: (defaultName: string, filters?: Array<{ name: string; extensions: string[] }>) => ipcRenderer.invoke('dialog:saveFile', defaultName, filters),
+    openFile: (options?: { filters?: Array<{ name: string; extensions: string[] }> }) => ipcRenderer.invoke('dialog:openFile', options?.filters),
+    saveFile: (options: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => ipcRenderer.invoke('dialog:saveFile', options?.defaultPath, options?.filters),
   },
 
   // SteamCMD
@@ -76,7 +76,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Mod management
   mods: {
-    search: (query: string, page: number) => ipcRenderer.invoke('mods:search', query, page),
+    search: (query: string, page: number, buildVersion?: 'b41' | 'b42') => ipcRenderer.invoke('mods:search', query, page, buildVersion),
     getDetails: (workshopIds: string[]) => ipcRenderer.invoke('mods:getDetails', workshopIds),
   },
 

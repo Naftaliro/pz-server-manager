@@ -9,8 +9,8 @@ interface ElectronAPI {
   }
   dialog: {
     openFolder: () => Promise<string | null>
-    openFile: (filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>
-    saveFile: (defaultName: string, filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>
+    openFile: (options?: { filters?: Array<{ name: string; extensions: string[] }> }) => Promise<string | null>
+    saveFile: (options: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<string | null>
   }
   fs: {
     readFile: (filePath: string) => Promise<{ success: boolean; content?: string; message?: string }>
@@ -74,7 +74,7 @@ interface ElectronAPI {
     writeSandbox: (serverName: string, dataPath: string, settings: unknown) => Promise<{ success: boolean; message?: string }>
   }
   mods: {
-    search: (query: string, page: number) => Promise<{
+    search: (query: string, page: number, buildVersion?: 'b41' | 'b42') => Promise<{
       success: boolean
       mods: WorkshopMod[]
       total?: number
