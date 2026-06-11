@@ -309,14 +309,26 @@ export function setupProfileHandlers() {
     const profiles = loadProfiles()
     const now = new Date().toISOString()
 
+    // Always deep-merge defaults so the stored profile has a COMPLETE settings set.
+    // This ensures the INI/SandboxVars written to disk before launch are fully populated.
+    const mergedIni = { ...DEFAULT_INI_SETTINGS, ...(profile.iniSettings || {}) }
+    const incomingSandbox = profile.sandboxSettings || {}
+    const incomingZombieConfig = (incomingSandbox.ZombieConfig as Record<string, unknown>) || {}
+    const defaultZombieConfig = (DEFAULT_SANDBOX_SETTINGS.ZombieConfig as Record<string, unknown>) || {}
+    const mergedSandbox = {
+      ...DEFAULT_SANDBOX_SETTINGS,
+      ...incomingSandbox,
+      ZombieConfig: { ...defaultZombieConfig, ...incomingZombieConfig },
+    }
+
     if (!profile.id) {
       // New profile
       const newProfile: ServerProfile = {
         ...profile,
         id: uuidv4(),
         buildVersion: profile.buildVersion || 'b42',
-        iniSettings: profile.iniSettings || { ...DEFAULT_INI_SETTINGS },
-        sandboxSettings: profile.sandboxSettings || { ...DEFAULT_SANDBOX_SETTINGS },
+        iniSettings: mergedIni,
+        sandboxSettings: mergedSandbox,
         createdAt: now,
         updatedAt: now,
       }
@@ -326,15 +338,19 @@ export function setupProfileHandlers() {
     } else {
       // Update existing
       const idx = profiles.findIndex(p => p.id === profile.id)
-      if (idx === -1) {
-        const newProfile = { ...profile, updatedAt: now }
-        profiles.push(newProfile)
-        saveProfiles(profiles)
-        return newProfile
+      const updatedProfile: ServerProfile = {
+        ...profile,
+        iniSettings: mergedIni,
+        sandboxSettings: mergedSandbox,
+        updatedAt: now,
       }
-      profiles[idx] = { ...profile, updatedAt: now }
+      if (idx === -1) {
+        profiles.push(updatedProfile)
+      } else {
+        profiles[idx] = updatedProfile
+      }
       saveProfiles(profiles)
-      return profiles[idx]
+      return updatedProfile
     }
   })
 

@@ -1,18 +1,29 @@
 import { useState, useEffect } from 'react'
-import { Minus, Square, X, Server } from 'lucide-react'
+import { Minus, Square, X, Server, RefreshCw } from 'lucide-react'
+import { triggerManualUpdateCheck } from './UpdateBanner'
 
 export default function TitleBar() {
   const [version, setVersion] = useState('')
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
 
   useEffect(() => {
-    // Read the actual runtime version from the Electron main process
-    // This ensures the correct version is shown even after an auto-update
     window.electronAPI.updater.getVersion().then(({ version: v }) => {
       setVersion(v)
     }).catch(() => {
       setVersion('')
     })
   }, [])
+
+  const handleCheckUpdate = () => {
+    if (checkingUpdate) return
+    setCheckingUpdate(true)
+    // Trigger the UpdateBanner's manual check
+    if (triggerManualUpdateCheck) {
+      triggerManualUpdateCheck()
+    }
+    // Reset the spinner after 3 seconds
+    setTimeout(() => setCheckingUpdate(false), 3000)
+  }
 
   return (
     <div className="flex items-center justify-between h-10 bg-pz-darker border-b border-pz-border drag-region px-4 flex-shrink-0">
@@ -27,8 +38,18 @@ export default function TitleBar() {
         )}
       </div>
 
-      {/* Center: Drag region */}
-      <div className="flex-1" />
+      {/* Center: Check for updates button */}
+      <div className="flex-1 flex justify-center no-drag">
+        <button
+          onClick={handleCheckUpdate}
+          disabled={checkingUpdate}
+          className="flex items-center gap-1.5 text-xs text-pz-muted hover:text-pz-text transition-colors px-2 py-1 rounded hover:bg-pz-border disabled:opacity-50"
+          title="Check for updates"
+        >
+          <RefreshCw size={11} className={checkingUpdate ? 'animate-spin' : ''} />
+          Check for updates
+        </button>
+      </div>
 
       {/* Right: Window controls */}
       <div className="flex items-center no-drag">
