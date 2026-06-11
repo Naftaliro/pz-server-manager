@@ -1,6 +1,19 @@
+import { useState, useEffect } from 'react'
 import { Minus, Square, X, Server } from 'lucide-react'
 
 export default function TitleBar() {
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    // Read the actual runtime version from the Electron main process
+    // This ensures the correct version is shown even after an auto-update
+    window.electronAPI.updater.getVersion().then(({ version: v }) => {
+      setVersion(v)
+    }).catch(() => {
+      setVersion('')
+    })
+  }, [])
+
   return (
     <div className="flex items-center justify-between h-10 bg-pz-darker border-b border-pz-border drag-region px-4 flex-shrink-0">
       {/* Left: App icon + title */}
@@ -9,7 +22,9 @@ export default function TitleBar() {
           <Server size={18} />
         </div>
         <span className="text-sm font-semibold text-pz-text">PZ Server Manager</span>
-        <span className="text-xs text-pz-muted ml-1">v1.0.0</span>
+        {version && (
+          <span className="text-xs text-pz-muted ml-1">v{version}</span>
+        )}
       </div>
 
       {/* Center: Drag region */}

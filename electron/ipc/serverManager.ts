@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import { join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { getProfile } from './profileManager'
 
 interface ServerProcess {
@@ -35,34 +35,32 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
         return { success: false, message: 'Server files not found. Please install the server first.' }
       }
 
-      const memoryMb = profile.memory || 4096
       const serverName = profile.name.replace(/[^a-zA-Z0-9_-]/g, '_')
+      const adminPassword = profile.adminPassword || 'admin'
 
-      // Build the Java command from the batch file logic
-      const javaArgs = [
-        `-Djava.awt.headless=true`,
-        `-Dzomboid.steam=1`,
-        `-Dzomboid.znetlog=1`,
-        `-XX:+UseZGC`,
-        `-XX:-CreateCoredumpOnCrash`,
-        `-XX:-OmitStackTraceInFastThrow`,
-        `-Xms${memoryMb}m`,
-        `-Xmx${memoryMb}m`,
-        `-Djava.library.path=natives/;natives/win64/;.`,
-        `-cp`, `%PZ_CLASSPATH%`,
-        `zombie.network.GameServer`,
-        `-statistic`, `0`,
+      // ---------------------------------------------------------------
+      // Build the launch args for StartServer64.bat
+      //
+      // CRITICAL: Always pass -adminpassword so the server never tries to
+      // prompt for it interactively via stdin. When the server runs as a
+      // child process with piped stdin there is no terminal to respond,
+      // which causes a java.util.NoSuchElementException crash on first run.
+      // ---------------------------------------------------------------
+      const serverArgs: string[] = [
         `-servername`, serverName,
+        `-adminpassword`, adminPassword,
       ]
 
-      if (profile.adminPassword) {
-        javaArgs.push(`-adminpassword`, profile.adminPassword)
-      }
+      // Optionally pass -nosteam if steam is not available (helps in some
+      // headless setups, but we leave it out by default so Workshop works)
 
-      // Use the batch file with servername parameter
-      const proc = spawn('cmd.exe', ['/c', startBat, `-servername`, serverName], {
+      const proc = spawn('cmd.exe', ['/c', startBat, ...serverArgs], {
         cwd: serverDir,
         shell: false,
+        // Keep stdin open so we can send commands (e.g. quit), but the
+        // server will never block waiting for interactive input because
+        // -adminpassword bypasses the first-run password prompt.
+        stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
           PZ_SERVER_NAME: serverName,
@@ -78,19 +76,38 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
 
       emitStatusChange(profileId, 'starting')
 
+      // ---------------------------------------------------------------
+      // Watch stdout for key startup markers
+      // ---------------------------------------------------------------
       proc.stdout?.on('data', (data: Buffer) => {
-        const lines = data.toString().split('\n')
+        const text = data.toString()
+        const lines = text.split('\n')
         lines.forEach(line => {
           const trimmed = line.trim()
-          if (trimmed) {
-            emitConsoleOutput(profileId, trimmed)
-            // Detect when server is fully started
-            if (trimmed.includes('SERVER STARTED') || trimmed.includes('LuaManager') || trimmed.includes('players connected')) {
-              if (serverEntry.status === 'starting') {
-                serverEntry.status = 'running'
-                emitStatusChange(profileId, 'running')
-              }
+          if (!trimmed) return
+
+          emitConsoleOutput(profileId, trimmed)
+
+          // Detect successful startup
+          if (
+            trimmed.includes('SERVER STARTED') ||
+            trimmed.includes('LuaManager: Loading') ||
+            trimmed.includes('players connected') ||
+            trimmed.includes('Waiting for connection')
+          ) {
+            if (serverEntry.status === 'starting') {
+              serverEntry.status = 'running'
+              emitStatusChange(profileId, 'running')
             }
+          }
+
+          // Detect fatal errors early
+          if (
+            trimmed.includes('Exception in thread "main"') ||
+            trimmed.includes('NoSuchElementException') ||
+            trimmed.includes('Could not find or load main class')
+          ) {
+            emitConsoleOutput(profileId, '[ERROR] Server encountered a fatal error and will exit.')
           }
         })
       })
@@ -99,7 +116,19 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
         const lines = data.toString().split('\n')
         lines.forEach(line => {
           const trimmed = line.trim()
-          if (trimmed) emitConsoleOutput(profileId, `[STDERR] ${trimmed}`)
+          // Filter out noisy but harmless Steam client library warnings
+          if (!trimmed) return
+          if (
+            trimmed.includes('contentupdatecontext.cpp') ||
+            trimmed.includes('threadtools.cpp') ||
+            trimmed.includes('Assertion Failed: Illegal termination') ||
+            trimmed.includes('SetMinidumpSteamID') ||
+            trimmed.includes('Setting breakpad')
+          ) {
+            // Suppress these — they are Steam client noise, not real errors
+            return
+          }
+          emitConsoleOutput(profileId, `[STDERR] ${trimmed}`)
         })
       })
 
@@ -116,10 +145,10 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
       })
 
       // Give it a moment to detect early failures
-      await new Promise(resolve => setTimeout(resolve, 500))
+      await new Promise(resolve => setTimeout(resolve, 800))
 
       if (!runningServers.has(profileId)) {
-        return { success: false, message: 'Server failed to start' }
+        return { success: false, message: 'Server failed to start. Check the console for details.' }
       }
 
       return { success: true, message: 'Server starting...' }
@@ -137,14 +166,15 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
       srv.status = 'stopping'
       emitStatusChange(profileId, 'stopping')
 
-      // Send quit command via stdin
+      // Send quit command via stdin — the graceful way
       if (srv.process.stdin) {
         srv.process.stdin.write('quit\n')
       }
 
-      // Force kill after 30 seconds
+      // Force kill after 30 seconds if it hasn't stopped
       setTimeout(() => {
         if (runningServers.has(profileId)) {
+          emitConsoleOutput(profileId, 'Force-killing server after 30s timeout...')
           srv.process.kill('SIGTERM')
         }
       }, 30000)
@@ -156,10 +186,31 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
     }
   })
 
-  ipcMain.handle('server:restart', async (event, profileId: string) => {
-    const stopResult = await ipcMain.emit('server:stop', event, profileId)
-    await new Promise(resolve => setTimeout(resolve, 3000))
-    return ipcMain.emit('server:start', event, profileId)
+  ipcMain.handle('server:restart', async (_event, profileId: string) => {
+    const srv = runningServers.get(profileId)
+    if (srv) {
+      srv.status = 'stopping'
+      emitStatusChange(profileId, 'stopping')
+      if (srv.process.stdin) srv.process.stdin.write('quit\n')
+      // Wait for the process to actually exit before restarting
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          srv.process.kill('SIGTERM')
+          resolve()
+        }, 15000)
+        srv.process.on('close', () => {
+          clearTimeout(timeout)
+          resolve()
+        })
+      })
+    }
+    // Small buffer before restart
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    // Re-invoke start
+    const profile = await getProfile(profileId)
+    if (!profile) return { success: false, message: 'Profile not found' }
+    // Trigger start via IPC emit
+    return ipcMain.emit('server:start', { sender: mainWindowRef?.webContents }, profileId)
   })
 
   ipcMain.handle('server:getStatus', async (_event, profileId: string) => {
