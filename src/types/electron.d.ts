@@ -10,9 +10,12 @@ interface ElectronAPI {
   dialog: {
     openFolder: () => Promise<string | null>
     openFile: (filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>
+    saveFile: (defaultName: string, filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>
   }
   fs: {
     readFile: (filePath: string) => Promise<{ success: boolean; content?: string; message?: string }>
+    writeFile: (filePath: string, content: string) => Promise<{ success: boolean; message?: string }>
+    findServerBat: (dir: string) => Promise<{ success: boolean; path?: string; message?: string }>
   }
   updater: {
     check: () => Promise<{

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Search, Plus, Trash2, ArrowLeft, Save, ExternalLink, Package, AlertCircle, GripVertical, Hash, Upload, FileText, CheckCircle } from 'lucide-react'
+import { Search, Plus, Trash2, ArrowLeft, Save, ExternalLink, Package, AlertCircle, GripVertical, Hash, Upload, FileText, CheckCircle, Download, Copy } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ModEntry } from '../store/useAppStore'
 
@@ -49,7 +49,8 @@ export default function ModManager() {
   const [manualLoading, setManualLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [activeTab, setActiveTab] = useState<'installed' | 'search' | 'manual' | 'import'>('installed')
+  const [activeTab, setActiveTab] = useState<'installed' | 'search' | 'manual' | 'import' | 'export'>('installed')
+  const [exportCopied, setExportCopied] = useState(false)
 
   // Import tab state
   const [importText, setImportText] = useState('')
@@ -242,6 +243,35 @@ export default function ModManager() {
     }
   }
 
+  // ── Export helpers ──────────────────────────────────────────────────────────
+  const getExportText = () => {
+    const workshopLine = `WorkshopItems=${mods.map(m => m.workshopId).join(';')}`
+    const modsLine = `Mods=${mods.map(m => m.modId).join(';')}`
+    return `${workshopLine}\n${modsLine}`
+  }
+
+  const handleCopyExport = async () => {
+    try {
+      await navigator.clipboard.writeText(getExportText())
+      setExportCopied(true)
+      setTimeout(() => setExportCopied(false), 2500)
+    } catch {
+      alert('Failed to copy to clipboard.')
+    }
+  }
+
+  const handleSaveExport = async () => {
+    const serverName = profile?.name.replace(/[^a-zA-Z0-9_-]/g, '_') || 'server'
+    const savePath = await window.electronAPI.dialog.saveFile(
+      `${serverName}_mods.txt`,
+      [{ name: 'Text File', extensions: ['txt'] }, { name: 'INI File', extensions: ['ini'] }]
+    )
+    if (!savePath) return
+    const result = await window.electronAPI.fs.writeFile(savePath, getExportText())
+    if (!result.success) alert(`Failed to save: ${result.message}`)
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
   const isAdded = (workshopId: string) => mods.some(m => m.workshopId === workshopId)
 
   return (
@@ -268,6 +298,7 @@ export default function ModManager() {
           { id: 'search', label: 'Workshop Search' },
           { id: 'manual', label: 'Manual Entry' },
           { id: 'import', label: 'Import from .ini' },
+          { id: 'export', label: 'Export Mod List' },
         ].map(t => (
           <button
             key={t.id}
@@ -351,6 +382,46 @@ export default function ModManager() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Export Tab ── */}
+        {activeTab === 'export' && (
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="max-w-2xl mx-auto space-y-6">
+              <div className="card p-5">
+                <h3 className="text-sm font-semibold text-pz-text mb-1">Export Mod List</h3>
+                <p className="text-xs text-pz-muted mb-4">
+                  Copy or save the <code>WorkshopItems=</code> and <code>Mods=</code> lines in the exact order your mods are listed.
+                  You can paste these into any PZ server <code>.ini</code> file or share them with others.
+                </p>
+
+                {mods.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 gap-3">
+                    <Package size={32} className="text-pz-muted" />
+                    <p className="text-pz-muted text-sm">No mods to export. Add some mods first.</p>
+                  </div>
+                ) : (
+                  <>
+                    <pre className="bg-pz-darker border border-pz-border rounded p-3 text-xs text-pz-text overflow-x-auto whitespace-pre-wrap break-all mb-4">{getExportText()}</pre>
+                    <div className="flex gap-2">
+                      <button onClick={handleCopyExport} className="btn-primary">
+                        {exportCopied ? <CheckCircle size={14} /> : <Copy size={14} />}
+                        {exportCopied ? 'Copied!' : 'Copy to Clipboard'}
+                      </button>
+                      <button onClick={handleSaveExport} className="btn-outline">
+                        <Download size={14} />
+                        Save as File
+                      </button>
+                    </div>
+                    <div className="mt-4 p-3 bg-pz-darker border border-pz-border rounded text-xs text-pz-muted">
+                      <strong className="text-pz-text">Mod count:</strong> {mods.length} mod{mods.length !== 1 ? 's' : ''}
+                      {' · '}<strong className="text-pz-text">Workshop IDs:</strong> {mods.map(m => m.workshopId).join(', ')}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

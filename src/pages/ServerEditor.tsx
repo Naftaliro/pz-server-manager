@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Save, FolderOpen, ArrowLeft, Settings2, Package, Sliders, Trash2, AlertTriangle, RotateCcw } from 'lucide-react'
+import { Save, FolderOpen, ArrowLeft, Settings2, Package, Sliders, Trash2, AlertTriangle, RotateCcw, CheckCircle, XCircle, Loader } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile } from '../store/useAppStore'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -135,9 +135,39 @@ export default function ServerEditor() {
     setWipeConfirm(false)
   }
 
+  const [pathStatus, setPathStatus] = useState<'idle' | 'checking' | 'ok' | 'found' | 'notfound'>('idle')
+  const [pathFoundAt, setPathFoundAt] = useState('')
+
+  const checkPath = async (dir: string) => {
+    if (!dir.trim()) { setPathStatus('idle'); return }
+    setPathStatus('checking')
+    const result = await window.electronAPI.fs.findServerBat(dir)
+    if (result.success) {
+      if (result.path !== dir) {
+        setPathFoundAt(result.path || '')
+        setPathStatus('found')
+      } else {
+        setPathStatus('ok')
+        setPathFoundAt('')
+      }
+    } else {
+      setPathStatus('notfound')
+      setPathFoundAt('')
+    }
+  }
+
+  const applyFoundPath = () => {
+    setForm(prev => ({ ...prev, serverInstallPath: pathFoundAt }))
+    setPathStatus('ok')
+    setPathFoundAt('')
+  }
+
   const browseFolder = async () => {
     const folder = await window.electronAPI.dialog.openFolder()
-    if (folder) setForm(prev => ({ ...prev, serverInstallPath: folder }))
+    if (folder) {
+      setForm(prev => ({ ...prev, serverInstallPath: folder }))
+      checkPath(folder)
+    }
   }
 
   const resetIniToDefaults = () => {
@@ -275,17 +305,64 @@ export default function ServerEditor() {
                     <input
                       type="text"
                       value={form.serverInstallPath}
-                      onChange={e => setForm(prev => ({ ...prev, serverInstallPath: e.target.value }))}
+                      onChange={e => {
+                        setForm(prev => ({ ...prev, serverInstallPath: e.target.value }))
+                        setPathStatus('idle')
+                      }}
+                      onBlur={e => checkPath(e.target.value)}
                       className="input"
                       placeholder="C:\PZServer"
                     />
-                    <button onClick={browseFolder} className="btn-outline flex-shrink-0">
+                    <button onClick={browseFolder} className="btn-outline flex-shrink-0" title="Browse for folder">
                       <FolderOpen size={14} />
                     </button>
+                    <button
+                      onClick={() => checkPath(form.serverInstallPath)}
+                      className="btn-outline flex-shrink-0"
+                      title="Verify path"
+                      disabled={!form.serverInstallPath.trim()}
+                    >
+                      {pathStatus === 'checking' ? <Loader size={14} className="animate-spin" /> : 'Verify'}
+                    </button>
                   </div>
-                  <p className="text-xs text-pz-muted mt-1">
-                    Directory where PZ dedicated server files are installed
-                  </p>
+
+                  {/* Path status feedback */}
+                  {pathStatus === 'ok' && (
+                    <div className="flex items-center gap-1.5 mt-1.5 text-xs text-pz-green">
+                      <CheckCircle size={12} />
+                      <span>StartServer64.bat found — path is valid</span>
+                    </div>
+                  )}
+                  {pathStatus === 'found' && (
+                    <div className="mt-1.5 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded text-xs">
+                      <div className="flex items-center gap-1.5 text-yellow-400 mb-1">
+                        <AlertTriangle size={12} />
+                        <span className="font-medium">Server found in a subdirectory</span>
+                      </div>
+                      <p className="text-pz-muted mb-1.5">Found at: <code className="text-pz-text">{pathFoundAt}</code></p>
+                      <button onClick={applyFoundPath} className="btn-primary text-xs py-1 px-2">
+                        Use this path
+                      </button>
+                    </div>
+                  )}
+                  {pathStatus === 'notfound' && (
+                    <div className="mt-1.5 p-2 bg-pz-red/10 border border-pz-red/30 rounded text-xs">
+                      <div className="flex items-center gap-1.5 text-pz-red mb-1">
+                        <XCircle size={12} />
+                        <span className="font-medium">StartServer64.bat not found</span>
+                      </div>
+                      <p className="text-pz-muted">Common Steam paths to try:</p>
+                      <ul className="text-pz-muted mt-0.5 space-y-0.5">
+                        <li><code className="text-pz-text">C:\Program Files (x86)\Steam\steamapps\common\Project Zomboid Dedicated Server</code></li>
+                        <li><code className="text-pz-text">C:\PZServer</code> (SteamCMD default)</li>
+                      </ul>
+                    </div>
+                  )}
+                  {pathStatus === 'idle' && (
+                    <p className="text-xs text-pz-muted mt-1">
+                      Point to your PZ dedicated server folder — click Browse or Verify to check. Common Steam path: <code>C:\Program Files (x86)\Steam\steamapps\common\Project Zomboid Dedicated Server</code>
+                    </p>
+                  )}
                 </FormField>
 
                 <FormField label="Server Memory (MB)" error={errors.memory}>
