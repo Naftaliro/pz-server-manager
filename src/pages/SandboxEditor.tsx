@@ -4,6 +4,39 @@ import { useAppStore } from '../store/useAppStore'
 
 type SandboxSettings = Record<string, unknown>
 
+const DEFAULT_ZOMBIE_CONFIG: SandboxSettings = {
+  PopulationMultiplier: 1.0, PopulationStartMultiplier: 1.0, PopulationPeakMultiplier: 1.5,
+  PopulationPeakDay: 28, RespawnHours: 72.0, RespawnUnseenHours: 16.0, RespawnMultiplier: 0.1,
+  RedistributeHours: 12.0, FollowSoundDistance: 100, RallyGroupSize: 20, RallyTravelDistance: 20,
+  RallyGroupSeparation: 15, RallyGroupRadius: 3, Speed: 3, Strength: 2, Toughness: 2,
+  Transmission: 2, Intelligence: 2, CrawlUnderVehicle: 1, Memory: 2, Decomp: 1,
+  Sight: 2, Hearing: 2, Smell: 2, ThumpNoChasing: false, ThumpOnConstruction: true,
+  ActiveOnly: false, TriggerHouseAlarm: false, ZombiesDontAttackUnlessThreatened: false, DisableFakeDead: false,
+}
+
+const DEFAULT_SANDBOX_SETTINGS: SandboxSettings = {
+  VERSION: 4, Zombies: 4, Distribution: 1, DayLength: 3, StartYear: 1, StartMonth: 7,
+  StartDay: 1, StartTime: 2, WaterShut: 2, ElecShut: 2, WaterShutModifier: 14, ElecShutModifier: 14,
+  FoodLoot: 4, WeaponLoot: 2, OtherLoot: 3, CannedFoodLoot: 4, LiteratureLoot: 4,
+  SurvivalGearsLoot: 4, MedicalLoot: 4, RangedWeaponLoot: 2, AmmoLoot: 2, MechanicsLoot: 4,
+  Temperature: 3, Rain: 3, ErosionSpeed: 3, ErosionDays: 0, XpMultiplier: 1.0,
+  XpMultiplierAffectsPassive: false, ZombieAttractionMultiplier: 1.0, VehicleEasyUse: false,
+  Farming: 3, CompostTime: 2, StatsDecrease: 3, NatureAbundance: 3, Alarm: 6, LockedHouses: 6,
+  StarterKit: false, Nutrition: true, FoodRotSpeed: 3, FridgeFactor: 3, LootRespawn: 1,
+  SeenHoursPreventLootRespawn: 0, HoursForWorldItemRemoval: 24.0, ItemRemovalListBlacklistToggle: false,
+  TimeSinceApo: 1, PlantResilience: 3, PlantAbundance: 3, EndRegen: 3, Helicopter: 2,
+  MetaEvent: 2, SleepingEvent: 1, GeneratorSpawning: 3, GeneratorFuelConsumption: 1.0,
+  SurvivorHouseChance: 3, VehicleStoryChance: 3, ZoneStoryChance: 3, AnnotatedMapChance: 4,
+  CharacterFreePoints: 0, ConstructionBonusPoints: 3, NightDarkness: 3, NightLength: 3,
+  InjurySeverity: 2, BoneFracture: true, HoursForCorpseRemoval: 216.0, DecayingCorpseHealthImpact: 3,
+  BloodLevel: 3, ClothingDegradation: 3, FireSpread: true, DaysForRottenFoodRemoval: -1,
+  AllowExteriorGenerator: true, MaxFogIntensity: 1, MaxRainFxIntensity: 1, EnableSnowOnGround: true,
+  MultiHitZombies: false, RearVulnerability: 3, AttackBlockMovements: true, AllClothesUnlocked: false,
+  EnableTaintedWaterText: true, CarSpawnRate: 3, ChanceHasGas: 4, InitialGas: 4,
+  CarGasConsumption: 1.0, LockedCar: 4, CarHotwire: 4, CarConditionAffectsStat: 3,
+  CarDamageOnImpact: 3, DamageToPlayerFromHitByACar: 3, EnableVehicles: true, EnableTrailerHitch: true,
+}
+
 const PRESETS = {
   apocalypse: {
     label: 'Apocalypse',
@@ -78,6 +111,12 @@ export default function SandboxEditor() {
     return zombieConfig[key] !== undefined ? zombieConfig[key] : fallback
   }
 
+  const resetToDefaults = () => {
+    if (!window.confirm('Reset all sandbox settings to default values? This cannot be undone.')) return
+    setSettings(DEFAULT_SANDBOX_SETTINGS)
+    setZombieConfig(DEFAULT_ZOMBIE_CONFIG)
+  }
+
   const applyPreset = (presetKey: keyof typeof PRESETS) => {
     const preset = PRESETS[presetKey]
     const { ZombieConfig, ...rest } = preset.settings as { ZombieConfig?: SandboxSettings } & SandboxSettings
@@ -133,6 +172,14 @@ export default function SandboxEditor() {
           <h1 className="text-lg font-semibold text-pz-text">Sandbox Settings</h1>
           <p className="text-xs text-pz-muted">{profile?.name} — Configure gameplay rules</p>
         </div>
+        <button
+          onClick={resetToDefaults}
+          className="btn-outline text-xs"
+          title="Reset all settings to default values"
+        >
+          <RotateCcw size={12} />
+          Reset Defaults
+        </button>
         <button onClick={handleSave} disabled={saving} className="btn-primary">
           <Save size={14} />
           {saving ? 'Saving...' : saved ? 'Saved!' : 'Save'}

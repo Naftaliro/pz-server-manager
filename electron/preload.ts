@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Dialog
   dialog: {
     openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+    openFile: (filters?: Array<{ name: string; extensions: string[] }>) => ipcRenderer.invoke('dialog:openFile', filters),
   },
 
   // SteamCMD
@@ -83,4 +84,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     wipe: (serverName: string, dataPath: string) => ipcRenderer.invoke('world:wipe', serverName, dataPath),
     getSize: (serverName: string, dataPath: string) => ipcRenderer.invoke('world:getSize', serverName, dataPath),
   },
+
+  // Auto-updater
+  updater: {
+    check: () => ipcRenderer.invoke('updater:check'),
+    install: (downloadUrl: string, assetName: string) => ipcRenderer.invoke('updater:install', downloadUrl, assetName),
+    openReleasePage: (url: string) => ipcRenderer.invoke('updater:openReleasePage', url),
+    getVersion: () => ipcRenderer.invoke('updater:getVersion'),
+    onProgress: (callback: (data: { stage: string; pct: number }) => void) => {
+      ipcRenderer.on('updater:progress', (_e, data) => callback(data))
+      return () => ipcRenderer.removeAllListeners('updater:progress')
+    },
+  },
+
+  // File system helpers
+  fs: {
+    readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
+  },
+
 })

@@ -9,6 +9,7 @@ import ModManager from './pages/ModManager'
 import Console from './pages/Console'
 import InstallServer from './pages/InstallServer'
 import LoadingOverlay from './components/LoadingOverlay'
+import UpdateBanner from './components/UpdateBanner'
 
 export default function App() {
   const { activeView, setProfiles, setServerStatus } = useAppStore()
@@ -51,6 +52,7 @@ export default function App() {
   return (
     <div className="flex flex-col h-full bg-pz-dark text-pz-text">
       <TitleBar />
+      <UpdateBanner />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <main className="flex-1 overflow-hidden">
