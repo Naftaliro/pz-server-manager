@@ -11,11 +11,15 @@ export interface ModEntry {
   thumbnailUrl?: string
 }
 
+export type BuildVersion = 'b41' | 'b42'
+
 export interface ServerProfile {
   id: string
   name: string
   description: string
+  buildVersion: BuildVersion
   serverInstallPath: string
+  worldSavePath?: string
   port: number
   udpPort: number
   memory: number
@@ -214,6 +218,17 @@ const DEFAULT_SANDBOX_SETTINGS = {
   DamageToPlayerFromHitByACar: 3,
   EnableVehicles: true,
   EnableTrailerHitch: true,
+  // B42 additions
+  AnimalPopulationMultiplier: 1.0,
+  AnimalPopulationStartMultiplier: 1.0,
+  AnimalPopulationPeakMultiplier: 1.5,
+  AnimalPopulationPeakDay: 28,
+  AnimalChanceSpawnOnFarm: 1,
+  AgingModifierSpeed: 1.0,
+  MilkIncreaseSpeed: 1.0,
+  WoolIncreaseSpeed: 1.0,
+  CraftMultiplier: 1.0,
+  MaxCraftableItemsOnGround: 0,
   ZombieConfig: {
     PopulationMultiplier: 1.0,
     PopulationStartMultiplier: 1.0,
@@ -299,6 +314,7 @@ export function setupProfileHandlers() {
       const newProfile: ServerProfile = {
         ...profile,
         id: uuidv4(),
+        buildVersion: profile.buildVersion || 'b42',
         iniSettings: profile.iniSettings || { ...DEFAULT_INI_SETTINGS },
         sandboxSettings: profile.sandboxSettings || { ...DEFAULT_SANDBOX_SETTINGS },
         createdAt: now,

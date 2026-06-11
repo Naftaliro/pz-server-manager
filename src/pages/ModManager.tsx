@@ -74,7 +74,8 @@ export default function ModManager() {
     setSearchPage(page)
 
     try {
-      const result = await window.electronAPI.mods.search(searchQuery, page)
+      const buildVersion = profile?.buildVersion || 'b41'
+      const result = await window.electronAPI.mods.search(searchQuery, page, buildVersion)
       if (result.success) {
         setSearchResults(result.mods)
         setSearchHasMore(result.hasMore ?? false)
@@ -137,10 +138,12 @@ export default function ModManager() {
   // ── Import from .ini ──────────────────────────────────────────────────────
 
   const handleBrowseIni = async () => {
-    const filePath = await window.electronAPI.dialog.openFile([
-      { name: 'Server Config', extensions: ['ini', 'cfg', 'txt'] },
-      { name: 'All Files', extensions: ['*'] },
-    ])
+    const filePath = await window.electronAPI.dialog.openFile({
+      filters: [
+        { name: 'Server Config', extensions: ['ini', 'cfg', 'txt'] },
+        { name: 'All Files', extensions: ['*'] },
+      ]
+    })
     if (!filePath) return
     const result = await window.electronAPI.fs.readFile(filePath)
     if (result.success && result.content) {
@@ -262,10 +265,10 @@ export default function ModManager() {
 
   const handleSaveExport = async () => {
     const serverName = profile?.name.replace(/[^a-zA-Z0-9_-]/g, '_') || 'server'
-    const savePath = await window.electronAPI.dialog.saveFile(
-      `${serverName}_mods.txt`,
-      [{ name: 'Text File', extensions: ['txt'] }, { name: 'INI File', extensions: ['ini'] }]
-    )
+    const savePath = await window.electronAPI.dialog.saveFile({
+      defaultPath: `${serverName}_mods.txt`,
+      filters: [{ name: 'Text File', extensions: ['txt'] }, { name: 'INI File', extensions: ['ini'] }]
+    })
     if (!savePath) return
     const result = await window.electronAPI.fs.writeFile(savePath, getExportText())
     if (!result.success) alert(`Failed to save: ${result.message}`)
@@ -429,6 +432,17 @@ export default function ModManager() {
         {activeTab === 'search' && (
           <div className="flex-1 overflow-hidden flex flex-col">
             <div className="p-4 border-b border-pz-border bg-pz-darker flex-shrink-0">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs text-pz-muted">Filtering for:</span>
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                  profile?.buildVersion === 'b42'
+                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                    : 'bg-pz-green/20 text-pz-green border border-pz-green/30'
+                }`}>
+                  {profile?.buildVersion === 'b42' ? 'Build 42 Mods' : 'Build 41 Mods'}
+                </span>
+                <span className="text-xs text-pz-muted">(set in server profile)</span>
+              </div>
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-pz-muted" />
@@ -439,7 +453,7 @@ export default function ModManager() {
                     onChange={e => setSearchQuery(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && handleSearch(1)}
                     className="input pl-9"
-                    placeholder="Search Steam Workshop for Project Zomboid mods..."
+                    placeholder={`Search ${profile?.buildVersion === 'b42' ? 'Build 42' : 'Build 41'} mods on Steam Workshop...`}
                   />
                 </div>
                 <button
