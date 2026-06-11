@@ -1,0 +1,170 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    background-color: #0f1117;
+    color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0f1117;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #484f58;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all duration-150 cursor-pointer select-none;
+  }
+
+  .btn-primary {
+    @apply btn bg-pz-green text-pz-darker hover:bg-green-400 active:scale-95;
+  }
+
+  .btn-danger {
+    @apply btn bg-pz-red text-white hover:bg-red-400 active:scale-95;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-pz-muted hover:text-pz-text hover:bg-pz-border active:scale-95;
+  }
+
+  .btn-outline {
+    @apply btn border border-pz-border text-pz-text hover:bg-pz-border active:scale-95;
+  }
+
+  .card {
+    @apply bg-pz-card border border-pz-border rounded-lg;
+  }
+
+  .input {
+    @apply bg-pz-darker border border-pz-border rounded-md px-3 py-2 text-pz-text text-sm
+           focus:outline-none focus:border-pz-green focus:ring-1 focus:ring-pz-green
+           placeholder:text-pz-muted transition-colors w-full;
+  }
+
+  .select {
+    @apply input appearance-none cursor-pointer;
+  }
+
+  .label {
+    @apply block text-xs font-medium text-pz-muted mb-1 uppercase tracking-wide;
+  }
+
+  .section-title {
+    @apply text-sm font-semibold text-pz-text uppercase tracking-wider;
+  }
+
+  .status-running {
+    @apply inline-flex items-center gap-1.5 text-pz-green text-xs font-medium;
+  }
+
+  .status-stopped {
+    @apply inline-flex items-center gap-1.5 text-pz-muted text-xs font-medium;
+  }
+
+  .status-starting {
+    @apply inline-flex items-center gap-1.5 text-pz-yellow text-xs font-medium;
+  }
+
+  .status-stopping {
+    @apply inline-flex items-center gap-1.5 text-pz-red text-xs font-medium;
+  }
+
+  .tab-active {
+    @apply text-pz-green border-b-2 border-pz-green;
+  }
+
+  .tab-inactive {
+    @apply text-pz-muted hover:text-pz-text border-b-2 border-transparent;
+  }
+}
+
+/* Console output styling */
+.console-output {
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Drag region for frameless window */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Animated pulse for running status */
+@keyframes pulse-green {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.pulse-green {
+  animation: pulse-green 2s ease-in-out infinite;
+}
+
+/* Slider styling */
+input[type="range"] {
+  @apply appearance-none bg-pz-border rounded-full h-1.5 cursor-pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  @apply appearance-none w-4 h-4 rounded-full bg-pz-green cursor-pointer;
+  margin-top: -5px;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  @apply h-1.5 rounded-full;
+}
+
+/* Toggle switch */
+.toggle {
+  @apply relative inline-flex items-center cursor-pointer;
+}
+
+.toggle input {
+  @apply sr-only;
+}
+
+.toggle-track {
+  @apply w-10 h-5 rounded-full transition-colors duration-200;
+}
+
+.toggle-thumb {
+  @apply absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white transition-transform duration-200;
+}
