@@ -6,6 +6,7 @@ import { setupProfileHandlers } from './ipc/profileManager'
 import { setupFileHandlers } from './ipc/fileManager'
 import { setupModHandlers } from './ipc/modManager'
 import { setupWorldHandlers } from './ipc/worldManager'
+import { setupUpdaterHandlers } from './ipc/updater'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -51,6 +52,7 @@ app.whenReady().then(() => {
   setupFileHandlers()
   setupModHandlers()
   setupWorldHandlers()
+  setupUpdaterHandlers(mainWindow)
 
   // Window control IPC
   ipcMain.on('window:minimize', () => mainWindow?.minimize())
@@ -74,6 +76,27 @@ app.whenReady().then(() => {
       properties: ['openDirectory'],
     })
     return result.canceled ? null : result.filePaths[0]
+  })
+
+  // Open file dialog (for .ini import)
+  ipcMain.handle('dialog:openFile', async (_event, filters?: Electron.FileFilter[]) => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openFile'],
+      filters: filters || [{ name: 'All Files', extensions: ['*'] }],
+    })
+    return result.canceled ? null : result.filePaths[0]
+  })
+
+  // Read a file from disk and return its text content
+  ipcMain.handle('fs:readFile', async (_event, filePath: string) => {
+    try {
+      const { readFileSync } = await import('fs')
+      const content = readFileSync(filePath, 'utf-8')
+      return { success: true, content }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error)
+      return { success: false, message: msg }
+    }
   })
 
   app.on('activate', () => {

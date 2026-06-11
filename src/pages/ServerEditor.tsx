@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Save, FolderOpen, ArrowLeft, Settings2, Package, Sliders, Trash2, AlertTriangle } from 'lucide-react'
+import { Save, FolderOpen, ArrowLeft, Settings2, Package, Sliders, Trash2, AlertTriangle, RotateCcw } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile } from '../store/useAppStore'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -140,6 +140,18 @@ export default function ServerEditor() {
     if (folder) setForm(prev => ({ ...prev, serverInstallPath: folder }))
   }
 
+  const resetIniToDefaults = () => {
+    if (!window.confirm('Reset all server config settings to defaults? Basic info (name, path, password) will be kept. This cannot be undone.')) return
+    setForm(prev => ({
+      ...prev,
+      port: 16261,
+      udpPort: 16262,
+      memory: 4096,
+      maxPlayers: 16,
+      iniSettings: {},
+    }))
+  }
+
   const updateIni = (key: string, value: unknown) => {
     setForm(prev => ({
       ...prev,
@@ -193,6 +205,14 @@ export default function ServerEditor() {
               </button>
             </>
           )}
+          <button
+            onClick={resetIniToDefaults}
+            className="btn-outline text-xs"
+            title="Reset server config to defaults"
+          >
+            <RotateCcw size={12} />
+            Reset Defaults
+          </button>
           <button onClick={handleSave} disabled={saving} className="btn-primary">
             <Save size={14} />
             {saving ? 'Saving...' : 'Save'}

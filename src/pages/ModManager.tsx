@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Search, Plus, Trash2, ArrowLeft, Save, ExternalLink, Package, AlertCircle, GripVertical, Hash } from 'lucide-react'
+import { Search, Plus, Trash2, ArrowLeft, Save, ExternalLink, Package, AlertCircle, GripVertical, Hash, Upload, FileText, CheckCircle } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ModEntry } from '../store/useAppStore'
 
@@ -15,12 +15,32 @@ interface WorkshopMod {
   fileSize: number
 }
 
+// Parse Mods= and WorkshopItems= from a .ini file string
+function parseModsFromIni(iniContent: string): { workshopIds: string[]; modIds: string[] } {
+  const workshopIds: string[] = []
+  const modIds: string[] = []
+
+  for (const line of iniContent.split('\n')) {
+    const trimmed = line.trim()
+    if (/^WorkshopItems\s*=/i.test(trimmed)) {
+      const val = trimmed.split('=').slice(1).join('=').trim()
+      if (val) workshopIds.push(...val.split(';').map(s => s.trim()).filter(Boolean))
+    }
+    if (/^Mods\s*=/i.test(trimmed)) {
+      const val = trimmed.split('=').slice(1).join('=').trim()
+      if (val) modIds.push(...val.split(';').map(s => s.trim()).filter(Boolean))
+    }
+  }
+
+  return { workshopIds, modIds }
+}
+
 export default function ModManager() {
   const { activeProfileId, setActiveView, profiles, setProfiles } = useAppStore()
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<WorkshopMod[]>([])
   const [searchPage, setSearchPage] = useState(1)
-  const [searchTotal, setSearchTotal] = useState(0)
+  const [searchHasMore, setSearchHasMore] = useState(false)
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState('')
   const [manualWorkshopId, setManualWorkshopId] = useState('')
@@ -29,7 +49,12 @@ export default function ModManager() {
   const [manualLoading, setManualLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [activeTab, setActiveTab] = useState<'installed' | 'search' | 'manual'>('installed')
+  const [activeTab, setActiveTab] = useState<'installed' | 'search' | 'manual' | 'import'>('installed')
+
+  // Import tab state
+  const [importText, setImportText] = useState('')
+  const [importResult, setImportResult] = useState<{ added: number; skipped: number; fetching: boolean; done: boolean; error: string } | null>(null)
+
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   const profile = profiles.find(p => p.id === activeProfileId)
@@ -51,11 +76,11 @@ export default function ModManager() {
       const result = await window.electronAPI.mods.search(searchQuery, page)
       if (result.success) {
         setSearchResults(result.mods)
-        setSearchTotal(result.total)
+        setSearchHasMore(result.hasMore ?? false)
       } else {
         setSearchError(result.message || 'Search failed')
       }
-    } catch (err) {
+    } catch {
       setSearchError('Failed to search Steam Workshop. Check your internet connection.')
     } finally {
       setSearching(false)
@@ -80,8 +105,7 @@ export default function ModManager() {
   }
 
   const addMod = (workshopId: string, modId: string, name: string, description?: string, thumbnailUrl?: string) => {
-    if (mods.some(m => m.workshopId === workshopId)) return // already added
-
+    if (mods.some(m => m.workshopId === workshopId)) return
     const newMod: ModEntry = {
       workshopId,
       modId: modId || workshopId,
@@ -90,6 +114,7 @@ export default function ModManager() {
       thumbnailUrl,
     }
     setMods(prev => [...prev, newMod])
+    return newMod
   }
 
   const removeMod = (workshopId: string) => {
@@ -108,6 +133,84 @@ export default function ModManager() {
     setManualName('')
   }
 
+  // ── Import from .ini ──────────────────────────────────────────────────────
+
+  const handleBrowseIni = async () => {
+    const filePath = await window.electronAPI.dialog.openFile([
+      { name: 'Server Config', extensions: ['ini', 'cfg', 'txt'] },
+      { name: 'All Files', extensions: ['*'] },
+    ])
+    if (!filePath) return
+    const result = await window.electronAPI.fs.readFile(filePath)
+    if (result.success && result.content) {
+      setImportText(result.content)
+    }
+  }
+
+  const handleImport = async () => {
+    const text = importText.trim()
+    if (!text) return
+
+    const { workshopIds, modIds } = parseModsFromIni(text)
+
+    if (workshopIds.length === 0 && modIds.length === 0) {
+      setImportResult({ added: 0, skipped: 0, fetching: false, done: true, error: 'No Mods= or WorkshopItems= lines found in the pasted text.' })
+      return
+    }
+
+    setImportResult({ added: 0, skipped: 0, fetching: true, done: false, error: '' })
+
+    // Determine which IDs are new (not already in mod list)
+    const existingWorkshopIds = new Set(mods.map(m => m.workshopId))
+    const newWorkshopIds = workshopIds.filter(id => !existingWorkshopIds.has(id))
+    const skipped = workshopIds.length - newWorkshopIds.length
+
+    if (newWorkshopIds.length === 0) {
+      setImportResult({ added: 0, skipped, fetching: false, done: true, error: '' })
+      return
+    }
+
+    // Fetch details for new IDs from Steam
+    let fetchedMods: WorkshopMod[] = []
+    try {
+      const result = await window.electronAPI.mods.getDetails(newWorkshopIds)
+      if (result.success) {
+        fetchedMods = result.mods
+      }
+    } catch {
+      // If fetch fails, fall back to creating stubs from modIds
+    }
+
+    // Build final mod entries: use fetched data if available, otherwise create stubs
+    const fetchedMap = new Map(fetchedMods.map(m => [m.workshopId, m]))
+    let added = 0
+
+    setMods(prev => {
+      const next = [...prev]
+      for (let i = 0; i < newWorkshopIds.length; i++) {
+        const wid = newWorkshopIds[i]
+        if (next.some(m => m.workshopId === wid)) continue
+
+        const fetched = fetchedMap.get(wid)
+        const fallbackModId = modIds[i] || wid
+        const entry: ModEntry = {
+          workshopId: wid,
+          modId: fetched?.modId || fallbackModId,
+          name: fetched?.name || `Mod ${wid}`,
+          description: fetched?.description,
+          thumbnailUrl: fetched?.thumbnailUrl,
+        }
+        next.push(entry)
+        added++
+      }
+      return next
+    })
+
+    setImportResult({ added, skipped, fetching: false, done: true, error: '' })
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   const handleSave = async () => {
     if (!profile) return
     setSaving(true)
@@ -125,7 +228,6 @@ export default function ModManager() {
 
       await window.electronAPI.profiles.save(updatedProfile)
 
-      // Write updated INI
       const serverName = profile.name.replace(/[^a-zA-Z0-9_-]/g, '_')
       await window.electronAPI.config.writeIni(serverName, `%USERPROFILE%\\Zomboid`, updatedProfile.iniSettings)
 
@@ -133,7 +235,7 @@ export default function ModManager() {
       setProfiles(updated)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch (err) {
+    } catch {
       alert('Failed to save mods.')
     } finally {
       setSaving(false)
@@ -165,6 +267,7 @@ export default function ModManager() {
           { id: 'installed', label: `Installed (${mods.length})` },
           { id: 'search', label: 'Workshop Search' },
           { id: 'manual', label: 'Manual Entry' },
+          { id: 'import', label: 'Import from .ini' },
         ].map(t => (
           <button
             key={t.id}
@@ -180,17 +283,21 @@ export default function ModManager() {
 
       <div className="flex-1 overflow-hidden flex flex-col">
 
-        {/* Installed Mods Tab */}
+        {/* ── Installed Mods Tab ── */}
         {activeTab === 'installed' && (
           <div className="flex-1 overflow-y-auto p-6">
             {mods.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-48 gap-3">
                 <Package size={36} className="text-pz-muted" />
                 <p className="text-pz-muted text-sm">No mods installed yet.</p>
-                <button onClick={() => setActiveTab('search')} className="btn-primary">
-                  <Search size={14} />
-                  Browse Workshop
-                </button>
+                <div className="flex gap-2">
+                  <button onClick={() => setActiveTab('search')} className="btn-primary">
+                    <Search size={14} /> Browse Workshop
+                  </button>
+                  <button onClick={() => setActiveTab('import')} className="btn-outline">
+                    <Upload size={14} /> Import .ini
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="space-y-2">
@@ -198,6 +305,9 @@ export default function ModManager() {
                   <p className="text-xs text-pz-muted">
                     Mod load order matters in Project Zomboid. Drag to reorder (top = loaded first).
                   </p>
+                  <button onClick={() => setActiveTab('import')} className="btn-outline text-xs py-1 px-2">
+                    <Upload size={12} /> Import .ini
+                  </button>
                 </div>
                 {mods.map((mod, idx) => (
                   <div key={mod.workshopId} className="card p-3 flex items-center gap-3">
@@ -244,10 +354,9 @@ export default function ModManager() {
           </div>
         )}
 
-        {/* Workshop Search Tab */}
+        {/* ── Workshop Search Tab ── */}
         {activeTab === 'search' && (
           <div className="flex-1 overflow-hidden flex flex-col">
-            {/* Search bar */}
             <div className="p-4 border-b border-pz-border bg-pz-darker flex-shrink-0">
               <div className="flex gap-2">
                 <div className="relative flex-1">
@@ -270,12 +379,8 @@ export default function ModManager() {
                   {searching ? 'Searching...' : 'Search'}
                 </button>
               </div>
-              {searchTotal > 0 && (
-                <p className="text-xs text-pz-muted mt-2">{searchTotal} results found</p>
-              )}
             </div>
 
-            {/* Results */}
             <div className="flex-1 overflow-y-auto p-4">
               {searchError && (
                 <div className="flex items-center gap-2 text-pz-red bg-pz-red/10 border border-pz-red/20 rounded-lg p-3 mb-4">
@@ -283,19 +388,16 @@ export default function ModManager() {
                   <span className="text-sm">{searchError}</span>
                 </div>
               )}
-
               {searching && (
                 <div className="flex items-center justify-center h-32">
                   <div className="text-pz-muted text-sm">Searching Steam Workshop...</div>
                 </div>
               )}
-
               {!searching && searchResults.length === 0 && searchQuery && !searchError && (
                 <div className="flex items-center justify-center h-32">
                   <div className="text-pz-muted text-sm">No results found. Try different keywords.</div>
                 </div>
               )}
-
               {!searching && searchResults.length === 0 && !searchQuery && (
                 <div className="flex flex-col items-center justify-center h-32 gap-2">
                   <Search size={28} className="text-pz-muted" />
@@ -340,14 +442,10 @@ export default function ModManager() {
                         <div className="flex items-center gap-3 mt-1.5">
                           <span className="text-xs text-pz-muted">ID: {mod.workshopId}</span>
                           {mod.subscriptions > 0 && (
-                            <span className="text-xs text-pz-muted">
-                              {mod.subscriptions.toLocaleString()} subscribers
-                            </span>
+                            <span className="text-xs text-pz-muted">{mod.subscriptions.toLocaleString()} subscribers</span>
                           )}
                           {mod.tags.slice(0, 3).map(tag => (
-                            <span key={tag} className="text-xs bg-pz-border text-pz-muted px-1.5 py-0.5 rounded">
-                              {tag}
-                            </span>
+                            <span key={tag} className="text-xs bg-pz-border text-pz-muted px-1.5 py-0.5 rounded">{tag}</span>
                           ))}
                         </div>
                       </div>
@@ -357,7 +455,7 @@ export default function ModManager() {
               </div>
 
               {/* Pagination */}
-              {searchTotal > 20 && (
+              {(searchResults.length > 0 || searchPage > 1) && (
                 <div className="flex items-center justify-center gap-3 mt-4">
                   <button
                     onClick={() => handleSearch(searchPage - 1)}
@@ -366,12 +464,10 @@ export default function ModManager() {
                   >
                     Previous
                   </button>
-                  <span className="text-sm text-pz-muted">
-                    Page {searchPage} of {Math.ceil(searchTotal / 20)}
-                  </span>
+                  <span className="text-sm text-pz-muted">Page {searchPage}</span>
                   <button
                     onClick={() => handleSearch(searchPage + 1)}
-                    disabled={searchPage >= Math.ceil(searchTotal / 20) || searching}
+                    disabled={!searchHasMore || searching}
                     className="btn-outline"
                   >
                     Next
@@ -382,7 +478,7 @@ export default function ModManager() {
           </div>
         )}
 
-        {/* Manual Entry Tab */}
+        {/* ── Manual Entry Tab ── */}
         {activeTab === 'manual' && (
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-lg mx-auto">
@@ -427,7 +523,7 @@ export default function ModManager() {
                     />
                   </div>
                   <p className="text-xs text-pz-muted mt-1">
-                    The Mod ID from the mod's workshop page (used in server config). Usually found in the mod description.
+                    The Mod ID from the mod's workshop page (used in server config).
                   </p>
                 </div>
 
@@ -452,7 +548,7 @@ export default function ModManager() {
                 </button>
               </div>
 
-              {/* Common popular mods quick-add */}
+              {/* Popular mods */}
               <div className="card p-5 mt-4">
                 <h3 className="section-title mb-3">Popular Mods (Quick Add)</h3>
                 <div className="space-y-2">
@@ -476,6 +572,105 @@ export default function ModManager() {
             </div>
           </div>
         )}
+
+        {/* ── Import from .ini Tab ── */}
+        {activeTab === 'import' && (
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="max-w-2xl mx-auto space-y-4">
+              <div className="card p-5">
+                <div className="flex items-center gap-2 mb-1">
+                  <FileText size={16} className="text-pz-green" />
+                  <h2 className="section-title">Import Mod List from .ini</h2>
+                </div>
+                <p className="text-xs text-pz-muted mb-4">
+                  Paste the contents of your existing server <code className="text-pz-green">serverName.ini</code> file
+                  (or just the relevant lines), or browse to open the file directly.
+                  The importer reads the <code className="text-pz-green">Mods=</code> and{' '}
+                  <code className="text-pz-green">WorkshopItems=</code> lines and adds any mods not already in your list.
+                  Mod details (names, thumbnails) are fetched from Steam automatically.
+                </p>
+
+                {/* Browse button */}
+                <div className="flex gap-2 mb-3">
+                  <button onClick={handleBrowseIni} className="btn-outline">
+                    <Upload size={14} />
+                    Browse for .ini file
+                  </button>
+                  <span className="text-xs text-pz-muted self-center">or paste below</span>
+                </div>
+
+                {/* Paste area */}
+                <textarea
+                  value={importText}
+                  onChange={e => { setImportText(e.target.value); setImportResult(null) }}
+                  className="input font-mono text-xs h-48 resize-none"
+                  placeholder={`Paste your .ini contents here, e.g.:\n\nWorkshopItems=2392709985;2200148440;2313387159\nMods=Brita;BritaArmor;Arsenal(26)GunFighter\n\nOnly the Mods= and WorkshopItems= lines are used.`}
+                  spellCheck={false}
+                />
+
+                {/* Import button */}
+                <button
+                  onClick={handleImport}
+                  disabled={!importText.trim() || importResult?.fetching}
+                  className="btn-primary mt-3 w-full justify-center"
+                >
+                  {importResult?.fetching ? (
+                    <>Fetching mod details from Steam...</>
+                  ) : (
+                    <><Plus size={14} /> Import Mods</>
+                  )}
+                </button>
+              </div>
+
+              {/* Result */}
+              {importResult && !importResult.fetching && (
+                <div className={`card p-4 flex items-start gap-3 ${importResult.error ? 'border-pz-red/30' : 'border-pz-green/30'}`}>
+                  {importResult.error ? (
+                    <AlertCircle size={16} className="text-pz-red flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <CheckCircle size={16} className="text-pz-green flex-shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    {importResult.error ? (
+                      <p className="text-sm text-pz-red">{importResult.error}</p>
+                    ) : (
+                      <>
+                        <p className="text-sm text-pz-text font-medium">
+                          Import complete!
+                        </p>
+                        <p className="text-xs text-pz-muted mt-0.5">
+                          {importResult.added > 0
+                            ? `Added ${importResult.added} mod${importResult.added !== 1 ? 's' : ''}.`
+                            : 'No new mods to add.'}
+                          {importResult.skipped > 0 && ` Skipped ${importResult.skipped} already-installed.`}
+                        </p>
+                        {importResult.added > 0 && (
+                          <p className="text-xs text-pz-muted mt-1">
+                            Don't forget to click <strong>Save</strong> in the header to persist the changes.
+                          </p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Example format hint */}
+              <div className="card p-4 bg-pz-darker/50">
+                <p className="text-xs text-pz-muted font-medium mb-2">Expected format (from your server .ini):</p>
+                <pre className="text-xs text-pz-green font-mono leading-relaxed">
+{`WorkshopItems=2392709985;2200148440;2313387159
+Mods=Brita;BritaArmor;Arsenal(26)GunFighter`}
+                </pre>
+                <p className="text-xs text-pz-muted mt-2">
+                  Your server .ini is usually at:<br />
+                  <code className="text-pz-green">%USERPROFILE%\Zomboid\Server\YourServerName.ini</code>
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   )

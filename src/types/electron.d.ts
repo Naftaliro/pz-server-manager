@@ -9,6 +9,29 @@ interface ElectronAPI {
   }
   dialog: {
     openFolder: () => Promise<string | null>
+    openFile: (filters?: Array<{ name: string; extensions: string[] }>) => Promise<string | null>
+  }
+  fs: {
+    readFile: (filePath: string) => Promise<{ success: boolean; content?: string; message?: string }>
+  }
+  updater: {
+    check: () => Promise<{
+      success: boolean
+      available: boolean
+      currentVersion: string
+      latestVersion?: string
+      releaseNotes?: string
+      releaseUrl?: string
+      downloadUrl?: string
+      assetName?: string
+      assetSize?: number
+      publishedAt?: string
+      message?: string
+    }>
+    install: (downloadUrl: string, assetName: string) => Promise<{ success: boolean; message?: string }>
+    openReleasePage: (url: string) => Promise<{ success: boolean }>
+    getVersion: () => Promise<{ version: string }>
+    onProgress: (callback: (data: { stage: string; pct: number }) => void) => () => void
   }
   steamcmd: {
     download: (targetDir: string) => Promise<{ success: boolean; path?: string; message: string }>
@@ -51,7 +74,8 @@ interface ElectronAPI {
     search: (query: string, page: number) => Promise<{
       success: boolean
       mods: WorkshopMod[]
-      total: number
+      total?: number
+      hasMore?: boolean
       message?: string
     }>
     getDetails: (workshopIds: string[]) => Promise<{
