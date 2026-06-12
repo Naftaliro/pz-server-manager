@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Save, FolderOpen, ArrowLeft, Settings2, Package, Sliders, Trash2, AlertTriangle, RotateCcw, CheckCircle, XCircle, Loader, Download, Upload } from 'lucide-react'
+import { Save, FolderOpen, ArrowLeft, Settings2, Package, Sliders, Trash2, AlertTriangle, RotateCcw, CheckCircle, XCircle, Loader, Download, Upload, FileCode2 } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
-import type { ServerProfile, BuildVersion } from '../store/useAppStore'
+import type { ServerProfile, BuildVersion, LaunchMode } from '../store/useAppStore'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 const DEFAULT_PROFILE: Omit<ServerProfile, 'id' | 'createdAt' | 'updatedAt'> = {
@@ -17,6 +17,7 @@ const DEFAULT_PROFILE: Omit<ServerProfile, 'id' | 'createdAt' | 'updatedAt'> = {
   serverPassword: '',
   maxPlayers: 16,
   mods: [],
+  launchMode: 'managed' as LaunchMode,
   iniSettings: {},
   sandboxSettings: {},
 }
@@ -33,7 +34,7 @@ const MAPS = [
 ]
 
 export default function ServerEditor() {
-  const { activeProfileId, setActiveView, setActiveProfileId, profiles, setProfiles, updateProfile } = useAppStore()
+  const { activeProfileId, setActiveView, setActiveProfileId, profiles, setProfiles } = useAppStore()
   const [form, setForm] = useState<Omit<ServerProfile, 'id' | 'createdAt' | 'updatedAt'>>(DEFAULT_PROFILE)
   const [tab, setTab] = useState<'basic' | 'network' | 'gameplay' | 'pvp' | 'safehouses' | 'advanced' | 'discord' | 'danger'>('basic')
   const [saving, setSaving] = useState(false)
@@ -61,6 +62,7 @@ export default function ServerEditor() {
         serverPassword: existingProfile.serverPassword,
         maxPlayers: existingProfile.maxPlayers,
         mods: existingProfile.mods || [],
+        launchMode: existingProfile.launchMode || 'managed',
         iniSettings: existingProfile.iniSettings || {},
         sandboxSettings: existingProfile.sandboxSettings || {},
         lastStarted: existingProfile.lastStarted,
@@ -356,6 +358,47 @@ export default function ServerEditor() {
                       : 'B42 is the current unstable branch with animals, crafting, and new game modes. Mods will be filtered to B42-compatible items.'}
                   </p>
                 </FormField>
+              </Section>
+
+              <Section title="Launch Mode">
+                <div className="space-y-3">
+                  <div className="flex gap-3">
+                    {(['managed', 'passthrough'] as LaunchMode[]).map(mode => (
+                      <button
+                        key={mode}
+                        onClick={() => setForm(prev => ({ ...prev, launchMode: mode }))}
+                        className={`flex-1 py-3 px-4 rounded-md border text-sm font-semibold transition-colors text-left ${
+                          form.launchMode === mode
+                            ? 'bg-pz-green/20 border-pz-green text-pz-green'
+                            : 'border-pz-border text-pz-muted hover:border-pz-text'
+                        }`}
+                      >
+                        <div className="font-semibold">{mode === 'managed' ? '⚙ Managed (Recommended)' : '📄 Use Files As-Is'}</div>
+                        <div className="text-xs font-normal mt-0.5 opacity-80">
+                          {mode === 'managed'
+                            ? 'App writes INI & SandboxVars from your profile settings before each launch'
+                            : 'App launches the server without touching any config files — your manual edits are preserved'}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  {form.launchMode === 'passthrough' && (
+                    <div className="flex items-start gap-2 p-3 bg-amber-900/20 border border-amber-700/30 rounded-md">
+                      <AlertTriangle size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                      <div className="text-xs text-amber-300">
+                        <strong>Files As-Is mode:</strong> The app will NOT overwrite your config files on launch. Use the Raw File Editor to edit them directly. Make sure your files exist in <code>%USERPROFILE%\Zomboid\Server\</code> before starting.
+                      </div>
+                    </div>
+                  )}
+                  {!isNew && (
+                    <button
+                      onClick={() => { setActiveView('raweditor') }}
+                      className="btn-outline text-xs w-full"
+                    >
+                      <FileCode2 size={13} /> Open Raw File Editor (edit .ini and _SandboxVars.lua directly)
+                    </button>
+                  )}
+                </div>
               </Section>
 
               <Section title="Server Files">
