@@ -52,7 +52,7 @@ app.whenReady().then(() => {
   setupFileHandlers()
   setupModHandlers()
   setupWorldHandlers()
-  setupUpdaterHandlers(mainWindow)
+  setupUpdaterHandlers()
 
   // Window control IPC
   ipcMain.on('window:minimize', () => mainWindow?.minimize())
