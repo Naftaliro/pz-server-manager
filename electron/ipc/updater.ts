@@ -13,6 +13,24 @@ function getCurrentVersion(): string {
   try { return app.getVersion() } catch { return '0.0.0' }
 }
 
+// Always get the LIVE main window — never hold a stale reference
+function getLiveWindow(): BrowserWindow | null {
+  const wins = BrowserWindow.getAllWindows()
+  return wins.find(w => !w.isDestroyed()) ?? null
+}
+
+// Safe send — only sends if the window and its webContents are still alive
+function safeSend(channel: string, payload: unknown): void {
+  try {
+    const win = getLiveWindow()
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send(channel, payload)
+    }
+  } catch {
+    // Swallow — window may have been destroyed between the check and the send
+  }
+}
+
 interface GithubRelease {
   tag_name: string
   name: string
@@ -42,7 +60,7 @@ interface UpdateInfo {
 
 function httpsGetJson(url: string, redirectCount = 0): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    if (redirectCount > 5) { reject(new Error('Too many redirects')); return }
+    if (redirectCount > 10) { reject(new Error('Too many redirects')); return }
 
     const options = {
       headers: {
@@ -58,16 +76,15 @@ function httpsGetJson(url: string, redirectCount = 0): Promise<unknown> {
         return
       }
       if (res.statusCode !== 200) {
-        // Drain the body so the socket can be reused, then reject
         res.resume()
-        reject(new Error(`GitHub API returned HTTP ${res.statusCode} for ${url}`))
+        reject(new Error(`GitHub API returned HTTP ${res.statusCode}`))
         return
       }
       let data = ''
       res.on('data', (chunk: Buffer) => { data += chunk.toString() })
       res.on('end', () => {
         try { resolve(JSON.parse(data)) }
-        catch (e) { reject(new Error(`Failed to parse JSON from ${url}: ${(e as Error).message}`)) }
+        catch (e) { reject(new Error(`Failed to parse JSON: ${(e as Error).message}`)) }
       })
       res.on('error', reject)
     })
@@ -104,25 +121,40 @@ function downloadFile(
 
       const total = parseInt(res.headers['content-length'] || '0', 10)
       let received = 0
+      let lastReportedPct = -1
 
       const file = fs.createWriteStream(destPath)
+
       res.on('data', (chunk: Buffer) => {
         received += chunk.length
         if (!file.write(chunk)) {
           res.pause()
           file.once('drain', () => res.resume())
         }
-        if (total > 0) onProgress(Math.round((received / total) * 100))
+        if (total > 0) {
+          const pct = Math.round((received / total) * 100)
+          // Only fire callback when percentage actually changes to reduce IPC traffic
+          if (pct !== lastReportedPct) {
+            lastReportedPct = pct
+            onProgress(pct)
+          }
+        }
       })
+
       res.on('end', () => {
         file.end()
         file.on('finish', resolve)
         file.on('error', reject)
       })
-      res.on('error', (err) => { file.destroy(); reject(err) })
+
+      res.on('error', (err) => {
+        file.destroy()
+        reject(err)
+      })
     })
+
     req.on('error', reject)
-    req.setTimeout(120000, () => { req.destroy(); reject(new Error('Download timed out')) })
+    req.setTimeout(180000, () => { req.destroy(); reject(new Error('Download timed out after 3 minutes')) })
     req.end()
   })
 }
@@ -138,11 +170,24 @@ function compareVersions(a: string, b: string): number {
   return 0
 }
 
+function cleanTempDir(tempDir: string): void {
+  try {
+    if (fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
+  } catch {
+    // Best-effort cleanup — ignore errors
+  }
+}
+
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
-export function setupUpdaterHandlers(mainWindow: BrowserWindow | null) {
+export function setupUpdaterHandlers() {
+  // NOTE: We no longer accept mainWindow as a parameter.
+  // All window access goes through getLiveWindow() / safeSend() to avoid
+  // "Object has been destroyed" crashes when the window is replaced during update.
 
-  // Check for updates
+  // ── Check for updates ────────────────────────────────────────────────────────
   ipcMain.handle('updater:check', async () => {
     const currentVersion = getCurrentVersion()
     try {
@@ -153,27 +198,11 @@ export function setupUpdaterHandlers(mainWindow: BrowserWindow | null) {
       const latestVersion = release.tag_name.replace(/^v/, '')
       const isNewer = compareVersions(latestVersion, currentVersion) > 0
 
-      // Pick the best Windows zip asset — prefer exact name match, then any win zip
+      // Prefer a win zip asset; fall back to any zip
       const asset =
-        release.assets.find(a => a.name.match(/win.*\.zip$/i)) ||
+        release.assets.find(a => /win.*\.zip$/i.test(a.name)) ||
         release.assets.find(a => a.name.endsWith('.zip')) ||
         null
-
-      if (!asset) {
-        // No downloadable asset found — still report if newer, just no auto-install
-        return {
-          success: true,
-          available: isNewer,
-          currentVersion,
-          latestVersion,
-          releaseNotes: release.body || '',
-          releaseUrl: release.html_url,
-          downloadUrl: '',
-          assetName: '',
-          assetSize: 0,
-          publishedAt: release.published_at,
-        } as UpdateInfo & { success: boolean }
-      }
 
       const info: UpdateInfo = {
         available: isNewer,
@@ -181,9 +210,9 @@ export function setupUpdaterHandlers(mainWindow: BrowserWindow | null) {
         latestVersion,
         releaseNotes: release.body || '',
         releaseUrl: release.html_url,
-        downloadUrl: asset.browser_download_url,
-        assetName: asset.name,
-        assetSize: asset.size,
+        downloadUrl: asset?.browser_download_url || '',
+        assetName: asset?.name || '',
+        assetSize: asset?.size || 0,
         publishedAt: release.published_at,
       }
 
@@ -194,130 +223,160 @@ export function setupUpdaterHandlers(mainWindow: BrowserWindow | null) {
     }
   })
 
-  // Download and install update
-  // Strategy:
-  //   1. Download the zip to %TEMP%\pz-manager-update\
-  //   2. Write a .bat that: waits 4s, extracts via PowerShell, robocopy/xcopy new files
-  //      over the install dir (skipping userData), then relaunches the exe
-  //   3. Launch the bat detached, then quit the app
+  // ── Download and install update ──────────────────────────────────────────────
   //
-  // User data lives in app.getPath('userData') and is NEVER touched.
+  // Strategy:
+  //   1. Clean any leftover temp dir from a previous attempt
+  //   2. Download the zip to %LOCALAPPDATA%\pz-manager-update\
+  //   3. Verify the zip magic bytes
+  //   4. Write a .bat that: waits for the app to exit, extracts via PowerShell,
+  //      robocopy new files over the install dir (userData is never touched),
+  //      then relaunches the exe
+  //   5. Launch the bat detached, then quit the app
+  //
+  // Progress is sent via safeSend() which guards against destroyed webContents.
+  //
   ipcMain.handle('updater:install', async (_event, downloadUrl: string, assetName: string) => {
-    const sendProgress = (stage: string, pct: number) => {
-      mainWindow?.webContents.send('updater:progress', { stage, pct })
+    if (!downloadUrl || !assetName) {
+      return { success: false, message: 'No download URL provided. Please update manually from the GitHub releases page.' }
     }
 
+    // Use %LOCALAPPDATA% — more reliable than %TEMP% on Windows for persisting across sessions
+    const localAppData = process.env.LOCALAPPDATA || app.getPath('temp')
+    const tempDir = path.join(localAppData, 'pz-manager-update')
+    const zipPath = path.join(tempDir, assetName)
+    const extractDir = path.join(tempDir, 'extracted')
+
+    // ── Step 1: Clean up any leftover temp files from a previous attempt ────────
+    cleanTempDir(tempDir)
+
     try {
-      if (!downloadUrl || !assetName) {
-        return { success: false, message: 'No download URL available. Please update manually from the GitHub releases page.' }
-      }
-
-      const tempDir = path.join(app.getPath('temp'), 'pz-manager-update')
-      const zipPath = path.join(tempDir, assetName)
-      const extractDir = path.join(tempDir, 'extracted')
-
-      // Clean up any previous attempt
-      if (fs.existsSync(tempDir)) {
-        fs.rmSync(tempDir, { recursive: true, force: true })
-      }
       fs.mkdirSync(tempDir, { recursive: true })
       fs.mkdirSync(extractDir, { recursive: true })
+    } catch (err) {
+      return { success: false, message: `Failed to create temp directory: ${(err as Error).message}` }
+    }
 
-      sendProgress('Downloading update...', 0)
+    // ── Step 2: Download ─────────────────────────────────────────────────────────
+    safeSend('updater:progress', { stage: 'Downloading update...', pct: 0 })
 
+    try {
       await downloadFile(downloadUrl, zipPath, (pct) => {
-        sendProgress('Downloading update...', pct)
+        safeSend('updater:progress', { stage: 'Downloading update...', pct })
       })
+    } catch (err) {
+      cleanTempDir(tempDir)
+      return { success: false, message: `Download failed: ${(err as Error).message}` }
+    }
 
-      sendProgress('Preparing installer...', 100)
+    safeSend('updater:progress', { stage: 'Verifying download...', pct: 100 })
 
-      // Verify the downloaded file looks like a zip (PK magic bytes)
+    // ── Step 3: Verify zip magic bytes ───────────────────────────────────────────
+    try {
       const header = Buffer.alloc(4)
       const fd = fs.openSync(zipPath, 'r')
       fs.readSync(fd, header, 0, 4, 0)
       fs.closeSync(fd)
       if (header[0] !== 0x50 || header[1] !== 0x4B) {
+        cleanTempDir(tempDir)
         return { success: false, message: 'Downloaded file is not a valid zip archive. The release asset may be missing or corrupt.' }
       }
+    } catch (err) {
+      cleanTempDir(tempDir)
+      return { success: false, message: `Failed to verify download: ${(err as Error).message}` }
+    }
 
-      const appExe = app.getPath('exe')
-      const appDir = path.dirname(appExe)
+    // ── Step 4: Write the updater batch script ───────────────────────────────────
+    const appExe = app.getPath('exe')
+    const appDir = path.dirname(appExe)
 
-      // Escape paths for batch — wrap in quotes, no backslash doubling needed inside quotes
-      const batchScript = `@echo off
-setlocal enabledelayedexpansion
-title PZ Server Manager - Updating...
-echo ================================================
-echo  PZ Server Manager Auto-Updater
-echo ================================================
-echo.
-echo Waiting for the app to close...
-timeout /t 4 /nobreak > nul
+    // Use short 8.3-safe variable names inside the batch to avoid quoting issues
+    const batchScript = [
+      '@echo off',
+      'setlocal enabledelayedexpansion',
+      'title PZ Server Manager - Updating...',
+      'echo ================================================',
+      'echo  PZ Server Manager Auto-Updater',
+      'echo ================================================',
+      'echo.',
+      'echo Waiting for the app to fully close...',
+      'timeout /t 5 /nobreak > nul',
+      '',
+      'echo Extracting update package...',
+      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force"`,
+      'if %errorlevel% neq 0 (',
+      '  echo.',
+      '  echo ERROR: Extraction failed. Please update manually.',
+      '  pause',
+      '  exit /b 1',
+      ')',
+      '',
+      'echo Finding extracted app folder...',
+      'set "SRC="',
+      `for /d %%i in ("${extractDir}\\*") do (`,
+      '  if not defined SRC set "SRC=%%i"',
+      ')',
+      '',
+      ':: If no subfolder, the zip extracted flat — use extractDir directly',
+      'if not defined SRC (',
+      `  set "SRC=${extractDir}"`,
+      ')',
+      '',
+      `echo Copying new files to: ${appDir}`,
+      `robocopy "!SRC!" "${appDir}" /E /IS /IT /IM /NP /NJH /NJS 2>nul`,
+      ':: robocopy exit codes 0-7 are success (8+ are errors)',
+      'if %errorlevel% geq 8 (',
+      '  echo Robocopy reported errors, trying xcopy fallback...',
+      `  xcopy /E /Y /I "!SRC!\\*" "${appDir}\\" > nul`,
+      ')',
+      '',
+      'echo.',
+      'echo Update complete! Relaunching PZ Server Manager...',
+      'timeout /t 2 /nobreak > nul',
+      `start "" "${appExe}"`,
+      '',
+      ':: Clean up this batch file',
+      'del "%~f0"',
+      'exit /b 0',
+    ].join('\r\n')
 
-echo Extracting update package...
-powershell -NoProfile -NonInteractive -Command ^
-  "try { Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${extractDir}' -Force; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
-if %errorlevel% neq 0 (
-  echo.
-  echo ERROR: Extraction failed. Please update manually.
-  pause
-  exit /b 1
-)
+    const batchPath = path.join(tempDir, 'pz-update.bat')
 
-echo Finding extracted folder...
-set "EXTRACTED="
-for /d %%i in ("${extractDir}\\*") do (
-  if not defined EXTRACTED set "EXTRACTED=%%i"
-)
-
-if not defined EXTRACTED (
-  echo ERROR: Could not find extracted folder.
-  pause
-  exit /b 1
-)
-
-echo Copying new files to: ${appDir}
-robocopy "!EXTRACTED!" "${appDir}" /E /IS /IT /IM /NP /NJH /NJS 2>nul
-if %errorlevel% geq 8 (
-  echo Robocopy failed, trying xcopy...
-  xcopy /E /Y /I "!EXTRACTED!\\*" "${appDir}\\" > nul
-)
-
-echo.
-echo Update complete! Relaunching...
-timeout /t 1 /nobreak > nul
-start "" "${appExe}"
-del "%~f0"
-exit /b 0
-`
-
-      const batchPath = path.join(tempDir, 'pz-update.bat')
+    try {
       fs.writeFileSync(batchPath, batchScript, 'utf-8')
+    } catch (err) {
+      cleanTempDir(tempDir)
+      return { success: false, message: `Failed to write updater script: ${(err as Error).message}` }
+    }
 
-      // Launch the batch script in a visible window so the user can see progress
+    // ── Step 5: Launch the batch detached and quit ───────────────────────────────
+    try {
       spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', batchPath], {
         detached: true,
         stdio: 'ignore',
         shell: false,
+        windowsHide: false,
       }).unref()
-
-      // Give the batch a moment to start, then quit
-      setTimeout(() => app.quit(), 1000)
-
-      return { success: true }
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error)
-      return { success: false, message: msg }
+    } catch (err) {
+      cleanTempDir(tempDir)
+      return { success: false, message: `Failed to launch updater: ${(err as Error).message}` }
     }
+
+    // Give the batch a moment to start before we quit
+    setTimeout(() => {
+      try { app.quit() } catch { /* ignore */ }
+    }, 1500)
+
+    return { success: true }
   })
 
-  // Open release page in browser (manual fallback)
+  // ── Open release page in browser (manual fallback) ───────────────────────────
   ipcMain.handle('updater:openReleasePage', async (_event, url: string) => {
     shell.openExternal(url)
     return { success: true }
   })
 
-  // Get current version (always live from app)
+  // ── Get current version (always live from Electron) ──────────────────────────
   ipcMain.handle('updater:getVersion', () => {
     return { version: getCurrentVersion() }
   })
