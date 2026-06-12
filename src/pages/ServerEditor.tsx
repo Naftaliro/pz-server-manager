@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Save, FolderOpen, ArrowLeft, Settings2, Package, Sliders, Trash2, AlertTriangle, RotateCcw, CheckCircle, XCircle, Loader, Download, Upload, FileCode2 } from 'lucide-react'
+import { Save, FolderOpen, ArrowLeft, Settings2, Package, Sliders, Trash2, AlertTriangle, RotateCcw, CheckCircle, XCircle, Loader, Download, Upload, FileCode2, Search, X } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile, BuildVersion, LaunchMode } from '../store/useAppStore'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -43,6 +43,8 @@ export default function ServerEditor() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [importMsg, setImportMsg] = useState('')
   const [exportMsg, setExportMsg] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchLower = searchQuery.toLowerCase().trim()
 
   const isNew = !activeProfileId
   const existingProfile = profiles.find(p => p.id === activeProfileId)
@@ -300,27 +302,54 @@ export default function ServerEditor() {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex gap-0 border-b border-pz-border bg-pz-darker px-6 flex-shrink-0 overflow-x-auto">
-        {tabs.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-              tab === t.id ? 'tab-active' : 'tab-inactive'
-            }`}
-          >
-            {t.label}
+      {/* Search bar */}
+      <div className="px-6 py-2 border-b border-pz-border bg-pz-darker flex items-center gap-2 flex-shrink-0">
+        <Search size={14} className="text-pz-muted flex-shrink-0" />
+        <input
+          type="text"
+          placeholder="Search settings…"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          className="flex-1 bg-transparent text-sm text-pz-text placeholder:text-pz-muted outline-none"
+        />
+        {searchQuery && (
+          <button onClick={() => setSearchQuery('')} className="text-pz-muted hover:text-pz-text">
+            <X size={14} />
           </button>
-        ))}
+        )}
       </div>
+
+      {/* Tabs — hidden when searching */}
+      {!searchLower && (
+        <div className="flex gap-0 border-b border-pz-border bg-pz-darker px-6 flex-shrink-0 overflow-x-auto">
+          {tabs.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
+                tab === t.id ? 'tab-active' : 'tab-inactive'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl mx-auto space-y-6">
 
+          {/* ── SEARCH RESULTS ── */}
+          {searchLower && (
+            <div className="card p-5 space-y-4">
+              <h2 className="section-title border-b border-pz-border pb-2">Search results for "{searchQuery}"</h2>
+              <IniSearchResults query={searchLower} getIni={getIni} updateIni={updateIni} />
+            </div>
+          )}
+
           {/* ── BASIC TAB ── */}
-          {tab === 'basic' && (
+          {!searchLower && tab === 'basic' && (
             <>
               <Section title="Identity">
                 <FormField label="Server Name *" error={errors.name}>
@@ -500,7 +529,7 @@ export default function ServerEditor() {
           )}
 
           {/* ── NETWORK TAB ── */}
-          {tab === 'network' && (
+          {!searchLower && tab === 'network' && (
             <>
               <Section title="Ports">
                 <div className="grid grid-cols-2 gap-4">
@@ -637,7 +666,7 @@ export default function ServerEditor() {
           )}
 
           {/* ── GAMEPLAY TAB ── */}
-          {tab === 'gameplay' && (
+          {!searchLower && tab === 'gameplay' && (
             <>
               <Section title="Map & World">
                 <FormField label="Map">
@@ -768,7 +797,7 @@ export default function ServerEditor() {
           )}
 
           {/* ── PVP TAB ── */}
-          {tab === 'pvp' && (
+          {!searchLower && tab === 'pvp' && (
             <>
               <Section title="PvP Settings">
                 <ToggleField label="Enable PvP" description="Allow players to damage each other"
@@ -825,7 +854,7 @@ export default function ServerEditor() {
           )}
 
           {/* ── SAFEHOUSES TAB ── */}
-          {tab === 'safehouses' && (
+          {!searchLower && tab === 'safehouses' && (
             <>
               <Section title="Safehouse Settings">
                 <ToggleField label="Player Safehouses" description="Allow players to claim safehouses"
@@ -870,7 +899,7 @@ export default function ServerEditor() {
           )}
 
           {/* ── ADVANCED TAB ── */}
-          {tab === 'advanced' && (
+          {!searchLower && tab === 'advanced' && (
             <>
               <Section title="Loot">
                 <FormField label="Loot Respawn (hours, 0=never)">
@@ -968,7 +997,7 @@ export default function ServerEditor() {
           )}
 
           {/* ── DISCORD TAB ── */}
-          {tab === 'discord' && (
+          {!searchLower && tab === 'discord' && (
             <>
               <Section title="Discord Integration">
                 <ToggleField label="Enable Discord Integration" description="Bridge global text chat with a Discord channel"
@@ -993,7 +1022,7 @@ export default function ServerEditor() {
           )}
 
           {/* ── DANGER ZONE TAB ── */}
-          {tab === 'danger' && (
+          {!searchLower && tab === 'danger' && (
             <>
               {!isNew && (
                 <Section title="World Wipe">
@@ -1073,6 +1102,127 @@ function ToggleField({ label, description, value, onChange }: {
         className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${value ? 'bg-pz-green' : 'bg-pz-border'}`}>
         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />
       </button>
+    </div>
+  )
+}
+
+// ── INI Search Results ────────────────────────────────────────────────────────
+const INI_FIELDS: { label: string; key: string; type: 'text' | 'number' | 'toggle' | 'select'; default?: unknown; options?: string[]; description?: string }[] = [
+  { label: 'Public', key: 'Public', type: 'toggle', default: false, description: 'Show server in public list' },
+  { label: 'Public Name', key: 'PublicName', type: 'text', default: 'My PZ Server' },
+  { label: 'Public Description', key: 'PublicDescription', type: 'text', default: '' },
+  { label: 'Max Players', key: 'MaxPlayers', type: 'number', default: 32 },
+  { label: 'Game Port', key: 'DefaultPort', type: 'number', default: 16261 },
+  { label: 'UDP Port', key: 'UDPPort', type: 'number', default: 16262 },
+  { label: 'Password', key: 'Password', type: 'text', default: '' },
+  { label: 'Admin Password', key: 'AdminPassword', type: 'text', default: 'admin' },
+  { label: 'PvP', key: 'PVP', type: 'toggle', default: true, description: 'Allow players to damage each other' },
+  { label: 'Pause on Empty', key: 'PauseEmpty', type: 'toggle', default: true },
+  { label: 'Global Chat', key: 'GlobalChat', type: 'toggle', default: true },
+  { label: 'Open', key: 'Open', type: 'toggle', default: true, description: 'Allow anyone to join without invite' },
+  { label: 'Server Welcome Message', key: 'ServerWelcomeMessage', type: 'text', default: '' },
+  { label: 'Logging', key: 'Logging', type: 'toggle', default: true },
+  { label: 'Client Command Filter', key: 'ClientCommandFilter', type: 'text', default: '' },
+  { label: 'Client Action Logs', key: 'ClientActionLogs', type: 'text', default: '' },
+  { label: 'Map', key: 'Map', type: 'text', default: 'Muldraugh, KY' },
+  { label: 'Mods', key: 'Mods', type: 'text', default: '' },
+  { label: 'Workshop Items', key: 'WorkshopItems', type: 'text', default: '' },
+  { label: 'Steam VAC', key: 'SteamVAC', type: 'toggle', default: true },
+  { label: 'Spawn Point', key: 'SpawnPoint', type: 'text', default: '0,0,0' },
+  { label: 'Safety System', key: 'SafetySystem', type: 'toggle', default: true },
+  { label: 'Show Safety', key: 'ShowSafety', type: 'toggle', default: true },
+  { label: 'Safety Toggle Timer', key: 'SafetyToggleTimer', type: 'number', default: 2 },
+  { label: 'Safety Cooldown Timer', key: 'SafetyCooldownTimer', type: 'number', default: 3 },
+  { label: 'Spawn Items', key: 'SpawnItems', type: 'text', default: '' },
+  { label: 'Default Port', key: 'DefaultPort', type: 'number', default: 16261 },
+  { label: 'Ping Limit', key: 'PingLimit', type: 'number', default: 400 },
+  { label: 'Hours for Loot Respawn', key: 'HoursForLootRespawn', type: 'number', default: 0 },
+  { label: 'Max Items for Loot Respawn', key: 'MaxItemsForLootRespawn', type: 'number', default: 4 },
+  { label: 'Construction Prevents Loot Respawn', key: 'ConstructionPreventsLootRespawn', type: 'toggle', default: true },
+  { label: 'Drop Off White List After Death', key: 'DropOffWhiteListAfterDeath', type: 'toggle', default: false },
+  { label: 'No Fire', key: 'NoFire', type: 'toggle', default: false },
+  { label: 'Announce Death', key: 'AnnounceDeath', type: 'toggle', default: false },
+  { label: 'Min Network Bandwidth', key: 'MinNetworkBandwidth', type: 'number', default: 0 },
+  { label: 'Max Network Bandwidth', key: 'MaxNetworkBandwidth', type: 'number', default: 131072 },
+  { label: 'Player Safehouse', key: 'PlayerSafehouse', type: 'toggle', default: true },
+  { label: 'Admin Safehouse', key: 'AdminSafehouse', type: 'toggle', default: true },
+  { label: 'Safehouse Allow Trepass', key: 'SafehouseAllowTrepass', type: 'toggle', default: true },
+  { label: 'Safehouse Allow Fire', key: 'SafehouseAllowFire', type: 'toggle', default: true },
+  { label: 'Safehouse Allow Loot', key: 'SafehouseAllowLoot', type: 'toggle', default: true },
+  { label: 'Safehouse Allow Respawn', key: 'SafehouseAllowRespawn', type: 'toggle', default: false },
+  { label: 'Safehouse Day Survived To Claim', key: 'SafehouseDaySurvivedToClaim', type: 'number', default: 0 },
+  { label: 'Safehouse Remove On Disconnect', key: 'SafehouseRemoveOnDisconnect', type: 'number', default: 0 },
+  { label: 'Allow Non Admins Debug', key: 'AllowNonAminsDEBUG', type: 'toggle', default: false },
+  { label: 'Show First And Last Name', key: 'ShowFirstAndLastName', type: 'toggle', default: false },
+  { label: 'Faction', key: 'Faction', type: 'toggle', default: true },
+  { label: 'Faction Dayz Survived To Create', key: 'FactionDayzSurvivedToCreate', type: 'number', default: 0 },
+  { label: 'Faction Players Required For Tag', key: 'FactionPlayersRequiredForTag', type: 'number', default: 1 },
+  { label: 'Discord Enable', key: 'DiscordEnable', type: 'toggle', default: false },
+  { label: 'Discord Token', key: 'DiscordToken', type: 'text', default: '' },
+  { label: 'Discord Channel', key: 'DiscordChannel', type: 'text', default: '' },
+  { label: 'Discord Channel ID', key: 'DiscordChannelID', type: 'text', default: '' },
+  { label: 'Car Engine Attraction Modifier', key: 'CarEngineAttractionModifier', type: 'number', default: 0.5 },
+  { label: 'Speed Limit', key: 'SpeedLimit', type: 'number', default: 70 },
+  { label: 'Server Player ID', key: 'ServerPlayerID', type: 'number', default: 0 },
+  { label: 'RCON Port', key: 'RCONPort', type: 'number', default: 27015 },
+  { label: 'RCON Password', key: 'RCONPassword', type: 'text', default: '' },
+  { label: 'Disable Item Anticheat', key: 'DisableItemAnticheat', type: 'toggle', default: false },
+  { label: 'Disable Container Loot', key: 'DisableContainerLoot', type: 'toggle', default: false },
+  { label: 'Blood Splat Lifespan Days', key: 'BloodSplatLifespanDays', type: 'number', default: 0 },
+  { label: 'Hours For World Item Removal', key: 'HoursForWorldItemRemoval', type: 'number', default: 0 },
+  { label: 'Trash Delete All', key: 'TrashDeleteAll', type: 'toggle', default: false },
+  { label: 'Item Numbers Limit Per Container', key: 'ItemNumbersLimitPerContainer', type: 'number', default: 0 },
+  { label: 'Minutes Per Page', key: 'MinutesPerPage', type: 'number', default: 1.0 },
+  { label: 'Save World Every N Minutes', key: 'SaveWorldEveryNMinutes', type: 'number', default: 0 },
+  { label: 'Kick Unfair Ping', key: 'KickFastPlayers', type: 'toggle', default: false },
+  { label: 'Server Browser Announced IP', key: 'ServerBrowserAnnouncedIP', type: 'text', default: '' },
+  { label: 'Player Bump Player', key: 'PlayerBumpPlayer', type: 'toggle', default: false },
+  { label: 'Map Remote Player Visibility', key: 'MapRemotePlayerVisibility', type: 'number', default: 1 },
+  { label: 'Voice Enable', key: 'VoiceEnable', type: 'toggle', default: true },
+  { label: 'Voice Min Distance', key: 'VoiceMinDistance', type: 'number', default: 10 },
+  { label: 'Voice Max Distance', key: 'VoiceMaxDistance', type: 'number', default: 100 },
+  { label: 'Voice 3D', key: 'Voice3D', type: 'toggle', default: true },
+]
+
+function IniSearchResults({ query, getIni, updateIni }: {
+  query: string
+  getIni: (key: string, def: unknown) => unknown
+  updateIni: (key: string, value: unknown) => void
+}) {
+  const matches = INI_FIELDS.filter(f =>
+    f.label.toLowerCase().includes(query) || f.key.toLowerCase().includes(query) || (f.description || '').toLowerCase().includes(query)
+  )
+  if (matches.length === 0) return <p className="text-sm text-pz-muted">No settings found matching "{query}".</p>
+  return (
+    <div className="space-y-3">
+      {matches.map(f => (
+        <div key={f.key} className="py-1">
+          {f.type === 'toggle' ? (
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-pz-text">{f.label}</div>
+                {f.description && <div className="text-xs text-pz-muted">{f.description}</div>}
+                <div className="text-xs text-pz-muted font-mono">{f.key}</div>
+              </div>
+              <button onClick={() => updateIni(f.key, !getIni(f.key, f.default))}
+                className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${getIni(f.key, f.default) ? 'bg-pz-green' : 'bg-pz-border'}`}>
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${getIni(f.key, f.default) ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              </button>
+            </div>
+          ) : (
+            <div>
+              <label className="label">{f.label} <span className="font-mono text-pz-muted text-xs ml-1">({f.key})</span></label>
+              <input
+                type={f.type === 'number' ? 'number' : 'text'}
+                value={String(getIni(f.key, f.default))}
+                onChange={e => updateIni(f.key, f.type === 'number' ? Number(e.target.value) : e.target.value)}
+                className="input"
+              />
+              {f.description && <p className="text-xs text-pz-muted mt-1">{f.description}</p>}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

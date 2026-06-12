@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { ArrowLeft, Save, RefreshCw, FileText, AlertCircle, CheckCircle, FolderOpen, Info } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { ArrowLeft, Save, RefreshCw, FileText, AlertCircle, CheckCircle, FolderOpen, Info, Search, X, ChevronUp, ChevronDown } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 
 type FileTab = 'ini' | 'sandbox'
@@ -21,31 +21,48 @@ export default function RawFileEditor() {
   const [error, setError] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchIndex, setSearchIndex] = useState(0)
+
   // Resolve paths from the profile
   useEffect(() => {
     if (!profile) return
     const serverName = profile.name.replace(/[^a-zA-Z0-9_-]/g, '_')
-    const dataPath = (profile.worldSavePath || '%USERPROFILE%\\Zomboid')
-      .replace(/%USERPROFILE%/gi, '')
-      .trim()
-
-    // We'll resolve these paths in the main process via the readFile IPC
-    // For display, show the expected paths
     const base = profile.worldSavePath
       ? profile.worldSavePath.replace(/\\$/, '')
       : '%USERPROFILE%\\Zomboid'
-
     setIniPath(`${base}\\Server\\${serverName}.ini`)
     setSandboxPath(`${base}\\Server\\${serverName}_SandboxVars.lua`)
-    void serverName
-    void dataPath
   }, [profile])
 
-  // Load file contents when tab changes or on mount
+  // Load file contents when tab changes or paths change
   useEffect(() => {
     if (activeTab === 'ini') loadFile('ini')
     else loadFile('sandbox')
   }, [activeTab, iniPath, sandboxPath])
+
+  // Compute matching line indices for search
+  const matchingLines = useMemo(() => {
+    const content = activeTab === 'ini' ? iniContent : sandboxContent
+    if (!searchQuery.trim()) return []
+    const q = searchQuery.toLowerCase()
+    return content.split('\n').reduce<number[]>((acc, line, i) => {
+      if (line.toLowerCase().includes(q)) acc.push(i)
+      return acc
+    }, [])
+  }, [searchQuery, iniContent, sandboxContent, activeTab])
+
+  // Scroll to current match
+  useEffect(() => {
+    if (matchingLines.length === 0 || !textareaRef.current) return
+    const idx = matchingLines[searchIndex % matchingLines.length]
+    const lineHeight = 18 // approximate px per line in the monospace textarea
+    textareaRef.current.scrollTop = Math.max(0, idx * lineHeight - 100)
+  }, [searchIndex, matchingLines])
+
+  const jumpNext = () => setSearchIndex(i => matchingLines.length ? (i + 1) % matchingLines.length : 0)
+  const jumpPrev = () => setSearchIndex(i => matchingLines.length ? (i - 1 + matchingLines.length) % matchingLines.length : 0)
 
   const loadFile = async (which: FileTab) => {
     const filePath = which === 'ini' ? iniPath : sandboxPath
@@ -55,22 +72,11 @@ export default function RawFileEditor() {
     try {
       const result = await window.electronAPI.fs.readFile(filePath)
       if (result.success && result.content !== undefined) {
-        if (which === 'ini') {
-          setIniContent(result.content)
-          setIniExists(true)
-        } else {
-          setSandboxContent(result.content)
-          setSandboxExists(true)
-        }
+        if (which === 'ini') { setIniContent(result.content); setIniExists(true) }
+        else { setSandboxContent(result.content); setSandboxExists(true) }
       } else {
-        // File doesn't exist yet — show empty editor with a note
-        if (which === 'ini') {
-          setIniContent('')
-          setIniExists(false)
-        } else {
-          setSandboxContent('')
-          setSandboxExists(false)
-        }
+        if (which === 'ini') { setIniContent(''); setIniExists(false) }
+        else { setSandboxContent(''); setSandboxExists(false) }
       }
     } catch {
       setError('Failed to read file.')
@@ -102,10 +108,6 @@ export default function RawFileEditor() {
     }
   }
 
-  const handleReload = () => {
-    loadFile(activeTab)
-  }
-
   const handleBrowse = async () => {
     const ext = activeTab === 'ini' ? ['ini'] : ['lua']
     const filePath = await window.electronAPI.dialog.openFile({
@@ -117,15 +119,8 @@ export default function RawFileEditor() {
     if (!filePath) return
     const result = await window.electronAPI.fs.readFile(filePath)
     if (result.success && result.content !== undefined) {
-      if (activeTab === 'ini') {
-        setIniContent(result.content)
-        setIniPath(filePath)
-        setIniExists(true)
-      } else {
-        setSandboxContent(result.content)
-        setSandboxPath(filePath)
-        setSandboxExists(true)
-      }
+      if (activeTab === 'ini') { setIniContent(result.content); setIniPath(filePath); setIniExists(true) }
+      else { setSandboxContent(result.content); setSandboxPath(filePath); setSandboxExists(true) }
     }
   }
 
@@ -157,7 +152,7 @@ export default function RawFileEditor() {
           <button onClick={handleBrowse} className="btn-ghost text-xs py-1.5 px-3" title="Browse for a different file">
             <FolderOpen size={13} /> Browse
           </button>
-          <button onClick={handleReload} disabled={loading} className="btn-ghost text-xs py-1.5 px-3" title="Reload from disk">
+          <button onClick={() => loadFile(activeTab)} disabled={loading} className="btn-ghost text-xs py-1.5 px-3" title="Reload from disk">
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Reload
           </button>
           <button onClick={handleSave} disabled={saving || loading} className="btn-primary text-xs py-1.5 px-3">
@@ -178,10 +173,7 @@ export default function RawFileEditor() {
             onClick={() => setActiveTab(t.id)}
             className={`px-4 py-2.5 text-sm font-medium transition-colors ${activeTab === t.id ? 'tab-active' : 'tab-inactive'}`}
           >
-            {t.id === 'ini'
-              ? <span className="flex items-center gap-1.5"><FileText size={13} /> {t.label}</span>
-              : <span className="flex items-center gap-1.5"><FileText size={13} /> {t.label}</span>
-            }
+            <span className="flex items-center gap-1.5"><FileText size={13} /> {t.label}</span>
           </button>
         ))}
       </div>
@@ -202,11 +194,46 @@ export default function RawFileEditor() {
         )}
       </div>
 
+      {/* Search bar */}
+      <div className="flex items-center gap-2 px-6 py-2 bg-pz-darker border-b border-pz-border flex-shrink-0">
+        <Search size={13} className="text-pz-muted flex-shrink-0" />
+        <input
+          type="text"
+          placeholder="Search in file… (Enter to jump to next match)"
+          value={searchQuery}
+          onChange={e => { setSearchQuery(e.target.value); setSearchIndex(0) }}
+          onKeyDown={e => { if (e.key === 'Enter') { e.shiftKey ? jumpPrev() : jumpNext() } }}
+          className="flex-1 bg-transparent text-sm text-pz-text placeholder:text-pz-muted outline-none"
+        />
+        {searchQuery && (
+          <span className="text-xs text-pz-muted flex-shrink-0">
+            {matchingLines.length > 0
+              ? `${(searchIndex % matchingLines.length) + 1} / ${matchingLines.length}`
+              : 'No matches'}
+          </span>
+        )}
+        {searchQuery && matchingLines.length > 0 && (
+          <>
+            <button onClick={jumpPrev} className="btn-ghost p-1" title="Previous match (Shift+Enter)">
+              <ChevronUp size={13} />
+            </button>
+            <button onClick={jumpNext} className="btn-ghost p-1" title="Next match (Enter)">
+              <ChevronDown size={13} />
+            </button>
+          </>
+        )}
+        {searchQuery && (
+          <button onClick={() => setSearchQuery('')} className="text-pz-muted hover:text-pz-text">
+            <X size={13} />
+          </button>
+        )}
+      </div>
+
       {/* Info banner */}
       <div className="flex items-start gap-2 px-6 py-2 bg-amber-900/20 border-b border-amber-700/30 flex-shrink-0">
         <Info size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-amber-300 leading-relaxed">
-          <strong>Direct file editing mode.</strong> Changes saved here are written directly to disk and will be used as-is when the server starts — <em>as long as the server profile is set to "Use files as-is" launch mode</em>. Switch the launch mode in Server Config → Basic tab to prevent the app from overwriting your edits on next launch.
+          <strong>Direct file editing mode.</strong> Changes saved here are written directly to disk and will be used as-is when the server starts — <em>as long as the server profile is set to "Use files as-is" launch mode</em>.
         </p>
       </div>
 
