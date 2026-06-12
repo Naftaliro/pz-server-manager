@@ -16,8 +16,9 @@
   }
 
   body {
-    background-color: #0f1117;
-    color: #e6edf3;
+    /* Catppuccin Mocha — Base */
+    background-color: #1e1e2e;
+    color: #cdd6f4;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: 14px;
     line-height: 1.5;
@@ -25,22 +26,23 @@
     user-select: none;
   }
 
+  /* Scrollbar — Catppuccin Mocha */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
 
   ::-webkit-scrollbar-track {
-    background: #0f1117;
+    background: #181825; /* Mantle */
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #30363d;
+    background: #45475a; /* Surface1 */
     border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #484f58;
+    background: #585b70; /* Surface2 */
   }
 }
 
@@ -49,12 +51,13 @@
     @apply inline-flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all duration-150 cursor-pointer select-none;
   }
 
+  /* Primary — Mauve/purple accent */
   .btn-primary {
-    @apply btn bg-pz-green text-pz-darker hover:bg-green-400 active:scale-95;
+    @apply btn bg-pz-green text-pz-darker hover:opacity-90 active:scale-95;
   }
 
   .btn-danger {
-    @apply btn bg-pz-red text-white hover:bg-red-400 active:scale-95;
+    @apply btn bg-pz-red text-pz-darker hover:opacity-90 active:scale-95;
   }
 
   .btn-ghost {
@@ -87,8 +90,9 @@
     @apply text-sm font-semibold text-pz-text uppercase tracking-wider;
   }
 
+  /* Status badges */
   .status-running {
-    @apply inline-flex items-center gap-1.5 text-pz-green text-xs font-medium;
+    @apply inline-flex items-center gap-1.5 text-pz-teal text-xs font-medium;
   }
 
   .status-stopped {
@@ -103,6 +107,7 @@
     @apply inline-flex items-center gap-1.5 text-pz-red text-xs font-medium;
   }
 
+  /* Tabs — mauve underline */
   .tab-active {
     @apply text-pz-green border-b-2 border-pz-green;
   }
@@ -128,7 +133,7 @@
   -webkit-app-region: no-drag;
 }
 
-/* Animated pulse for running status */
+/* Animated pulse for running status — teal */
 @keyframes pulse-green {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
@@ -138,7 +143,7 @@
   animation: pulse-green 2s ease-in-out infinite;
 }
 
-/* Slider styling */
+/* Slider — mauve thumb */
 input[type="range"] {
   @apply appearance-none bg-pz-border rounded-full h-1.5 cursor-pointer;
 }
