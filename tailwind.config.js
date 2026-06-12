@@ -1,4 +1,5 @@
 /** @type {import('tailwindcss').Config} */
+// Catppuccin Mocha palette — https://catppuccin.com/palette
 export default {
   content: [
     "./index.html",
@@ -7,18 +8,27 @@ export default {
   theme: {
     extend: {
       colors: {
-        'pz-dark': '#0f1117',
-        'pz-darker': '#080b0f',
-        'pz-card': '#161b22',
-        'pz-border': '#21262d',
-        'pz-green': '#4ade80',
-        'pz-green-dark': '#16a34a',
-        'pz-red': '#f87171',
-        'pz-red-dark': '#dc2626',
-        'pz-yellow': '#fbbf24',
-        'pz-blue': '#60a5fa',
-        'pz-text': '#e6edf3',
-        'pz-muted': '#8b949e',
+        // Catppuccin Mocha base layers
+        'pz-dark':    '#1e1e2e', // Base
+        'pz-darker':  '#181825', // Mantle
+        'pz-card':    '#313244', // Surface0
+        'pz-border':  '#45475a', // Surface1
+
+        // Accent — Mauve (purple)
+        'pz-green':      '#cba6f7', // Mauve (primary accent, replaces green)
+        'pz-green-dark': '#a57fdb', // Mauve darker
+
+        // Status colors
+        'pz-red':        '#f38ba8', // Red
+        'pz-red-dark':   '#e06c8a',
+        'pz-yellow':     '#f9e2af', // Yellow
+        'pz-blue':       '#89b4fa', // Blue
+        'pz-teal':       '#94e2d5', // Teal
+
+        // Text
+        'pz-text':  '#cdd6f4', // Text
+        'pz-muted': '#6c7086', // Overlay0
+        'pz-subtext': '#a6adc8', // Subtext0
       },
       fontFamily: {
         mono: ['JetBrains Mono', 'Consolas', 'monospace'],

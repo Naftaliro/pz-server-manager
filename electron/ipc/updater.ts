@@ -350,8 +350,10 @@ export function setupUpdaterHandlers() {
     }
 
     // ── Step 5: Launch the batch detached and quit ───────────────────────────────
+    // Use /c (not /k) so the terminal closes automatically after the update completes.
+    // The batch itself pauses on error so the user can read it, but exits cleanly on success.
     try {
-      spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', batchPath], {
+      spawn('cmd.exe', ['/c', 'start', 'PZ Updater', '/wait', 'cmd.exe', '/c', batchPath], {
         detached: true,
         stdio: 'ignore',
         shell: false,

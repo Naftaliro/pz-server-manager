@@ -20,7 +20,7 @@ function createWindow() {
     minHeight: 600,
     frame: false,
     titleBarStyle: 'hidden',
-    backgroundColor: '#0f1117',
+    backgroundColor: '#1e1e2e', // Catppuccin Mocha Base
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -87,11 +87,17 @@ app.whenReady().then(() => {
     return result.canceled ? null : result.filePaths[0]
   })
 
+  // Expand Windows environment variables in a path (%USERPROFILE%, %APPDATA%, etc.)
+  function expandEnvVars(p: string): string {
+    return p.replace(/%([^%]+)%/g, (_, name) => process.env[name] || `%${name}%`)
+  }
+
   // Read a file from disk and return its text content
   ipcMain.handle('fs:readFile', async (_event, filePath: string) => {
     try {
       const { readFileSync } = await import('fs')
-      const content = readFileSync(filePath, 'utf-8')
+      const resolved = expandEnvVars(filePath)
+      const content = readFileSync(resolved, 'utf-8')
       return { success: true, content }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error)
@@ -99,11 +105,14 @@ app.whenReady().then(() => {
     }
   })
 
-  // Write text content to a file
+  // Write text content to a file (creates parent directories if needed)
   ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string) => {
     try {
-      const { writeFileSync } = await import('fs')
-      writeFileSync(filePath, content, 'utf-8')
+      const { writeFileSync, mkdirSync } = await import('fs')
+      const { dirname } = await import('path')
+      const resolved = expandEnvVars(filePath)
+      mkdirSync(dirname(resolved), { recursive: true })
+      writeFileSync(resolved, content, 'utf-8')
       return { success: true }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error)
