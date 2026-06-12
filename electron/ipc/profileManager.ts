@@ -27,6 +27,7 @@ export interface ServerProfile {
   serverPassword: string
   maxPlayers: number
   mods: ModEntry[]
+  launchMode?: 'managed' | 'passthrough'
   iniSettings: Record<string, unknown>
   sandboxSettings: Record<string, unknown>
   createdAt: string

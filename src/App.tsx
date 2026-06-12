@@ -8,6 +8,7 @@ import SandboxEditor from './pages/SandboxEditor'
 import ModManager from './pages/ModManager'
 import Console from './pages/Console'
 import InstallServer from './pages/InstallServer'
+import RawFileEditor from './pages/RawFileEditor'
 import LoadingOverlay from './components/LoadingOverlay'
 import UpdateBanner from './components/UpdateBanner'
 
@@ -45,6 +46,7 @@ export default function App() {
       case 'mods': return <ModManager />
       case 'console': return <Console />
       case 'install': return <InstallServer />
+      case 'raweditor': return <RawFileEditor />
       default: return <Dashboard />
     }
   }

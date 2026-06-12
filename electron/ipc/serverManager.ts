@@ -177,27 +177,33 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
       const dataPath = resolveDataPath(profile.worldSavePath)
 
       // -----------------------------------------------------------------------
-      // CRITICAL: Write the complete INI and SandboxVars for this profile to
-      // the Zomboid\Server folder BEFORE launching. This ensures PZ reads the
-      // correct, fully-populated config for this profile name — not servertest.
+      // Write config files ONLY when launchMode is 'managed' (the default).
+      // In 'passthrough' mode the user edits files directly and the app must
+      // NOT overwrite them.
       // -----------------------------------------------------------------------
-      emitConsoleOutput(profileId, `[PZ Manager] Writing config files for profile "${serverName}"...`)
+      const launchMode = profile.launchMode || 'managed'
+      emitConsoleOutput(profileId, `[PZ Manager] Launch mode: ${launchMode}`)
       emitConsoleOutput(profileId, `[PZ Manager] Data path: ${dataPath}`)
 
-      try {
-        writeProfileIni(serverName, dataPath, profile)
-        emitConsoleOutput(profileId, `[PZ Manager] ✓ Wrote ${serverName}.ini`)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        emitConsoleOutput(profileId, `[PZ Manager] ⚠ Failed to write INI: ${msg}`)
-      }
-
-      try {
-        writeProfileSandbox(serverName, dataPath, profile)
-        emitConsoleOutput(profileId, `[PZ Manager] ✓ Wrote ${serverName}_SandboxVars.lua`)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        emitConsoleOutput(profileId, `[PZ Manager] ⚠ Failed to write SandboxVars: ${msg}`)
+      if (launchMode === 'managed') {
+        emitConsoleOutput(profileId, `[PZ Manager] Writing config files for profile "${serverName}"...`)
+        try {
+          writeProfileIni(serverName, dataPath, profile)
+          emitConsoleOutput(profileId, `[PZ Manager] ✓ Wrote ${serverName}.ini`)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          emitConsoleOutput(profileId, `[PZ Manager] ⚠ Failed to write INI: ${msg}`)
+        }
+        try {
+          writeProfileSandbox(serverName, dataPath, profile)
+          emitConsoleOutput(profileId, `[PZ Manager] ✓ Wrote ${serverName}_SandboxVars.lua`)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          emitConsoleOutput(profileId, `[PZ Manager] ⚠ Failed to write SandboxVars: ${msg}`)
+        }
+      } else {
+        emitConsoleOutput(profileId, `[PZ Manager] Passthrough mode — using existing config files as-is (not overwriting)`)
+        emitConsoleOutput(profileId, `[PZ Manager] Config: ${dataPath}\\Server\\${serverName}.ini`)
       }
 
       // -----------------------------------------------------------------------

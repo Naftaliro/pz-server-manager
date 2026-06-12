@@ -9,6 +9,7 @@ export interface ModEntry {
 }
 
 export type BuildVersion = 'b41' | 'b42'
+export type LaunchMode = 'managed' | 'passthrough'
 
 export interface ServerProfile {
   id: string
@@ -24,6 +25,7 @@ export interface ServerProfile {
   serverPassword: string
   maxPlayers: number
   mods: ModEntry[]
+  launchMode: LaunchMode
   iniSettings: Record<string, unknown>
   sandboxSettings: Record<string, unknown>
   createdAt: string
@@ -52,7 +54,7 @@ interface AppState {
   // UI state
   activeProfileId: string | null
   setActiveProfileId: (id: string | null) => void
-  activeView: 'dashboard' | 'editor' | 'sandbox' | 'mods' | 'console' | 'install'
+  activeView: 'dashboard' | 'editor' | 'sandbox' | 'mods' | 'console' | 'install' | 'raweditor'
   setActiveView: (view: AppState['activeView']) => void
   editorTab: 'basic' | 'server' | 'sandbox' | 'mods'
   setEditorTab: (tab: AppState['editorTab']) => void
