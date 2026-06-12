@@ -71,7 +71,7 @@ export default function Sidebar() {
                 key={profile.id}
                 onClick={() => {
                   setActiveProfileId(profile.id)
-                  setActiveView('dashboard')
+                  setActiveView('editor')
                 }}
                 className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-pz-border transition-colors group"
               >

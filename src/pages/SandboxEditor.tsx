@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Save, ArrowLeft, RotateCcw, Download, Upload } from 'lucide-react'
+import { Save, ArrowLeft, RotateCcw, Download, Upload, Search, X } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 
 type SandboxSettings = Record<string, unknown>
@@ -89,6 +89,8 @@ export default function SandboxEditor() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [importMsg, setImportMsg] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchLower = searchQuery.toLowerCase().trim()
 
   const profile = profiles.find(p => p.id === activeProfileId)
   const isB42 = profile?.buildVersion === 'b42'
@@ -268,6 +270,23 @@ export default function SandboxEditor() {
         </div>
       )}
 
+      {/* Search bar */}
+      <div className="px-6 py-2 border-b border-pz-border bg-pz-darker flex items-center gap-2 flex-shrink-0">
+        <Search size={14} className="text-pz-muted flex-shrink-0" />
+        <input
+          type="text"
+          placeholder="Search settings…"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          className="flex-1 bg-transparent text-sm text-pz-text placeholder:text-pz-muted outline-none"
+        />
+        {searchQuery && (
+          <button onClick={() => setSearchQuery('')} className="text-pz-muted hover:text-pz-text">
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
       {/* Presets */}
       <div className="px-6 py-3 border-b border-pz-border bg-pz-darker flex items-center gap-3 flex-shrink-0 overflow-x-auto">
         <span className="text-xs text-pz-muted flex-shrink-0">Presets:</span>
@@ -279,21 +298,30 @@ export default function SandboxEditor() {
         ))}
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-0 border-b border-pz-border bg-pz-darker px-6 flex-shrink-0 overflow-x-auto">
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id as typeof tab)}
-            className={`px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
-              tab === t.id ? 'tab-active' : 'tab-inactive'
-            }`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {/* Tabs — hidden when searching */}
+      {!searchLower && (
+        <div className="flex gap-0 border-b border-pz-border bg-pz-darker px-6 flex-shrink-0 overflow-x-auto">
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id as typeof tab)}
+              className={`px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
+                tab === t.id ? 'tab-active' : 'tab-inactive'
+              }`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl mx-auto space-y-6">
+
+          {/* ── SEARCH RESULTS ── */}
+          {searchLower && (
+            <SBSection title={`Search results for "${searchQuery}"`}>
+              <SearchResults query={searchLower} settings={settings} zombieConfig={zombieConfig} set={set} setZC={setZC} get={get} getZC={getZC} isB42={isB42} />
+            </SBSection>
+          )}
 
           {/* ── ZOMBIES TAB ── */}
           {tab === 'zombies' && (
@@ -619,7 +647,7 @@ export default function SandboxEditor() {
           )}
 
           {/* ── B42 TAB (only shown for B42 profiles) ── */}
-          {tab === 'b42' && isB42 && (
+          {!searchLower && tab === 'b42' && isB42 && (
             <>
               <div className="bg-pz-green/10 border border-pz-green/20 rounded-lg p-3 text-xs text-pz-muted">
                 These settings are exclusive to <strong className="text-pz-green">Build 42</strong> and will be ignored on B41 servers.
@@ -665,7 +693,7 @@ export default function SandboxEditor() {
           )}
 
           {/* ── ADVANCED TAB ── */}
-          {tab === 'advanced' && (
+          {!searchLower && tab === 'advanced' && (
             <>
               <SBSection title="Corpses & Blood">
                 <SliderField label="Hours for Corpse Removal (-1=never)" value={Number(get('HoursForCorpseRemoval', 216))}
@@ -690,6 +718,176 @@ export default function SandboxEditor() {
 
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── SearchResults: flat list of all fields matching the query ──────────────────
+type SearchResultsProps = {
+  query: string
+  settings: SandboxSettings
+  zombieConfig: SandboxSettings
+  set: (k: string, v: unknown) => void
+  setZC: (k: string, v: unknown) => void
+  get: (k: string, d: unknown) => unknown
+  getZC: (k: string, d: unknown) => unknown
+  isB42: boolean
+}
+
+type FieldDef =
+  | { type: 'select'; label: string; key: string; zc?: boolean; options: [number, string][]; defaultVal: number }
+  | { type: 'slider'; label: string; key: string; zc?: boolean; min: number; max: number; step: number; defaultVal: number; description?: string }
+  | { type: 'toggle'; label: string; key: string; zc?: boolean; defaultVal: boolean; description?: string }
+
+const ALL_FIELDS: FieldDef[] = [
+  // Zombies
+  { type: 'select', label: 'Zombie Population', key: 'Zombies', defaultVal: 4, options: [[1,'Insane'],[2,'Very High'],[3,'High'],[4,'Normal'],[5,'Low'],[6,'None']] },
+  { type: 'select', label: 'Distribution', key: 'Distribution', defaultVal: 1, options: [[1,'Urban Focused'],[2,'Uniform']] },
+  { type: 'slider', label: 'Population Start Multiplier', key: 'PopulationStartMultiplier', zc: true, min: 0.1, max: 4.0, step: 0.1, defaultVal: 1.0, description: 'Population level on day 1' },
+  { type: 'slider', label: 'Population Peak Multiplier', key: 'PopulationPeakMultiplier', zc: true, min: 0.1, max: 4.0, step: 0.1, defaultVal: 1.5, description: 'Population at peak day' },
+  { type: 'slider', label: 'Population Peak Day', key: 'PopulationPeakDay', zc: true, min: 1, max: 365, step: 1, defaultVal: 28, description: 'In-game day when population hits its peak' },
+  { type: 'slider', label: 'Redistribute Hours', key: 'RedistributeHours', zc: true, min: 0, max: 720, step: 1, defaultVal: 12, description: 'Hours between zombie redistribution passes' },
+  { type: 'select', label: 'Speed', key: 'Speed', zc: true, defaultVal: 3, options: [[1,'Sprinters'],[2,'Fast Shamblers'],[3,'Shamblers'],[4,'Random']] },
+  { type: 'select', label: 'Strength', key: 'Strength', zc: true, defaultVal: 2, options: [[1,'Superhuman'],[2,'Normal'],[3,'Weak'],[4,'Random']] },
+  { type: 'select', label: 'Toughness', key: 'Toughness', zc: true, defaultVal: 2, options: [[1,'Tough'],[2,'Normal'],[3,'Fragile'],[4,'Random']] },
+  { type: 'select', label: 'Cognition', key: 'Intelligence', zc: true, defaultVal: 2, options: [[1,'Navigate + Use Doors'],[2,'Navigate'],[3,'Basic'],[4,'Random']] },
+  { type: 'select', label: 'Memory', key: 'Memory', zc: true, defaultVal: 2, options: [[1,'Long'],[2,'Normal'],[3,'Short'],[4,'None']] },
+  { type: 'select', label: 'Sight', key: 'Sight', zc: true, defaultVal: 2, options: [[1,'Eagle'],[2,'Normal'],[3,'Poor']] },
+  { type: 'select', label: 'Hearing', key: 'Hearing', zc: true, defaultVal: 2, options: [[1,'Pinpoint'],[2,'Normal'],[3,'Poor']] },
+  { type: 'select', label: 'Smell', key: 'Smell', zc: true, defaultVal: 2, options: [[1,'Bloodhound'],[2,'Normal'],[3,'Poor']] },
+  { type: 'slider', label: 'Follow Sound Distance', key: 'FollowSoundDistance', zc: true, min: 10, max: 1000, step: 10, defaultVal: 100 },
+  { type: 'slider', label: 'Rally Group Size', key: 'RallyGroupSize', zc: true, min: 1, max: 1000, step: 1, defaultVal: 20 },
+  { type: 'slider', label: 'Rally Travel Distance', key: 'RallyTravelDistance', zc: true, min: 5, max: 1000, step: 1, defaultVal: 20 },
+  { type: 'slider', label: 'Rally Group Separation', key: 'RallyGroupSeparation', zc: true, min: 5, max: 25, step: 1, defaultVal: 15 },
+  { type: 'slider', label: 'Rally Group Radius', key: 'RallyGroupRadius', zc: true, min: 1, max: 10, step: 1, defaultVal: 3 },
+  { type: 'select', label: 'Transmission', key: 'Transmission', zc: true, defaultVal: 2, options: [[1,'Blood + Saliva'],[2,'Saliva Only'],[3,"Everyone's Infected"],[4,'None']] },
+  { type: 'select', label: 'Decomposition', key: 'Decomp', zc: true, defaultVal: 1, options: [[1,'Slow'],[2,'Normal'],[3,'Fast'],[4,'Instant']] },
+  { type: 'slider', label: 'Respawn Hours (0=never)', key: 'RespawnHours', zc: true, min: 0, max: 8760, step: 1, defaultVal: 72 },
+  { type: 'slider', label: 'Respawn Unseen Hours', key: 'RespawnUnseenHours', zc: true, min: 0, max: 8760, step: 1, defaultVal: 16 },
+  { type: 'slider', label: 'Respawn Multiplier', key: 'RespawnMultiplier', zc: true, min: 0.01, max: 1.0, step: 0.01, defaultVal: 0.1 },
+  { type: 'toggle', label: 'Crawl Under Vehicles', key: 'CrawlUnderVehicle', zc: true, defaultVal: true },
+  { type: 'toggle', label: 'Thump on Construction', key: 'ThumpOnConstruction', zc: true, defaultVal: true },
+  { type: 'toggle', label: 'Thump No Chasing', key: 'ThumpNoChasing', zc: true, defaultVal: false },
+  { type: 'toggle', label: 'Active Only When Seen', key: 'ActiveOnly', zc: true, defaultVal: false },
+  { type: 'toggle', label: 'Trigger House Alarms', key: 'TriggerHouseAlarm', zc: true, defaultVal: false },
+  { type: 'toggle', label: "Don't Attack Unless Threatened", key: 'ZombiesDontAttackUnlessThreatened', zc: true, defaultVal: false },
+  { type: 'toggle', label: 'Disable Fake Dead', key: 'DisableFakeDead', zc: true, defaultVal: false },
+  // Loot
+  { type: 'select', label: 'Food Loot', key: 'FoodLoot', defaultVal: 4, options: [[1,'None'],[2,'Insanely Rare'],[3,'Extremely Rare'],[4,'Rare'],[5,'Normal'],[6,'Common'],[7,'Abundant']] },
+  { type: 'select', label: 'Canned Food', key: 'CannedFoodLoot', defaultVal: 4, options: [[1,'None'],[2,'Insanely Rare'],[3,'Extremely Rare'],[4,'Rare'],[5,'Normal'],[6,'Common'],[7,'Abundant']] },
+  { type: 'select', label: 'Melee Weapons', key: 'WeaponLoot', defaultVal: 2, options: [[1,'None'],[2,'Insanely Rare'],[3,'Extremely Rare'],[4,'Rare'],[5,'Normal'],[6,'Common'],[7,'Abundant']] },
+  { type: 'select', label: 'Ranged Weapons', key: 'RangedWeaponLoot', defaultVal: 2, options: [[1,'None'],[2,'Insanely Rare'],[3,'Extremely Rare'],[4,'Rare'],[5,'Normal'],[6,'Common'],[7,'Abundant']] },
+  { type: 'select', label: 'Ammunition', key: 'AmmoLoot', defaultVal: 2, options: [[1,'None'],[2,'Insanely Rare'],[3,'Extremely Rare'],[4,'Rare'],[5,'Normal'],[6,'Common'],[7,'Abundant']] },
+  { type: 'select', label: 'Medical Supplies', key: 'MedicalLoot', defaultVal: 4, options: [[1,'None'],[2,'Insanely Rare'],[3,'Extremely Rare'],[4,'Rare'],[5,'Normal'],[6,'Common'],[7,'Abundant']] },
+  { type: 'select', label: 'Survival Gear', key: 'SurvivalGearsLoot', defaultVal: 4, options: [[1,'None'],[2,'Insanely Rare'],[3,'Extremely Rare'],[4,'Rare'],[5,'Normal'],[6,'Common'],[7,'Abundant']] },
+  { type: 'select', label: 'Literature / Books', key: 'LiteratureLoot', defaultVal: 4, options: [[1,'None'],[2,'Insanely Rare'],[3,'Extremely Rare'],[4,'Rare'],[5,'Normal'],[6,'Common'],[7,'Abundant']] },
+  { type: 'select', label: 'Mechanics / Tools', key: 'MechanicsLoot', defaultVal: 4, options: [[1,'None'],[2,'Insanely Rare'],[3,'Extremely Rare'],[4,'Rare'],[5,'Normal'],[6,'Common'],[7,'Abundant']] },
+  { type: 'select', label: 'Other Items', key: 'OtherLoot', defaultVal: 3, options: [[1,'None'],[2,'Insanely Rare'],[3,'Extremely Rare'],[4,'Rare'],[5,'Normal'],[6,'Common'],[7,'Abundant']] },
+  { type: 'select', label: 'Loot Respawn', key: 'LootRespawn', defaultVal: 1, options: [[1,'None'],[2,'Every Day'],[3,'Every Week'],[4,'Every Month']] },
+  { type: 'slider', label: 'Seen Hours Prevent Loot Respawn', key: 'SeenHoursPreventLootRespawn', min: 0, max: 8760, step: 1, defaultVal: 0 },
+  // World
+  { type: 'select', label: 'Day Length', key: 'DayLength', defaultVal: 3, options: [[1,'15 Minutes'],[2,'30 Minutes'],[3,'1 Hour'],[4,'2 Hours'],[5,'3 Hours'],[6,'4 Hours'],[7,'5 Hours'],[8,'6 Hours'],[14,'12 Hours'],[18,'16 Hours'],[25,'Real Time']] },
+  { type: 'select', label: 'Start Year', key: 'StartYear', defaultVal: 1, options: [[1,'Year 1'],[2,'Year 2'],[3,'Year 3'],[4,'Year 4'],[5,'Year 5']] },
+  { type: 'select', label: 'Start Month', key: 'StartMonth', defaultVal: 7, options: [[1,'January'],[2,'February'],[3,'March'],[4,'April'],[5,'May'],[6,'June'],[7,'July'],[8,'August'],[9,'September'],[10,'October'],[11,'November'],[12,'December']] },
+  { type: 'slider', label: 'Start Day', key: 'StartDay', min: 1, max: 31, step: 1, defaultVal: 1 },
+  { type: 'select', label: 'Start Time', key: 'StartTime', defaultVal: 2, options: [[1,'7 AM'],[2,'9 AM'],[3,'12 PM'],[4,'2 PM'],[5,'5 PM'],[6,'9 PM'],[7,'12 AM'],[8,'2 AM'],[9,'5 AM']] },
+  { type: 'select', label: 'Night Length', key: 'NightLength', defaultVal: 3, options: [[1,'Always Night'],[2,'Long'],[3,'Normal'],[4,'Short']] },
+  { type: 'select', label: 'Night Darkness', key: 'NightDarkness', defaultVal: 3, options: [[1,'Pitch Black'],[2,'Dark'],[3,'Normal'],[4,'Bright']] },
+  { type: 'select', label: 'Water Shutoff', key: 'WaterShut', defaultVal: 2, options: [[1,'Instant'],[2,'0-30 Days'],[3,'0-2 Months'],[4,'0-6 Months'],[5,'0-1 Year'],[6,'0-5 Years'],[7,'Never']] },
+  { type: 'select', label: 'Electricity Shutoff', key: 'ElecShut', defaultVal: 2, options: [[1,'Instant'],[2,'0-30 Days'],[3,'0-2 Months'],[4,'0-6 Months'],[5,'0-1 Year'],[6,'0-5 Years'],[7,'Never']] },
+  { type: 'slider', label: 'Water Shutoff Day Override', key: 'WaterShutModifier', min: -1, max: 365, step: 1, defaultVal: 14 },
+  { type: 'slider', label: 'Electricity Shutoff Day Override', key: 'ElecShutModifier', min: -1, max: 365, step: 1, defaultVal: 14 },
+  { type: 'select', label: 'Temperature', key: 'Temperature', defaultVal: 3, options: [[1,'Very Cold'],[2,'Cold'],[3,'Normal'],[4,'Hot'],[5,'Very Hot']] },
+  { type: 'select', label: 'Rain', key: 'Rain', defaultVal: 3, options: [[1,'Very Dry'],[2,'Dry'],[3,'Normal'],[4,'Rainy'],[5,'Very Rainy']] },
+  { type: 'select', label: 'Erosion Speed', key: 'ErosionSpeed', defaultVal: 3, options: [[1,'Very Fast (20 days)'],[2,'Fast (50 days)'],[3,'Normal (100 days)'],[4,'Slow (200 days)'],[5,'Very Slow (500 days)']] },
+  { type: 'slider', label: 'Erosion Days', key: 'ErosionDays', min: 0, max: 36500, step: 1, defaultVal: 0 },
+  { type: 'select', label: 'Time Since Apocalypse', key: 'TimeSinceApo', defaultVal: 1, options: [[1,'0 Months'],[2,'1 Month'],[3,'2 Months'],[4,'3 Months'],[5,'4 Months'],[6,'5 Months'],[7,'6 Months'],[8,'7 Months'],[9,'8 Months'],[10,'9 Months'],[11,'10 Months'],[12,'11 Months']] },
+  { type: 'toggle', label: 'Fire Spread', key: 'FireSpread', defaultVal: true },
+  { type: 'toggle', label: 'Enable Snow on Ground', key: 'EnableSnowOnGround', defaultVal: true },
+  { type: 'select', label: 'Max Fog Intensity', key: 'MaxFogIntensity', defaultVal: 1, options: [[1,'Normal'],[2,'Moderate'],[3,'Dense']] },
+  { type: 'select', label: 'Max Rain FX Intensity', key: 'MaxRainFxIntensity', defaultVal: 1, options: [[1,'Normal'],[2,'Moderate'],[3,'Heavy']] },
+  // Player
+  { type: 'slider', label: 'XP Multiplier', key: 'XpMultiplier', min: 0.1, max: 10.0, step: 0.1, defaultVal: 1.0 },
+  { type: 'toggle', label: 'XP Multiplier Affects Passive Skills', key: 'XpMultiplierAffectsPassive', defaultVal: false },
+  { type: 'slider', label: 'Free Character Points', key: 'CharacterFreePoints', min: -100, max: 100, step: 1, defaultVal: 0 },
+  { type: 'slider', label: 'Construction Bonus Points', key: 'ConstructionBonusPoints', min: 0, max: 100, step: 1, defaultVal: 3 },
+  { type: 'toggle', label: 'Starter Kit', key: 'StarterKit', defaultVal: false },
+  { type: 'toggle', label: 'Nutrition System', key: 'Nutrition', defaultVal: true },
+  { type: 'select', label: 'Food Rot Speed', key: 'FoodRotSpeed', defaultVal: 3, options: [[1,'Very Fast'],[2,'Fast'],[3,'Normal'],[4,'Slow'],[5,'Very Slow']] },
+  { type: 'select', label: 'Fridge Factor', key: 'FridgeFactor', defaultVal: 3, options: [[1,'Very Low'],[2,'Low'],[3,'Normal'],[4,'High'],[5,'Very High']] },
+  { type: 'select', label: 'Stats Decrease Speed', key: 'StatsDecrease', defaultVal: 3, options: [[1,'Very Fast'],[2,'Fast'],[3,'Normal'],[4,'Slow'],[5,'Very Slow']] },
+  { type: 'select', label: 'Injury Severity', key: 'InjurySeverity', defaultVal: 2, options: [[1,'Low'],[2,'Normal'],[3,'High']] },
+  { type: 'toggle', label: 'Bone Fracture', key: 'BoneFracture', defaultVal: true },
+  { type: 'toggle', label: 'All Clothes Unlocked', key: 'AllClothesUnlocked', defaultVal: false },
+  { type: 'toggle', label: 'Enable Tainted Water Text', key: 'EnableTaintedWaterText', defaultVal: true },
+  { type: 'select', label: 'Rear Vulnerability', key: 'RearVulnerability', defaultVal: 3, options: [[1,'None'],[2,'Low'],[3,'Normal'],[4,'High']] },
+  { type: 'toggle', label: 'Attack Block Movements', key: 'AttackBlockMovements', defaultVal: true },
+  { type: 'toggle', label: 'Multi-Hit Zombies', key: 'MultiHitZombies', defaultVal: false },
+  // Events
+  { type: 'select', label: 'Helicopter Events', key: 'Helicopter', defaultVal: 2, options: [[1,'Never'],[2,'Sometimes'],[3,'Often']] },
+  { type: 'select', label: 'Meta Events', key: 'MetaEvent', defaultVal: 2, options: [[1,'Never'],[2,'Sometimes'],[3,'Often']] },
+  { type: 'select', label: 'Sleeping Events', key: 'SleepingEvent', defaultVal: 1, options: [[1,'Never'],[2,'Sometimes'],[3,'Often']] },
+  { type: 'select', label: 'Survivor House Chance', key: 'SurvivorHouseChance', defaultVal: 3, options: [[1,'None'],[2,'Extremely Rare'],[3,'Rare'],[4,'Sometimes'],[5,'Often']] },
+  { type: 'select', label: 'Vehicle Story Chance', key: 'VehicleStoryChance', defaultVal: 3, options: [[1,'None'],[2,'Extremely Rare'],[3,'Rare'],[4,'Sometimes'],[5,'Often']] },
+  { type: 'select', label: 'Zone Story Chance', key: 'ZoneStoryChance', defaultVal: 3, options: [[1,'None'],[2,'Extremely Rare'],[3,'Rare'],[4,'Sometimes'],[5,'Often']] },
+  { type: 'select', label: 'Annotated Map Chance', key: 'AnnotatedMapChance', defaultVal: 4, options: [[1,'None'],[2,'Extremely Rare'],[3,'Rare'],[4,'Sometimes'],[5,'Often']] },
+  { type: 'select', label: 'Generator Spawning', key: 'GeneratorSpawning', defaultVal: 3, options: [[1,'None'],[2,'Extremely Rare'],[3,'Rare'],[4,'Sometimes'],[5,'Often']] },
+  { type: 'slider', label: 'Generator Fuel Consumption', key: 'GeneratorFuelConsumption', min: 0.1, max: 10.0, step: 0.1, defaultVal: 1.0 },
+  { type: 'toggle', label: 'Allow Exterior Generator', key: 'AllowExteriorGenerator', defaultVal: true },
+  { type: 'select', label: 'Nature Abundance', key: 'NatureAbundance', defaultVal: 3, options: [[1,'Very Low'],[2,'Low'],[3,'Normal'],[4,'High'],[5,'Very High']] },
+  { type: 'select', label: 'Alarm Frequency', key: 'Alarm', defaultVal: 6, options: [[1,'Never'],[2,'Extremely Rare'],[3,'Rare'],[4,'Sometimes'],[5,'Often'],[6,'Very Often']] },
+  { type: 'select', label: 'Locked Houses', key: 'LockedHouses', defaultVal: 6, options: [[1,'Never'],[2,'Extremely Rare'],[3,'Rare'],[4,'Sometimes'],[5,'Often'],[6,'Very Often']] },
+  // Vehicles
+  { type: 'toggle', label: 'Enable Vehicles', key: 'EnableVehicles', defaultVal: true },
+  { type: 'toggle', label: 'Enable Trailer Hitch', key: 'EnableTrailerHitch', defaultVal: true },
+  { type: 'toggle', label: 'Easy Vehicle Use', key: 'VehicleEasyUse', defaultVal: false },
+  { type: 'select', label: 'Car Spawn Rate', key: 'CarSpawnRate', defaultVal: 3, options: [[1,'None'],[2,'Very Low'],[3,'Low'],[4,'Normal'],[5,'High'],[6,'Very High']] },
+  { type: 'select', label: 'Chance Has Gas', key: 'ChanceHasGas', defaultVal: 4, options: [[1,'Very Low'],[2,'Low'],[3,'Normal'],[4,'High'],[5,'Very High']] },
+  { type: 'select', label: 'Initial Gas', key: 'InitialGas', defaultVal: 4, options: [[1,'Very Low'],[2,'Low'],[3,'Normal'],[4,'High'],[5,'Full']] },
+  { type: 'slider', label: 'Car Gas Consumption', key: 'CarGasConsumption', min: 0.1, max: 10.0, step: 0.1, defaultVal: 1.0 },
+  { type: 'select', label: 'Locked Car Chance', key: 'LockedCar', defaultVal: 4, options: [[1,'Never'],[2,'Rarely'],[3,'Sometimes'],[4,'Often'],[5,'Very Often']] },
+  { type: 'select', label: 'Car Hotwire Difficulty', key: 'CarHotwire', defaultVal: 4, options: [[1,'Very Easy'],[2,'Easy'],[3,'Normal'],[4,'Hard'],[5,'Very Hard']] },
+  { type: 'select', label: 'Car Condition Affects Stats', key: 'CarConditionAffectsStat', defaultVal: 3, options: [[1,'None'],[2,'Low'],[3,'Normal'],[4,'High']] },
+  { type: 'select', label: 'Car Damage on Impact', key: 'CarDamageOnImpact', defaultVal: 3, options: [[1,'None'],[2,'Low'],[3,'Normal'],[4,'High']] },
+  { type: 'select', label: 'Player Damage from Car Hit', key: 'DamageToPlayerFromHitByACar', defaultVal: 3, options: [[1,'None'],[2,'Low'],[3,'Normal'],[4,'High']] },
+  // Advanced
+  { type: 'slider', label: 'Hours for Corpse Removal (-1=never)', key: 'HoursForCorpseRemoval', min: -1, max: 8760, step: 1, defaultVal: 216 },
+  { type: 'select', label: 'Decaying Corpse Health Impact', key: 'DecayingCorpseHealthImpact', defaultVal: 3, options: [[1,'None'],[2,'Low'],[3,'Normal'],[4,'High']] },
+  { type: 'select', label: 'Blood Level', key: 'BloodLevel', defaultVal: 3, options: [[1,'None'],[2,'Low'],[3,'Normal'],[4,'High']] },
+  { type: 'select', label: 'Clothing Degradation', key: 'ClothingDegradation', defaultVal: 3, options: [[1,'None'],[2,'Slow'],[3,'Normal'],[4,'Fast']] },
+  { type: 'slider', label: 'Days for Rotten Food Removal (-1=never)', key: 'DaysForRottenFoodRemoval', min: -1, max: 365, step: 1, defaultVal: -1 },
+  { type: 'slider', label: 'Hours for World Item Removal', key: 'HoursForWorldItemRemoval', min: 0, max: 8760, step: 1, defaultVal: 24 },
+  { type: 'toggle', label: 'Item Removal Blacklist Toggle', key: 'ItemRemovalListBlacklistToggle', defaultVal: false },
+  { type: 'slider', label: 'Zombie Attraction Multiplier', key: 'ZombieAttractionMultiplier', min: 0.1, max: 10.0, step: 0.1, defaultVal: 1.0 },
+  // B42
+  { type: 'slider', label: 'Animal Population Multiplier', key: 'AnimalPopulationMultiplier', min: 0.0, max: 4.0, step: 0.1, defaultVal: 1.0 },
+  { type: 'slider', label: 'Animal Population Start Multiplier', key: 'AnimalPopulationStartMultiplier', min: 0.0, max: 4.0, step: 0.1, defaultVal: 1.0 },
+  { type: 'slider', label: 'Animal Population Peak Multiplier', key: 'AnimalPopulationPeakMultiplier', min: 0.0, max: 4.0, step: 0.1, defaultVal: 1.5 },
+  { type: 'slider', label: 'Animal Population Peak Day', key: 'AnimalPopulationPeakDay', min: 1, max: 365, step: 1, defaultVal: 28 },
+  { type: 'select', label: 'Animal Chance Spawn on Farm', key: 'AnimalChanceSpawnOnFarm', defaultVal: 1, options: [[0,'Never'],[1,'Rare'],[2,'Sometimes'],[3,'Often']] },
+  { type: 'slider', label: 'Aging Modifier Speed', key: 'AgingModifierSpeed', min: 0.1, max: 5.0, step: 0.1, defaultVal: 1.0 },
+  { type: 'slider', label: 'Milk Increase Speed', key: 'MilkIncreaseSpeed', min: 0.1, max: 5.0, step: 0.1, defaultVal: 1.0 },
+  { type: 'slider', label: 'Wool Increase Speed', key: 'WoolIncreaseSpeed', min: 0.1, max: 5.0, step: 0.1, defaultVal: 1.0 },
+  { type: 'slider', label: 'Craft Multiplier', key: 'CraftMultiplier', min: 0.1, max: 10.0, step: 0.1, defaultVal: 1.0 },
+  { type: 'slider', label: 'Max Craftable Items on Ground', key: 'MaxCraftableItemsOnGround', min: 0, max: 1000, step: 1, defaultVal: 0 },
+]
+
+function SearchResults({ query, set, setZC, get, getZC }: SearchResultsProps) {
+  const matches = ALL_FIELDS.filter(f => f.label.toLowerCase().includes(query) || f.key.toLowerCase().includes(query))
+  if (matches.length === 0) return <p className="text-sm text-pz-muted py-2">No settings found matching "{query}"</p>
+  return (
+    <div className="space-y-4">
+      {matches.map(f => {
+        const getter = f.zc ? getZC : get
+        const setter = f.zc ? setZC : set
+        if (f.type === 'select') {
+          return <SelectField key={f.key} label={f.label} value={Number(getter(f.key, f.defaultVal))} onChange={v => setter(f.key, v)} options={f.options} />
+        } else if (f.type === 'slider') {
+          return <SliderField key={f.key} label={f.label} value={Number(getter(f.key, f.defaultVal))} onChange={v => setter(f.key, v)} min={f.min} max={f.max} step={f.step} description={f.description} />
+        } else {
+          return <ToggleField key={f.key} label={f.label} value={!!getter(f.key, f.defaultVal)} onChange={v => setter(f.key, v)} description={f.description} />
+        }
+      })}
     </div>
   )
 }
