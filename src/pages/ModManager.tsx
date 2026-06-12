@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Search, Plus, Trash2, ArrowLeft, Save, ExternalLink, Package, AlertCircle, GripVertical, Hash, Upload, FileText, CheckCircle, Download, Copy } from 'lucide-react'
+import { Search, Plus, Trash2, ArrowLeft, Save, ExternalLink, Package, AlertCircle, GripVertical, Hash, Upload, FileText, CheckCircle, Download, Copy, Pencil, X as XIcon } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ModEntry } from '../store/useAppStore'
 
@@ -51,6 +51,28 @@ export default function ModManager() {
   const [saved, setSaved] = useState(false)
   const [activeTab, setActiveTab] = useState<'installed' | 'search' | 'manual' | 'import' | 'export'>('installed')
   const [exportCopied, setExportCopied] = useState(false)
+  // Inline mod ID editing
+  const [editingModId, setEditingModId] = useState<string | null>(null) // workshopId of the mod being edited
+  const [editingModIdValue, setEditingModIdValue] = useState('')
+  const [editingModName, setEditingModName] = useState('')
+
+  const startEdit = (mod: ModEntry) => {
+    setEditingModId(mod.workshopId)
+    setEditingModIdValue(mod.modId)
+    setEditingModName(mod.name)
+  }
+
+  const commitEdit = () => {
+    if (!editingModId) return
+    setMods(prev => prev.map(m =>
+      m.workshopId === editingModId
+        ? { ...m, modId: editingModIdValue.trim() || m.modId, name: editingModName.trim() || m.name }
+        : m
+    ))
+    setEditingModId(null)
+  }
+
+  const cancelEdit = () => setEditingModId(null)
 
   // Import tab state
   const [importText, setImportText] = useState('')
@@ -344,43 +366,92 @@ export default function ModManager() {
                   </button>
                 </div>
                 {mods.map((mod, idx) => (
-                  <div key={mod.workshopId} className="card p-3 flex items-center gap-3">
-                    <div className="text-pz-muted cursor-grab flex-shrink-0">
-                      <GripVertical size={14} />
+                  <div key={mod.workshopId} className="card p-3 flex flex-col gap-2">
+                    <div className="flex items-center gap-3">
+                      <div className="text-pz-muted cursor-grab flex-shrink-0">
+                        <GripVertical size={14} />
+                      </div>
+                      <div className="w-6 h-6 flex items-center justify-center text-xs text-pz-muted flex-shrink-0">
+                        {idx + 1}
+                      </div>
+                      {mod.thumbnailUrl ? (
+                        <img src={mod.thumbnailUrl} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded bg-pz-border flex items-center justify-center flex-shrink-0">
+                          <Package size={16} className="text-pz-muted" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-pz-text truncate">{mod.name}</div>
+                        <div className="flex items-center gap-3 mt-0.5">
+                          <span className="text-xs text-pz-muted">Workshop: {mod.workshopId}</span>
+                          <span className="text-xs text-pz-muted">Mod ID: <span className="text-pz-text">{mod.modId}</span></span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => startEdit(mod)}
+                          className="btn-ghost p-1.5"
+                          title="Edit Mod ID / Name"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                        <button
+                          onClick={() => window.electronAPI.shell.openExternal(`https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshopId}`)}
+                          className="btn-ghost p-1.5"
+                          title="View on Steam Workshop"
+                        >
+                          <ExternalLink size={12} />
+                        </button>
+                        <button
+                          onClick={() => removeMod(mod.workshopId)}
+                          className="btn-ghost p-1.5 text-pz-red hover:text-pz-red"
+                          title="Remove mod"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
                     </div>
-                    <div className="w-6 h-6 flex items-center justify-center text-xs text-pz-muted flex-shrink-0">
-                      {idx + 1}
-                    </div>
-                    {mod.thumbnailUrl ? (
-                      <img src={mod.thumbnailUrl} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />
-                    ) : (
-                      <div className="w-10 h-10 rounded bg-pz-border flex items-center justify-center flex-shrink-0">
-                        <Package size={16} className="text-pz-muted" />
+
+                    {/* Inline edit panel */}
+                    {editingModId === mod.workshopId && (
+                      <div className="ml-10 pl-3 border-l-2 border-pz-green/40 space-y-2">
+                        <p className="text-xs text-pz-muted">Edit mod details — Workshop ID cannot be changed.</p>
+                        <div className="flex gap-2">
+                          <div className="flex-1">
+                            <label className="text-xs text-pz-muted block mb-1">Mod ID</label>
+                            <input
+                              type="text"
+                              value={editingModIdValue}
+                              onChange={e => setEditingModIdValue(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') cancelEdit() }}
+                              className="input text-sm w-full"
+                              placeholder="e.g. MyMod"
+                              autoFocus
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <label className="text-xs text-pz-muted block mb-1">Display Name</label>
+                            <input
+                              type="text"
+                              value={editingModName}
+                              onChange={e => setEditingModName(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') cancelEdit() }}
+                              className="input text-sm w-full"
+                              placeholder="e.g. My Awesome Mod"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={commitEdit} className="btn-primary text-xs py-1 px-3">
+                            <CheckCircle size={12} /> Save
+                          </button>
+                          <button onClick={cancelEdit} className="btn-ghost text-xs py-1 px-3">
+                            <XIcon size={12} /> Cancel
+                          </button>
+                        </div>
                       </div>
                     )}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-pz-text truncate">{mod.name}</div>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-xs text-pz-muted">Workshop: {mod.workshopId}</span>
-                        <span className="text-xs text-pz-muted">Mod ID: {mod.modId}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <button
-                        onClick={() => window.electronAPI.shell.openExternal(`https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshopId}`)}
-                        className="btn-ghost p-1.5"
-                        title="View on Steam Workshop"
-                      >
-                        <ExternalLink size={12} />
-                      </button>
-                      <button
-                        onClick={() => removeMod(mod.workshopId)}
-                        className="btn-ghost p-1.5 text-pz-red hover:text-pz-red"
-                        title="Remove mod"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
                   </div>
                 ))}
               </div>
