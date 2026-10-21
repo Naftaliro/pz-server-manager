@@ -42,6 +42,8 @@ export interface ServerProfile {
   restartOnModUpdate?: boolean
   backupsEnabled?: boolean
   backupsToKeep?: number
+  // restart once a day at this hour (0-23), off when unset
+  dailyRestartHour?: number | null
   playitAddress?: string
   iniSettings: Record<string, unknown>
   sandboxSettings: Record<string, unknown>

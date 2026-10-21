@@ -435,6 +435,38 @@ function scheduleRestart(profileId: string, srv: ServerProcess, minutes: number,
 }
 
 // ---------------------------------------------------------------------------
+// Daily restart: long-running PZ servers slowly eat memory and lag, so restart
+// at a quiet hour. The 5 minute warning starts early so it's back up on the hour.
+// ---------------------------------------------------------------------------
+const DAILY_WARNING_MINUTES = 5
+const lastDailyRestart = new Map<string, string>()
+
+// Returns a key for today's restart when it's time to start warning, null otherwise
+export function dailyRestartDue(hour: number, now: Date, lastKey?: string): string | null {
+  const target = new Date(now)
+  target.setHours(hour, 0, 0, 0)
+  // 23:55 warning for a midnight restart belongs to tomorrow's slot
+  if (target.getTime() - now.getTime() > 12 * 60 * 60 * 1000) target.setDate(target.getDate() - 1)
+  if (target.getTime() - now.getTime() < -12 * 60 * 60 * 1000) target.setDate(target.getDate() + 1)
+  const warnAt = target.getTime() - DAILY_WARNING_MINUTES * 60 * 1000
+  const key = target.toDateString()
+  // a few minutes of slack in case the PC was asleep or busy when the tick landed
+  if (now.getTime() < warnAt || now.getTime() > warnAt + 3 * 60 * 1000 || key === lastKey) return null
+  return key
+}
+
+function checkDailyRestarts() {
+  for (const [profileId, srv] of runningServers) {
+    const hour = getProfile(profileId)?.dailyRestartHour
+    if (hour == null || srv.status !== 'running' || srv.pendingRestart) continue
+    const key = dailyRestartDue(hour, new Date(), lastDailyRestart.get(profileId))
+    if (!key) continue
+    lastDailyRestart.set(profileId, key)
+    scheduleRestart(profileId, srv, DAILY_WARNING_MINUTES, '(daily restart)')
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Backups: copy the world before every start, keep the last few
 // ---------------------------------------------------------------------------
 function backupRoot(profile: ServerProfile): string {
@@ -968,6 +1000,8 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
     publicIp: await getPublicIp(),
     lanIps: getLanIps(),
   }))
+
+  setInterval(checkDailyRestarts, 30 * 1000)
 
   // pick up servers that were left running when the app was closed
   setTimeout(() => { reattachRunning().catch(() => undefined) }, 3000)

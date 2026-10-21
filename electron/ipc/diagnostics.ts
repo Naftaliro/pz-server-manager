@@ -98,7 +98,8 @@ export async function buildDiagnostics(): Promise<string> {
     lines.push(
       `status: ${d.status}${d.pid ? ` (pid ${d.pid})` : ''}, ${d.players} player(s) online`,
       `build: ${p.buildVersion}, ports: ${p.port}/${p.udpPort}, memory: ${p.memory} MB, launch: ${p.launchMode || 'managed'}`,
-      `auto restart: ${p.autoRestart !== false}, restart on mod update: ${p.restartOnModUpdate !== false}, backups: ${p.backupsEnabled !== false}`,
+      `auto restart: ${p.autoRestart !== false}, restart on mod update: ${p.restartOnModUpdate !== false}, backups: ${p.backupsEnabled !== false} (keep ${p.backupsToKeep || 5})`,
+      `daily restart: ${p.dailyRestartHour == null ? 'off' : `${p.dailyRestartHour}:00`}`,
       `last started: ${p.lastStarted || 'never'}`,
       `mods (${p.mods.length}): ${p.mods.map(m => `${m.workshopId} [${m.modId || '?'}]`).join(', ') || 'none'}`,
     )

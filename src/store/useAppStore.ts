@@ -44,6 +44,8 @@ export interface ServerProfile {
   restartOnModUpdate?: boolean
   backupsEnabled?: boolean
   backupsToKeep?: number
+  // restart once a day at this hour (0-23), off when unset
+  dailyRestartHour?: number | null
   // address the user pasted in, used if we can't read it from playit
   playitAddress?: string
   iniSettings: Record<string, unknown>
