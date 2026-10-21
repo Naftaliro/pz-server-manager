@@ -5,7 +5,7 @@ import type { ServerProfile, BuildVersion } from '../store/useAppStore'
 import ConfirmDialog from './ConfirmDialog'
 import { PRESETS, PRESET_BLURBS } from '../lib/presets'
 import type { PresetKey } from '../lib/presets'
-import { saveProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
+import { patchProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
 
 // The settings normal people actually change. Everything else is one click away under "More settings".
 export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
@@ -40,41 +40,39 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm(prev => ({ ...prev, [key]: value }))
 
   const save = async () => {
-    await saveProfile({
-      ...profile,
-      name: form.name.trim() || profile.name,
+    await patchProfile(profile.id, p => ({
+      name: form.name.trim() || p.name,
       serverPassword: form.serverPassword,
-      adminPassword: form.adminPassword || profile.adminPassword,
+      adminPassword: form.adminPassword || p.adminPassword,
       maxPlayers: form.maxPlayers,
       memory: form.memory,
       port: form.port,
       udpPort: form.port + 1,
       buildVersion: form.buildVersion,
       iniSettings: {
-        ...profile.iniSettings,
+        ...p.iniSettings,
         PVP: form.pvp,
         Public: form.isPublic,
-        PublicName: form.name.trim() || profile.name,
+        PublicName: form.name.trim() || p.name,
         PublicDescription: form.publicDescription,
         ServerWelcomeMessage: form.welcome,
       },
-      updatedAt: new Date().toISOString(),
-    })
+    }))
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
 
   const applyPreset = async (key: PresetKey) => {
     const { ZombieConfig, ...rest } = PRESETS[key].settings as Record<string, unknown> & { ZombieConfig?: Record<string, unknown> }
-    const current = profile.sandboxSettings || {}
-    await saveProfile({
-      ...profile,
-      sandboxSettings: {
-        ...current,
-        ...rest,
-        ZombieConfig: { ...((current.ZombieConfig as Record<string, unknown>) || {}), ...(ZombieConfig || {}) },
-      },
-      updatedAt: new Date().toISOString(),
+    await patchProfile(profile.id, p => {
+      const current = p.sandboxSettings || {}
+      return {
+        sandboxSettings: {
+          ...current,
+          ...rest,
+          ZombieConfig: { ...((current.ZombieConfig as Record<string, unknown>) || {}), ...(ZombieConfig || {}) },
+        },
+      }
     })
     setPresetConfirm(null)
   }

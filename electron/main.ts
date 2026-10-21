@@ -9,7 +9,8 @@ import { setupWorldHandlers } from './ipc/worldManager'
 import { setupUpdaterHandlers } from './ipc/updater'
 import { setupAppSettingsHandlers } from './ipc/appSettings'
 
-const isDev = process.env.NODE_ENV === 'development'
+// vite-plugin-electron passes the dev server address when running `npm run dev`
+const devServerUrl = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null
 
@@ -33,9 +34,9 @@ function createWindow() {
     icon: join(__dirname, '../public/icon.ico'),
   })
 
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools()
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl)
+    mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }

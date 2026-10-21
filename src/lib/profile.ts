@@ -39,11 +39,17 @@ export async function saveProfile(profile: Partial<ServerProfile> & { id?: strin
   return saved
 }
 
-// Patch the latest stored copy of a profile (avoids stomping on changes made elsewhere)
-export async function patchProfile(id: string, patch: (p: ServerProfile) => Partial<ServerProfile>): Promise<ServerProfile | undefined> {
-  const current = useAppStore.getState().profiles.find(p => p.id === id)
-  if (!current) return undefined
-  return saveProfile({ ...current, ...patch(current), updatedAt: new Date().toISOString() })
+// Patch the latest stored copy of a profile. Patches run one at a time so two quick
+// changes (say, adding two mods back to back) can't both start from the same stale copy.
+let patchQueue: Promise<unknown> = Promise.resolve()
+export function patchProfile(id: string, patch: (p: ServerProfile) => Partial<ServerProfile>): Promise<ServerProfile | undefined> {
+  const job = patchQueue.then(async () => {
+    const current = useAppStore.getState().profiles.find(p => p.id === id)
+    if (!current) return undefined
+    return saveProfile({ ...current, ...patch(current), updatedAt: new Date().toISOString() })
+  })
+  patchQueue = job.catch(() => undefined)
+  return job
 }
 
 export const RECOMMENDED_MEMORY_MB = 8192

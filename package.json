@@ -4,7 +4,7 @@
   "description": "Project Zomboid Dedicated Server Manager",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"electron .\"",
+    "dev": "vite",
     "build": "tsc && vite build && electron-builder",
     "build:win": "tsc && vite build && electron-builder --win",
     "preview": "vite preview"
@@ -72,5 +72,9 @@
       "dist-electron/**/*",
       "public/**/*"
     ]
+  },
+  "allowScripts": {
+    "electron@28.3.3": true,
+    "esbuild@0.21.5": true
   }
 }

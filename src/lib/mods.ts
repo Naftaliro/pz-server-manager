@@ -81,7 +81,10 @@ export async function addModsToProfile(profileId: string, items: WorkshopModDeta
   const existing = new Set(profile.mods.map(m => m.workshopId))
   const fresh = items.filter(d => !existing.has(d.workshopId))
   if (fresh.length === 0) return 0
-  await patchProfile(profileId, p => ({ mods: [...p.mods, ...fresh.map(toModEntry)] }))
+  // check again inside the patch, a quick double click could have added it already
+  await patchProfile(profileId, p => ({
+    mods: [...p.mods, ...fresh.filter(d => !p.mods.some(m => m.workshopId === d.workshopId)).map(toModEntry)],
+  }))
   void downloadAndScan(profileId, fresh.map(d => d.workshopId))
   return fresh.length
 }
