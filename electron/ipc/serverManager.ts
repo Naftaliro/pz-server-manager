@@ -13,7 +13,7 @@ import { rconCommand } from './rcon'
 import { isServerInstalled, checkServerUpdate } from './steamcmd'
 import { workshopContentDir, scanWorkshopItem, fetchModDetails, PZ_APP_ID } from './modManager'
 import { loadSettings } from './appSettings'
-import { ensurePlayitRunning } from './playit'
+import { ensurePlayitRunning, PLAYIT_INTEGRATION } from './playit'
 import { firewallRuleExists } from './network'
 
 // 'starting' = java is up but still loading the world/mods, 'running' = friends can join
@@ -313,7 +313,7 @@ function markRunning(profileId: string, srv: ServerProcess) {
   srv.modTimer = setInterval(() => { void checkModUpdates(profileId, srv) }, 15 * 60 * 1000)
 
   // "Works with playit.gg": make sure the user's tunnel agent is up while the server is
-  if (loadSettings().playitEnabled) {
+  if (PLAYIT_INTEGRATION && loadSettings().playitEnabled) {
     ensurePlayitRunning().then(ok => {
       if (!ok) emitProblem(profileId, "playit.gg isn't running, so friends can't use the playit address. Open App settings to fix it.", 'playit service not running')
     }).catch(() => undefined)

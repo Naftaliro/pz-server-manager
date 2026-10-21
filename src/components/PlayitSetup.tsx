@@ -1,10 +1,64 @@
 import { useEffect, useState } from 'react'
 import { Download, Link2, ExternalLink, CheckCircle, Loader, AlertTriangle, RefreshCw, Globe } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
+import { PLAYIT_INTEGRATION } from '../lib/features'
+
+export default function PlayitSetup({ compact = false }: { compact?: boolean }) {
+  return PLAYIT_INTEGRATION ? <PlayitIntegrated compact={compact} /> : <PlayitGuide compact={compact} />
+}
+
+// While we wait on playit's third-party app approval: a guide and links the user clicks
+// themselves. The app doesn't install, start or talk to playit, it just shows the address
+// they paste in on the server's Overview page.
+function PlayitGuide({ compact }: { compact: boolean }) {
+  const { settings, setSettings } = useAppStore()
+  const enabled = !!settings?.playitEnabled
+  const setEnabled = async (v: boolean) => setSettings(await window.electronAPI.settings.set({ playitEnabled: v }))
+  const open = (url: string) => window.electronAPI.shell.openExternal(url)
+
+  return (
+    <div className="space-y-4">
+      {!compact && (
+        <p className="text-sm text-pz-subtext">
+          playit.gg is a free service that gives your server an address friends can join from anywhere, without touching
+          your router. It's a separate app with your own free account. Here's how to set it up:
+        </p>
+      )}
+      <ol className="space-y-2 text-sm text-pz-subtext list-decimal pl-5">
+        <li>
+          Download and install playit from their site.{' '}
+          <button onClick={() => open('https://playit.gg/download')} className="text-pz-green underline inline-flex items-center gap-1">
+            Open playit.gg/download <ExternalLink size={11} />
+          </button>
+        </li>
+        <li>Open playit. It shows a link, open it and sign up or log in (free).</li>
+        <li>
+          On playit's site, <b className="text-pz-text">Add Tunnel</b>, pick <b className="text-pz-text">UDP</b>, and set the local port to
+          {' '}<b className="text-pz-text">16261</b> (your server's port). Make a second one for <b className="text-pz-text">16262</b>.{' '}
+          <button onClick={() => window.electronAPI.playit.openDashboard()} className="text-pz-green underline inline-flex items-center gap-1">
+            Open my tunnels <ExternalLink size={11} />
+          </button>
+        </li>
+        <li>Copy the address playit gives the 16261 tunnel (looks like <code>name.gl.joinmc.link:12345</code>) and paste it on your server's Overview page.</li>
+        <li>Keep playit running while you play.</li>
+      </ol>
+
+      <label className="flex items-center gap-3 cursor-pointer pt-1">
+        <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} className="accent-pz-green w-4 h-4" />
+        <span className="text-sm text-pz-text">I use playit (show my playit address in the invite instead of my home IP)</span>
+      </label>
+
+      <p className="text-[11px] text-pz-muted">
+        playit.gg is a separate service by Developed Methods LLC and isn't affiliated with this app. It has its own{' '}
+        <button onClick={() => open('https://playit.gg/terms')} className="underline">terms</button>.
+      </p>
+    </div>
+  )
+}
 
 // Step-by-step "Works with playit.gg" setup. Everything account-related happens in
 // playit's own app and website; this just walks people through it and checks progress.
-export default function PlayitSetup({ compact = false }: { compact?: boolean }) {
+function PlayitIntegrated({ compact = false }: { compact?: boolean }) {
   const { settings, setSettings } = useAppStore()
   const [state, setState] = useState<PlayitState | null>(null)
   const [busy, setBusy] = useState('')

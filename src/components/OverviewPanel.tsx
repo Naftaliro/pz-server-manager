@@ -10,6 +10,7 @@ import StartButton from './StartButton'
 import ConfirmDialog from './ConfirmDialog'
 import { getServerName, dataPath, patchProfile } from '../lib/profile'
 import { applyFix, inviteMessage, splitAddress } from '../lib/fixes'
+import { PLAYIT_INTEGRATION } from '../lib/features'
 
 export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
   const { serverStatuses, players, problems, clearProblems, openServer, modUpdates, setModUpdates, settings, setActiveView } = useAppStore()
@@ -222,7 +223,7 @@ function InviteCard({ profile, net, playitOn, running }: {
   const [checking, setChecking] = useState(false)
 
   useEffect(() => {
-    if (!playitOn) return
+    if (!playitOn || !PLAYIT_INTEGRATION) return
     const load = () => window.electronAPI.playit.state().then(setPlayit).catch(() => undefined)
     load()
     const t = setInterval(load, 10000)
@@ -259,7 +260,7 @@ function InviteCard({ profile, net, playitOn, running }: {
       </div>
 
       {usePlayit && (
-        <p className="text-xs text-pz-green flex items-center gap-1.5"><Zap size={12} /> Using your playit.gg address, no router setup needed.</p>
+        <p className="text-xs text-pz-green flex items-center gap-1.5"><Zap size={12} /> Using your playit.gg address{PLAYIT_INTEGRATION ? ', no router setup needed' : ' (keep playit running while you play)'}.</p>
       )}
 
       <div className="space-y-2">
@@ -285,11 +286,12 @@ function InviteCard({ profile, net, playitOn, running }: {
       {/* playit on, but we couldn't find a tunnel for this port */}
       {playitOn && !tunnel && (
         <div className="text-xs bg-pz-darker rounded-lg p-3 space-y-2">
-          {playit && playit.phase !== 'running' ? (
+          {PLAYIT_INTEGRATION && playit && playit.phase !== 'running' ? (
             <p className="text-pz-yellow">playit isn't ready ({playit.phase.replace(/_/g, ' ')}). <button onClick={() => setActiveView('appsettings')} className="underline">Finish setting it up</button></p>
           ) : (
             <p className="text-pz-subtext">
-              No playit tunnel for port {profile.port} yet. <button onClick={() => window.electronAPI.playit.openDashboard()} className="text-pz-green underline">Make one on playit.gg</button> (UDP, local port {profile.port}), or paste your playit address here:
+              {PLAYIT_INTEGRATION ? `No playit tunnel for port ${profile.port} yet. ` : 'Paste the address playit gives your tunnel for '}
+              {PLAYIT_INTEGRATION ? <><button onClick={() => window.electronAPI.playit.openDashboard()} className="text-pz-green underline">Make one on playit.gg</button> (UDP, local port {profile.port}), or paste your playit address here:</> : <>port {profile.port} (<button onClick={() => window.electronAPI.playit.openDashboard()} className="text-pz-green underline">open my playit tunnels</button>):</>}
             </p>
           )}
           <div className="flex gap-2">

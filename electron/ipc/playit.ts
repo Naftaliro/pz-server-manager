@@ -13,6 +13,9 @@ import net from 'net'
 // Their IPC is newline-delimited JSON over \\.\pipe\playitd-system (ipc_version 2 as of agent 1.0.x).
 // If that ever changes we fall back to an address the user pastes in.
 
+// Off until playit approves us as a third-party app (see src/lib/features.ts)
+export const PLAYIT_INTEGRATION = false
+
 const PIPE = '\\\\.\\pipe\\playitd-system'
 const IPC_VERSION = 2
 
@@ -164,6 +167,13 @@ export async function ensurePlayitRunning(): Promise<boolean> {
 }
 
 export function setupPlayitHandlers() {
+  // the only thing left on while we wait for approval: opening playit's site when the user clicks
+  ipcMain.handle('playit:openDashboard', async () => {
+    shell.openExternal('https://playit.gg/account/tunnels')
+    return { success: true }
+  })
+  if (!PLAYIT_INTEGRATION) return
+
   ipcMain.handle('playit:state', async () => getPlayitState())
 
   // Official install through winget (Windows' own package manager). Shows its own
@@ -202,10 +212,4 @@ export function setupPlayitHandlers() {
   })
 
   ipcMain.handle('playit:start', async () => ({ success: await ensurePlayitRunning() }))
-
-  // Tunnel management lives on playit's site, we just open the right page
-  ipcMain.handle('playit:openDashboard', async () => {
-    shell.openExternal('https://playit.gg/account/tunnels')
-    return { success: true }
-  })
 }

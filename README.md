@@ -10,7 +10,7 @@ a windows app for hosting project zomboid (b42) servers for you and your friends
 - checks everything before starting (ports, memory, missing mods) and tells you how to fix it
 - knows when the server is actually ready, shows who's online, console with commands over rcon
 - "invite your friends" box with a copy-paste invite message
-- works with [playit.gg](https://playit.gg) so friends can join without touching your router (uses your own free playit account)
+- step by step guide for [playit.gg](https://playit.gg) so friends can join without touching your router, and the invite shows your playit address (playit is its own free service, not affiliated with this app)
 - checks your router (upnp), sets up the windows firewall rule for you, warns when the server is out of date
 - backs up the world every start, one-click restore
 - restarts by itself if it crashes or when a mod updates (warns players in chat first)
@@ -34,7 +34,7 @@ windows might say it "protected your pc" because the app isn't signed. click **m
 
 ## friends can't join?
 
-easiest: turn on playit.gg in app settings, it walks you through it. otherwise the overview page has a "friends can't connect?" guide, short version:
+easiest: follow the playit.gg guide in app settings and paste your playit address on the overview page. otherwise the overview page has a "friends can't connect?" guide, short version:
 
 - let the app add the windows firewall rule (app settings, or the fix button before starting)
 - forward **udp 16261 and 16262** on your router to your pc (the app tries upnp first, lots of routers block it)
