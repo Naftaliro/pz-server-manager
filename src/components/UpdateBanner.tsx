@@ -74,10 +74,12 @@ export default function UpdateBanner() {
         setUpdateInfo(result as UpdateInfo)
         setState('available')
         setDismissed(false)
-      } else {
+      } else if (isManual) {
+        // only worth saying "up to date" when someone actually asked
         setState('uptodate')
-        // Auto-hide "up to date" after 5 seconds (unless manual check, keep it visible longer)
-        setTimeout(() => setState('idle'), isManual ? 8000 : 4000)
+        setTimeout(() => setState('idle'), 8000)
+      } else {
+        setState('idle')
       }
     } catch (err) {
       if (isManual) {

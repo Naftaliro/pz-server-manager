@@ -19,6 +19,7 @@ export default function InstallRunner({ steamcmdDir, serverDir, buildVersion, mo
   const [logs, setLogs] = useState<string[]>([])
   const [error, setError] = useState('')
   const [pct, setPct] = useState<number | null>(null)
+  const [stage, setStage] = useState('')
   const [showLog, setShowLog] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -27,14 +28,19 @@ export default function InstallRunner({ steamcmdDir, serverDir, buildVersion, mo
   const onLine = (line: string) => {
     setLogs(prev => [...prev.slice(-500), line])
     // " Update state (0x61) downloading, progress: 42.17 (1234 / 5678)"
-    const m = line.match(/progress:\s*([\d.]+)/i)
-    if (m) setPct(Math.min(100, parseFloat(m[1])))
+    // steamcmd goes through several stages that each count 0-100, so say which one we're in
+    const m = line.match(/Update state \(0x[0-9a-f]+\)\s*([a-z ]+?),\s*progress:\s*([\d.]+)/i)
+    if (m) {
+      setStage(m[1].trim())
+      setPct(Math.min(100, parseFloat(m[2])))
+    }
   }
 
   const run = async () => {
     setLogs([])
     setError('')
     setPct(null)
+    setStage('')
     try {
       setPhase('steamcmd')
       onLine('Getting SteamCMD (Valve\'s download tool)...')
@@ -72,7 +78,7 @@ export default function InstallRunner({ steamcmdDir, serverDir, buildVersion, mo
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-sm text-pz-text">
             <Loader size={14} className="animate-spin text-pz-green" />
-            {phase === 'steamcmd' ? 'Getting SteamCMD...' : mode === 'install' ? 'Downloading the game server (about 5 GB, this takes a while)...' : 'Checking for server updates...'}
+            {phase === 'steamcmd' ? 'Getting SteamCMD...' : mode === 'install' ? 'Downloading the game server (about 7 GB, this takes a while)...' : 'Checking for server updates...'}
           </div>
           <div className="h-2 bg-pz-darker rounded-full overflow-hidden">
             <div
@@ -80,7 +86,11 @@ export default function InstallRunner({ steamcmdDir, serverDir, buildVersion, mo
               style={pct !== null ? { width: `${pct}%` } : undefined}
             />
           </div>
-          {pct !== null && <p className="text-xs text-pz-muted">{pct.toFixed(0)}%</p>}
+          {pct !== null && (
+            <p className="text-xs text-pz-muted">
+              {stage === 'downloading' ? 'Downloading' : stage === 'committing' ? 'Installing files' : stage === 'verifying' ? 'Checking files' : stage || 'Working'}: {pct.toFixed(0)}%
+            </p>
+          )}
         </div>
       )}
 

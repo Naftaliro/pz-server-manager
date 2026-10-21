@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Save, ArrowLeft, RotateCcw, Download, Upload, Search, X } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import { PRESETS } from '../lib/presets'
-import { dataPath as profileDataPath, getServerName } from '../lib/profile'
+import { dataPath as profileDataPath, getServerName, patchProfile } from '../lib/profile'
 
 type SandboxSettings = Record<string, unknown>
 
@@ -93,8 +93,7 @@ export default function SandboxEditor() {
       const serverName = getServerName(profile)
       const dataPath = profileDataPath(profile)
       await window.electronAPI.config.writeSandbox(serverName, dataPath, fullSettings)
-      const updatedProfile = { ...profile, sandboxSettings: fullSettings, updatedAt: new Date().toISOString() }
-      await window.electronAPI.profiles.save(updatedProfile)
+      await patchProfile(profile.id, () => ({ sandboxSettings: fullSettings }))
       const updated = await window.electronAPI.profiles.list()
       setProfiles(updated)
       setSaved(true)

@@ -40,6 +40,13 @@ export default function CreateServer() {
     return port
   }
 
+  const nextRconPort = () => {
+    const used = new Set(profiles.map(p => Number(p.iniSettings?.RCONPort || 27015)))
+    let port = 27015
+    while (used.has(port)) port++
+    return port
+  }
+
   const create = async (thenMods: boolean) => {
     setCreating(true)
     try {
@@ -65,7 +72,7 @@ export default function CreateServer() {
           PublicName: name.trim(),
           Open: true,
           // each server gets its own RCON port so two can run side by side
-          RCONPort: 27015 + profiles.length,
+          RCONPort: nextRconPort(),
         },
         sandboxSettings: { ...sandbox, ZombieConfig: ZombieConfig || {} },
         createdAt: new Date().toISOString(),

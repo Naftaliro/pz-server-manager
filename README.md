@@ -22,7 +22,7 @@ windows might say it "protected your pc" because the app isn't signed. click **m
 
 ## first time
 
-1. the setup screen downloads the game server (~5 GB, one time)
+1. the setup screen downloads the game server (~7 GB, one time)
 2. **create a server**: name it, pick a difficulty, add mods if you want
 3. hit **start**. the first start with mods can take a few minutes
 4. when it says **online**, send your friends the address from the overview page

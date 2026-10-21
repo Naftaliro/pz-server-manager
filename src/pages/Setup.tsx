@@ -48,7 +48,7 @@ export default function Setup() {
             </div>
             <div className="card p-4 text-left space-y-2 text-sm text-pz-subtext">
               <p className="text-pz-text font-medium">Here's how it goes:</p>
-              <p>1. Download the game server once (free, about 5 GB)</p>
+              <p>1. Download the game server once (free, about 7 GB)</p>
               <p>2. Create a server and pick a difficulty</p>
               <p>3. Add mods from the Workshop if you want</p>
               <p>4. Hit Start and send your friends the address</p>
@@ -73,7 +73,7 @@ export default function Setup() {
                 <button onClick={pickFolder} className="btn-outline flex-shrink-0" title="Pick a folder"><FolderOpen size={14} /></button>
               </div>
               <p className="text-xs text-pz-muted flex items-center gap-1.5">
-                <HardDrive size={12} /> Needs about 5 GB, plus room for mods. The default is fine for most people.
+                <HardDrive size={12} /> Needs about 7 GB, plus room for mods. The default is fine for most people.
               </p>
             </div>
 

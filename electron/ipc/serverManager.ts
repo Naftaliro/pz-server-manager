@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { spawn, exec, execFile, ChildProcess } from 'child_process'
 import { join } from 'path'
-import { existsSync, writeFileSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from 'fs'
+import { existsSync, writeFileSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync, unlinkSync } from 'fs'
 import { randomBytes } from 'crypto'
 import dgram from 'dgram'
 import os from 'os'
@@ -419,7 +419,13 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
   const enabled = new Set(profile.mods.flatMap(enabledIds))
   for (const m of profile.mods) {
     if (!m.modId || m.modId === m.workshopId) {
-      issues.push({ level: 'error', message: `"${m.name}" doesn't have a mod ID yet. Download it so the app can read it, or type it in.`, fix: 'open-mods' })
+      issues.push({
+        level: 'error',
+        message: (m.infos?.length || 0) > 1
+          ? `"${m.name}" has several mods inside. Pick which ones to turn on in the Mods tab.`
+          : `"${m.name}" doesn't have a mod ID yet. Download it so the app can read it, or type it in.`,
+        fix: 'open-mods',
+      })
     }
   }
 
@@ -513,6 +519,16 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
       `call ${startBatName} -servername "${serverName}" -adminpassword "${adminPassword}"${cacheArg}`,
     ].join('\r\n'))
 
+    // last session's log is still sitting there and has its own "SERVER STARTED" in it,
+    // so clear it (PZ makes a fresh one) or skip past it if something has it locked
+    const logPath = join(dataPath, 'server-console.txt')
+    let logOffset = 0
+    try {
+      if (existsSync(logPath)) unlinkSync(logPath)
+    } catch {
+      try { logOffset = statSync(logPath).size } catch { /* gone already */ }
+    }
+
     // minimized so it stays out of the way but still shows up in the taskbar
     const proc: ChildProcess = spawn(
       'cmd.exe',
@@ -521,10 +537,9 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
     )
     proc.unref()
 
-    const logPath = join(dataPath, 'server-console.txt')
     const srv: ServerProcess = {
       pid: null, status: 'starting', serverName, serverDir,
-      logPath, logOffset: 0, watcher: null, logTimer: null, playersTimer: null, players: [],
+      logPath, logOffset, watcher: null, logTimer: null, playersTimer: null, players: [],
     }
     runningServers.set(profileId, srv)
     emitStatusChange(profileId, 'starting')
@@ -561,6 +576,20 @@ async function stopServer(profileId: string): Promise<{ success: boolean; messag
   srv.status = 'stopping'
   emitStatusChange(profileId, 'stopping')
   emitConsoleOutput(profileId, `[PZ Manager] Saving and stopping "${srv.serverName}"...`)
+
+  // stopped right after Start, before java showed up? find it so it doesn't get left running
+  if (!srv.pid) {
+    for (let i = 0; i < 10 && !srv.pid; i++) {
+      srv.pid = await findServerPid(srv.serverName)
+      if (!srv.pid) await new Promise(resolve => setTimeout(resolve, 2000))
+    }
+    if (srv.pid) {
+      // nothing is loaded yet, so there's no world to save
+      await killProcessTree(srv.pid)
+      cleanup(profileId)
+      return { success: true, message: 'Server stopped.' }
+    }
+  }
 
   if (srv.pid) {
     try {

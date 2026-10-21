@@ -101,9 +101,12 @@ export default function ServerEditor() {
         Mods: formatModIds(form.mods.map(m => m.modId), form.buildVersion),
         WorkshopItems: form.mods.map(m => m.workshopId).join(';'),
       }
+      // mods may have changed (downloads finishing) since this editor opened, keep the latest
+      const latest = useAppStore.getState().profiles.find(p => p.id === activeProfileId)
       const profileData = {
         ...(existingProfile || {}),
         ...form,
+        mods: latest?.mods ?? form.mods,
         id: activeProfileId || '',
         iniSettings,
         sandboxSettings: existingProfile?.sandboxSettings || form.sandboxSettings || {},
