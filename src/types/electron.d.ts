@@ -8,6 +8,18 @@ interface ElectronAPI {
     openExternal: (url: string) => void
     openPath: (path: string) => Promise<string>
   }
+  playit: {
+    state: () => Promise<PlayitStateInfo>
+    install: () => Promise<{ success: boolean; openedDownloadPage?: boolean; message?: string }>
+    setup: () => Promise<{ success: boolean; message?: string }>
+    start: () => Promise<{ success: boolean }>
+    openDashboard: () => Promise<{ success: boolean }>
+  }
+  network: {
+    checkUpnp: (port: number, publicIp: string | null) => Promise<UpnpReportInfo>
+    firewallStatus: () => Promise<{ exists: boolean }>
+    addFirewallRule: (serverInstallPath: string) => Promise<{ success: boolean; message?: string }>
+  }
   system: {
     info: () => Promise<{ totalMemMb: number; platform: string }>
   }
@@ -59,6 +71,8 @@ interface ElectronAPI {
       buildVersion?: 'b41' | 'b42'
     ) => Promise<{ success: boolean; message: string }>
     checkInstalled: (installDir: string) => Promise<boolean>
+    checkUpdate: (installDir: string) => Promise<{ checked: boolean; updateAvailable: boolean; installed: string | null; latest: string | null; steamManaged: boolean }>
+    findSteamInstall: () => Promise<string | null>
     downloadMods: (workshopIds: string[], onEvent: (e: ModDownloadEvent) => void) => Promise<{
       success: boolean
       done: string[]
@@ -75,6 +89,13 @@ interface ElectronAPI {
     sendCommand: (profileId: string, command: string) => Promise<{ success: boolean; output?: string; message?: string }>
     getPlayers: (profileId: string) => Promise<string[]>
     preflight: (profileId: string) => Promise<PreflightIssue[]>
+    playerAction: (profileId: string, action: 'kick' | 'ban' | 'admin' | 'unadmin', name: string) => Promise<{ success: boolean; message?: string }>
+    restartWithWarning: (profileId: string, minutes: number) => Promise<{ success: boolean; message?: string }>
+    listBackups: (profileId: string) => Promise<Array<{ name: string; sizeMb: number }>>
+    backupNow: (profileId: string) => Promise<{ success: boolean; message: string }>
+    restoreBackup: (profileId: string, name: string) => Promise<{ success: boolean; message: string }>
+    openBackups: (profileId: string) => Promise<string>
+    onModUpdates: (callback: (profileId: string, names: string[]) => void) => () => void
     networkInfo: () => Promise<{ publicIp: string | null; lanIps: string[] }>
     onPlayers: (callback: (profileId: string, players: string[]) => void) => () => void
     onProblem: (callback: (profileId: string, problem: ServerProblem) => void) => () => void
@@ -142,7 +163,25 @@ interface ModInfo {
 interface PreflightIssue {
   level: 'error' | 'warning'
   message: string
-  fix?: 'install-server' | 'download-mods' | 'open-mods' | 'open-settings'
+  fix?: 'install-server' | 'download-mods' | 'open-mods' | 'open-settings' | 'update-server' | 'firewall'
+}
+
+interface PlayitStateInfo {
+  installed: boolean
+  exePath: string | null
+  running: boolean
+  phase: 'not_installed' | 'not_running' | 'needs_setup' | 'starting' | 'running' | 'error' | 'unknown'
+  tunnels: Array<{ address: string; destination: string; disabled: boolean; disabledReason?: string }>
+  notices: string[]
+  error?: string
+}
+
+interface UpnpReportInfo {
+  routerFound: boolean
+  routerExternalIp: string | null
+  cgnat: boolean
+  portOpen: boolean | null
+  summary: string
 }
 
 interface ServerProblem {
@@ -171,6 +210,8 @@ declare global {
   type ModDownloadProgress = ModDownloadEvent
   type ServerPreflightIssue = PreflightIssue
   type ServerProblemReport = ServerProblem
+  type PlayitState = PlayitStateInfo
+  type UpnpReport = UpnpReportInfo
 }
 
 export {}

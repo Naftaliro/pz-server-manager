@@ -1,6 +1,6 @@
 {
   "name": "pz-server-manager",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Project Zomboid Dedicated Server Manager",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -47,10 +47,17 @@
     "productName": "PZ Server Manager",
     "forceCodeSigning": false,
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "win": {
       "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
         {
           "target": "zip",
           "arch": [
@@ -58,19 +65,23 @@
           ]
         }
       ],
-      "icon": "public/icon.ico",
-      "signAndEditExecutable": false
+      "icon": "build/icon.png",
+      "signAndEditExecutable": true
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "PZ Server Manager",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "PZ-Server-Manager-Setup-${version}.exe"
     },
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
-      "public/**/*"
+      "build/icon.png"
     ]
   },
   "allowScripts": {

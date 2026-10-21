@@ -9,6 +9,10 @@ export interface AppSettings {
   serverInstallPath: string
   buildVersion: 'b41' | 'b42'
   advancedMode: boolean
+  // server came from the user's Steam library, so Steam keeps it updated (not steamcmd)
+  steamManaged: boolean
+  // "Works with playit.gg" turned on
+  playitEnabled: boolean
 }
 
 const DEFAULTS: AppSettings = {
@@ -17,6 +21,8 @@ const DEFAULTS: AppSettings = {
   serverInstallPath: 'C:\\PZServer',
   buildVersion: 'b42',
   advancedMode: false,
+  steamManaged: false,
+  playitEnabled: false,
 }
 
 function settingsPath(): string {

@@ -2,12 +2,12 @@ import { useState } from 'react'
 import { Play, Square, Loader, AlertTriangle, X, AlertCircle } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile } from '../store/useAppStore'
-import { downloadAndScan } from '../lib/mods'
+import { applyFix } from '../lib/fixes'
 
 // Start/Stop in one button. Before starting it runs the pre-start checks and,
 // if something would break the server, explains it with a button to fix it.
 export default function StartButton({ profile, className = '', big = false }: { profile: ServerProfile; className?: string; big?: boolean }) {
-  const { serverStatuses, openServer, clearProblems, setActiveView } = useAppStore()
+  const { serverStatuses, clearProblems } = useAppStore()
   const status = serverStatuses[profile.id] || 'stopped'
   const [busy, setBusy] = useState(false)
   const [issues, setIssues] = useState<ServerPreflightIssue[] | null>(null)
@@ -40,13 +40,8 @@ export default function StartButton({ profile, className = '', big = false }: { 
 
   const fix = async (issue: ServerPreflightIssue) => {
     setIssues(null)
-    if (issue.fix === 'install-server') setActiveView('appsettings')
-    if (issue.fix === 'open-mods') openServer(profile.id, 'mods')
-    if (issue.fix === 'open-settings') openServer(profile.id, 'settings')
-    if (issue.fix === 'download-mods') {
-      openServer(profile.id, 'mods')
-      void downloadAndScan(profile.id, profile.mods.map(m => m.workshopId))
-    }
+    const msg = await applyFix(issue, profile)
+    if (msg) setError(msg)
   }
 
   const size = big ? 'px-6 py-3 text-base' : ''

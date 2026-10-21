@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, HardDrive, Wrench, RefreshCw, Info, ExternalLink, CheckCircle, AlertCircle } from 'lucide-react'
+import { FolderOpen, HardDrive, Wrench, RefreshCw, Info, ExternalLink, CheckCircle, AlertCircle, Globe, Shield, Loader } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { BuildVersion } from '../store/useAppStore'
 import InstallRunner from '../components/InstallRunner'
+import PlayitSetup from '../components/PlayitSetup'
 import { triggerManualUpdateCheck } from '../components/UpdateBanner'
 
 export default function AppSettings() {
@@ -10,6 +11,10 @@ export default function AppSettings() {
   const [installed, setInstalled] = useState<boolean | null>(null)
   const [version, setVersion] = useState('')
   const [mode, setMode] = useState<'install' | 'update'>('update')
+  const [firewall, setFirewall] = useState<boolean | null>(null)
+  const [fwBusy, setFwBusy] = useState(false)
+  const [fwMsg, setFwMsg] = useState('')
+  const [serverUpdate, setServerUpdate] = useState<{ checked: boolean; updateAvailable: boolean } | null>(null)
 
   const serverDir = settings?.serverInstallPath || 'C:\\PZServer'
   const advanced = !!settings?.advancedMode
@@ -20,6 +25,17 @@ export default function AppSettings() {
   })
 
   useEffect(() => { refreshInstalled() }, [serverDir])
+  useEffect(() => { window.electronAPI.network.firewallStatus().then(r => setFirewall(r.exists)).catch(() => setFirewall(null)) }, [])
+  useEffect(() => { window.electronAPI.steamcmd.checkUpdate(serverDir).then(setServerUpdate).catch(() => undefined) }, [serverDir, installed])
+
+  const allowFirewall = async () => {
+    setFwBusy(true)
+    setFwMsg('')
+    const r = await window.electronAPI.network.addFirewallRule(serverDir)
+    setFwBusy(false)
+    setFirewall(r.success)
+    if (!r.success && r.message) setFwMsg(r.message)
+  }
   useEffect(() => { window.electronAPI.updater.getVersion().then(v => setVersion(v.version)).catch(() => undefined) }, [])
 
   const update = async (patch: Partial<NonNullable<typeof settings>>) => setSettings(await window.electronAPI.settings.set(patch))
@@ -56,6 +72,14 @@ export default function AppSettings() {
                 : <><AlertCircle size={12} /> No server here yet</>}
             </p>
           </div>
+          {serverUpdate?.checked && (
+            <p className={`text-xs flex items-center gap-1 ${serverUpdate.updateAvailable ? 'text-pz-yellow' : 'text-pz-green'}`}>
+              {serverUpdate.updateAvailable ? <><AlertCircle size={12} /> A newer version is out, update it so friends on the new game version can join.</> : <><CheckCircle size={12} /> Up to date with the latest game version</>}
+            </p>
+          )}
+          {settings?.steamManaged ? (
+            <p className="text-xs text-pz-subtext">This server came from your Steam library, so Steam keeps it updated. Open Steam to update "Project Zomboid Dedicated Server".</p>
+          ) : (<>
           <p className="text-xs text-pz-subtext">
             When the game gets an update on Steam, update the server too, otherwise nobody can join. Stop your servers first.
           </p>
@@ -67,6 +91,27 @@ export default function AppSettings() {
             mode={mode}
             onDone={refreshInstalled}
           />
+          </>)}
+        </div>
+
+        <div className="card p-5 space-y-3">
+          <h3 className="section-title flex items-center gap-2"><Globe size={14} /> Let friends join from anywhere</h3>
+          <PlayitSetup />
+        </div>
+
+        <div className="card p-5 space-y-3">
+          <h3 className="section-title flex items-center gap-2"><Shield size={14} /> Windows Firewall</h3>
+          {firewall ? (
+            <p className="text-sm text-pz-green flex items-center gap-2"><CheckCircle size={14} /> The server is allowed through Windows Firewall.</p>
+          ) : (
+            <>
+              <p className="text-sm text-pz-subtext">Windows blocks new programs from the network until you allow them. Do it once here and friends won't get blocked.</p>
+              <button onClick={allowFirewall} disabled={fwBusy || !installed} className="btn-primary">
+                {fwBusy ? <Loader size={14} className="animate-spin" /> : <Shield size={14} />} Allow the server (Windows will ask)
+              </button>
+              {fwMsg && <p className="text-xs text-pz-yellow">{fwMsg}</p>}
+            </>
+          )}
         </div>
 
         <div className="card p-5 space-y-3">

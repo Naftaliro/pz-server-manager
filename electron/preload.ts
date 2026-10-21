@@ -18,6 +18,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     info: () => ipcRenderer.invoke('system:info'),
   },
 
+  // "Works with playit.gg"
+  playit: {
+    state: () => ipcRenderer.invoke('playit:state'),
+    install: () => ipcRenderer.invoke('playit:install'),
+    setup: () => ipcRenderer.invoke('playit:setup'),
+    start: () => ipcRenderer.invoke('playit:start'),
+    openDashboard: () => ipcRenderer.invoke('playit:openDashboard'),
+  },
+
+  network: {
+    checkUpnp: (port: number, publicIp: string | null) => ipcRenderer.invoke('network:checkUpnp', port, publicIp),
+    firewallStatus: () => ipcRenderer.invoke('network:firewallStatus'),
+    addFirewallRule: (serverInstallPath: string) => ipcRenderer.invoke('network:addFirewallRule', serverInstallPath),
+  },
+
   // App-wide settings
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
@@ -47,6 +62,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         .finally(() => ipcRenderer.removeAllListeners(channel))
     },
     checkInstalled: (installDir: string) => ipcRenderer.invoke('steamcmd:checkInstalled', installDir),
+    checkUpdate: (installDir: string) => ipcRenderer.invoke('steamcmd:checkUpdate', installDir),
+    findSteamInstall: () => ipcRenderer.invoke('steamcmd:findSteamInstall'),
     downloadMods: (workshopIds: string[], onEvent: (e: unknown) => void) => {
       const channel = `steamcmd:mods:${Date.now()}:${Math.random()}`
       ipcRenderer.on(channel, (_e, payload) => onEvent(payload))
@@ -65,6 +82,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sendCommand: (profileId: string, command: string) => ipcRenderer.invoke('server:sendCommand', profileId, command),
     getPlayers: (profileId: string) => ipcRenderer.invoke('server:getPlayers', profileId),
     preflight: (profileId: string) => ipcRenderer.invoke('server:preflight', profileId),
+    playerAction: (profileId: string, action: string, name: string) => ipcRenderer.invoke('server:playerAction', profileId, action, name),
+    restartWithWarning: (profileId: string, minutes: number) => ipcRenderer.invoke('server:restartWithWarning', profileId, minutes),
+    listBackups: (profileId: string) => ipcRenderer.invoke('server:listBackups', profileId),
+    backupNow: (profileId: string) => ipcRenderer.invoke('server:backupNow', profileId),
+    restoreBackup: (profileId: string, name: string) => ipcRenderer.invoke('server:restoreBackup', profileId, name),
+    openBackups: (profileId: string) => ipcRenderer.invoke('server:openBackups', profileId),
+    onModUpdates: (callback: (profileId: string, names: string[]) => void) => {
+      const handler = (_e: unknown, profileId: string, names: string[]) => callback(profileId, names)
+      ipcRenderer.on('server:modUpdates', handler)
+      return () => ipcRenderer.removeListener('server:modUpdates', handler)
+    },
     networkInfo: () => ipcRenderer.invoke('server:networkInfo'),
     onPlayers: (callback: (profileId: string, players: string[]) => void) => {
       const handler = (_e: unknown, profileId: string, players: string[]) => callback(profileId, players)

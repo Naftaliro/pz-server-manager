@@ -1,7 +1,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { spawn, exec, execFile, ChildProcess } from 'child_process'
 import { join } from 'path'
-import { existsSync, writeFileSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync, unlinkSync } from 'fs'
+import { existsSync, writeFileSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync, unlinkSync, readdirSync } from 'fs'
+import { cp, rm } from 'fs/promises'
 import { randomBytes } from 'crypto'
 import dgram from 'dgram'
 import os from 'os'
@@ -9,8 +10,11 @@ import https from 'https'
 import { getProfile, listProfiles, patchProfile, getServerName } from './profileManager'
 import type { ServerProfile } from './profileManager'
 import { rconCommand } from './rcon'
-import { isServerInstalled } from './steamcmd'
-import { workshopContentDir, scanWorkshopItem } from './modManager'
+import { isServerInstalled, checkServerUpdate } from './steamcmd'
+import { workshopContentDir, scanWorkshopItem, fetchModDetails, PZ_APP_ID } from './modManager'
+import { loadSettings } from './appSettings'
+import { ensurePlayitRunning } from './playit'
+import { firewallRuleExists } from './network'
 
 // 'starting' = java is up but still loading the world/mods, 'running' = friends can join
 type Status = 'starting' | 'running' | 'stopping' | 'stopped'
@@ -25,7 +29,10 @@ interface ServerProcess {
   watcher: NodeJS.Timeout | null
   logTimer: NodeJS.Timeout | null
   playersTimer: NodeJS.Timeout | null
+  modTimer: NodeJS.Timeout | null
   players: string[]
+  // set while a planned restart (mod update) is counting down
+  pendingRestart: NodeJS.Timeout | null
 }
 
 const runningServers = new Map<string, ServerProcess>()
@@ -303,6 +310,14 @@ function markRunning(profileId: string, srv: ServerProcess) {
   }
   pollPlayers()
   srv.playersTimer = setInterval(pollPlayers, 20000)
+  srv.modTimer = setInterval(() => { void checkModUpdates(profileId, srv) }, 15 * 60 * 1000)
+
+  // "Works with playit.gg": make sure the user's tunnel agent is up while the server is
+  if (loadSettings().playitEnabled) {
+    ensurePlayitRunning().then(ok => {
+      if (!ok) emitProblem(profileId, "playit.gg isn't running, so friends can't use the playit address. Open App settings to fix it.", 'playit service not running')
+    }).catch(() => undefined)
+  }
 }
 
 function cleanup(profileId: string) {
@@ -311,6 +326,8 @@ function cleanup(profileId: string) {
   if (srv.watcher) clearInterval(srv.watcher)
   if (srv.logTimer) clearInterval(srv.logTimer)
   if (srv.playersTimer) clearInterval(srv.playersTimer)
+  if (srv.modTimer) clearInterval(srv.modTimer)
+  if (srv.pendingRestart) clearTimeout(srv.pendingRestart)
   runningServers.delete(profileId)
   emitPlayers(profileId, [])
   emitStatusChange(profileId, 'stopped')
@@ -326,8 +343,10 @@ function attach(profileId: string, srv: ServerProcess, pid: number) {
   srv.watcher = setInterval(async () => {
     if (!srv.pid) return
     if (!(await isPidAlive(srv.pid))) {
+      const crashed = srv.status === 'running' || srv.status === 'starting'
       emitConsoleOutput(profileId, `[PZ Manager] Server process (PID ${srv.pid}) has stopped.`)
       cleanup(profileId)
+      if (crashed) handleCrash(profileId)
       return
     }
     if (srv.status === 'starting' && ++rconChecks % 3 === 0) {
@@ -337,6 +356,153 @@ function attach(profileId: string, srv: ServerProcess, pid: number) {
       } catch { /* still loading */ }
     }
   }, 5000)
+}
+
+// ---------------------------------------------------------------------------
+// Crash recovery: the server died without anyone pressing Stop. Bring it back,
+// but give up if it keeps dying (something's actually broken then).
+// ---------------------------------------------------------------------------
+const crashTimes = new Map<string, number[]>()
+
+function handleCrash(profileId: string) {
+  const profile = getProfile(profileId)
+  if (!profile) return
+  const recent = (crashTimes.get(profileId) || []).filter(t => Date.now() - t < 30 * 60 * 1000)
+  recent.push(Date.now())
+  crashTimes.set(profileId, recent)
+
+  if (profile.autoRestart === false) {
+    emitProblem(profileId, 'The server stopped unexpectedly. Check the console log to see why.', 'Server process exited')
+    return
+  }
+  if (recent.length > 3) {
+    emitProblem(profileId, 'The server keeps crashing, so it was not restarted again. The console log should say why (often a broken mod).', 'Crashed 3 times in 30 minutes')
+    return
+  }
+  emitProblem(profileId, 'The server crashed, restarting it automatically...', 'Server process exited unexpectedly')
+  emitConsoleOutput(profileId, `[PZ Manager] Server crashed, restarting in 10 seconds (${recent.length}/3)...`)
+  setTimeout(() => { if (!runningServers.has(profileId)) void startServer(profileId) }, 10000)
+}
+
+// ---------------------------------------------------------------------------
+// Mod updates: when a mod updates on the Workshop, players with the new version
+// can't join until the server restarts. Check every 15 minutes while running.
+// ---------------------------------------------------------------------------
+function installedModTimes(serverInstallPath: string): Map<string, number> {
+  const times = new Map<string, number>()
+  try {
+    const acf = readFileSync(join(serverInstallPath, 'steamapps', 'workshop', `appworkshop_${PZ_APP_ID}.acf`), 'utf-8')
+    const installed = acf.slice(acf.search(/"WorkshopItemsInstalled"/i))
+    // first match per id wins, the WorkshopItemDetails section further down repeats ids with other times
+    for (const m of installed.matchAll(/"(\d+)"\s*\{[^}]*?"timeupdated"\s+"(\d+)"/g)) {
+      if (!times.has(m[1])) times.set(m[1], Number(m[2]))
+    }
+  } catch { /* nothing downloaded yet */ }
+  return times
+}
+
+async function checkModUpdates(profileId: string, srv: ServerProcess) {
+  const profile = getProfile(profileId)
+  if (!profile || profile.mods.length === 0 || srv.status !== 'running' || srv.pendingRestart) return
+  const local = installedModTimes(profile.serverInstallPath)
+  let remote
+  try { remote = await fetchModDetails(profile.mods.map(m => m.workshopId)) } catch { return }
+  const updated = remote.filter(r => (local.get(r.workshopId) || Infinity) < r.timeUpdated)
+  if (updated.length === 0) return
+
+  const names = updated.map(u => u.name)
+  emitModUpdates(profileId, names)
+  emitConsoleOutput(profileId, `[PZ Manager] Mods updated on the Workshop: ${names.join(', ')}`)
+  if (profile.restartOnModUpdate !== false) scheduleRestart(profileId, srv, 5, 'to update mods')
+}
+
+// Warn players in chat, then restart
+function scheduleRestart(profileId: string, srv: ServerProcess, minutes: number, reason: string) {
+  if (srv.pendingRestart) return
+  const say = (msg: string) => rconFor(profileId, `servermsg "${msg}"`).catch(() => undefined)
+  say(`Server restarting in ${minutes} minutes ${reason}`)
+  emitConsoleOutput(profileId, `[PZ Manager] Restarting in ${minutes} minutes ${reason}.`)
+  const oneMinuteLeft = setTimeout(() => say(`Server restarting in 1 minute ${reason}`), (minutes - 1) * 60 * 1000)
+  srv.pendingRestart = setTimeout(async () => {
+    clearTimeout(oneMinuteLeft)
+    await say('Restarting now, see you in a minute!')
+    await stopServer(profileId)
+    await new Promise(r => setTimeout(r, 3000))
+    await startServer(profileId)
+  }, minutes * 60 * 1000)
+}
+
+// ---------------------------------------------------------------------------
+// Backups: copy the world before every start, keep the last few
+// ---------------------------------------------------------------------------
+function backupRoot(profile: ServerProfile): string {
+  return join(resolveDataPath(profile.worldSavePath), 'pzm-backups', getServerName(profile))
+}
+
+function worldDir(profile: ServerProfile): string {
+  return join(resolveDataPath(profile.worldSavePath), 'Saves', 'Multiplayer', getServerName(profile))
+}
+
+function dbFile(profile: ServerProfile): string {
+  return join(resolveDataPath(profile.worldSavePath), 'db', `${getServerName(profile)}.db`)
+}
+
+function stamp(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`
+}
+
+async function backupWorld(profile: ServerProfile, label = '', prune = true): Promise<string | null> {
+  const world = worldDir(profile)
+  if (!existsSync(world)) return null
+  const dest = join(backupRoot(profile), stamp() + (label ? `_${label}` : ''))
+  await cp(world, join(dest, 'world'), { recursive: true })
+  if (existsSync(dbFile(profile))) await cp(dbFile(profile), join(dest, 'players.db'))
+  // keep the newest N
+  if (prune) {
+    const keep = Math.max(1, profile.backupsToKeep || 5)
+    for (const old of listBackupNames(profile).slice(keep)) await rm(join(backupRoot(profile), old), { recursive: true, force: true })
+  }
+  return dest
+}
+
+function listBackupNames(profile: ServerProfile): string[] {
+  try {
+    return readdirSync(backupRoot(profile)).filter(n => /^\d{4}-\d{2}-\d{2}_/.test(n)).sort().reverse()
+  } catch {
+    return []
+  }
+}
+
+function dirSizeMb(p: string): number {
+  let total = 0
+  const walk = (d: string) => {
+    try {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const f = join(d, e.name)
+        if (e.isDirectory()) walk(f)
+        else { try { total += statSync(f).size } catch { /* skip */ } }
+      }
+    } catch { /* skip */ }
+  }
+  walk(p)
+  return Math.round(total / 1024 / 1024 * 10) / 10
+}
+
+async function restoreBackup(profileId: string, name: string): Promise<{ success: boolean; message: string }> {
+  const profile = getProfile(profileId)
+  if (!profile) return { success: false, message: 'Profile not found' }
+  if (runningServers.has(profileId)) return { success: false, message: 'Stop the server first.' }
+  const src = join(backupRoot(profile), name)
+  if (!existsSync(join(src, 'world'))) return { success: false, message: "That backup doesn't exist anymore." }
+  // keep what's there now, in case they change their mind. No pruning here, or the
+  // backup we're about to restore could be the one that gets deleted to make room
+  await backupWorld(profile, 'before-restore', false)
+  await rm(worldDir(profile), { recursive: true, force: true })
+  await cp(join(src, 'world'), worldDir(profile), { recursive: true })
+  if (existsSync(join(src, 'players.db'))) await cp(join(src, 'players.db'), dbFile(profile))
+  return { success: true, message: 'Backup restored. Start the server to play it.' }
 }
 
 // On app launch, pick back up any servers that were left running
@@ -351,7 +517,7 @@ async function reattachRunning() {
     const logPath = join(dataPath, 'server-console.txt')
     const srv: ServerProcess = {
       pid, status: 'starting', serverName, serverDir: profile.serverInstallPath,
-      logPath, logOffset: 0, watcher: null, logTimer: null, playersTimer: null, players: [],
+      logPath, logOffset: 0, watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
     }
     runningServers.set(profile.id, srv)
     emitStatusChange(profile.id, 'starting')
@@ -368,7 +534,7 @@ async function reattachRunning() {
 interface PreflightIssue {
   level: 'error' | 'warning'
   message: string
-  fix?: 'install-server' | 'download-mods' | 'open-mods' | 'open-settings'
+  fix?: 'install-server' | 'download-mods' | 'open-mods' | 'open-settings' | 'update-server' | 'firewall'
 }
 
 function udpPortFree(port: number): Promise<boolean> {
@@ -386,6 +552,24 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
 
   if (!isServerInstalled(profile.serverInstallPath)) {
     issues.push({ level: 'error', message: `The game server isn't installed at ${profile.serverInstallPath}.`, fix: 'install-server' })
+  }
+
+  // out of date = nobody on the current game version can join
+  try {
+    const upd = await checkServerUpdate(profile.serverInstallPath)
+    if (upd.updateAvailable) {
+      issues.push({
+        level: 'warning',
+        message: upd.steamManaged
+          ? 'The game got an update and this server is older. Open Steam and let it update "Project Zomboid Dedicated Server", or friends on the new version can\'t join.'
+          : 'The game got an update and this server is older, so friends on the new version can\'t join. Update it first (takes a couple of minutes).',
+        fix: upd.steamManaged ? undefined : 'update-server',
+      })
+    }
+  } catch { /* offline or steamcmd busy, don't block starting */ }
+
+  if (!(await firewallRuleExists())) {
+    issues.push({ level: 'warning', message: "Windows Firewall hasn't been told to allow the server yet, so it may block friends.", fix: 'firewall' })
   }
 
   // ports clash with another server in the app?
@@ -522,6 +706,15 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
       `call ${startBatName} -servername "${serverName}" -adminpassword "${adminPassword}"${cacheArg}`,
     ].join('\r\n'))
 
+    if (profile.backupsEnabled !== false) {
+      try {
+        const made = await backupWorld(profile)
+        if (made) emitConsoleOutput(profileId, `[PZ Manager] ✓ Backed up the world`)
+      } catch (e) {
+        emitConsoleOutput(profileId, `[PZ Manager] ⚠ Backup failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+
     // last session's log is still sitting there and has its own "SERVER STARTED" in it,
     // so clear it (PZ makes a fresh one) or skip past it if something has it locked
     const logPath = join(dataPath, 'server-console.txt')
@@ -544,7 +737,7 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
 
     const srv: ServerProcess = {
       pid: null, status: 'starting', serverName, serverDir,
-      logPath, logOffset, watcher: null, logTimer: null, playersTimer: null, players: [],
+      logPath, logOffset, watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
     }
     runningServers.set(profileId, srv)
     emitStatusChange(profileId, 'starting')
@@ -686,6 +879,10 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
   ipcMain.handle('server:sendCommand', async (_event, profileId: string, command: string) => {
     const srv = runningServers.get(profileId)
     if (!srv || !srv.pid) return { success: false, message: 'Server is not running' }
+    if (/^\/?quit\s*$/i.test(command.trim())) {
+      void stopServer(profileId)
+      return { success: true, output: '' }
+    }
     emitConsoleOutput(profileId, `> ${command}`)
     try {
       const out = await rconFor(profileId, command)
@@ -699,6 +896,59 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
 
   ipcMain.handle('server:preflight', async (_event, profileId: string) => preflight(profileId))
 
+  // kick / ban / admin from the players list
+  ipcMain.handle('server:playerAction', async (_event, profileId: string, action: 'kick' | 'ban' | 'admin' | 'unadmin', name: string) => {
+    const safe = name.replace(/"/g, '')
+    const command = {
+      kick: `kickuser "${safe}"`,
+      ban: `banuser "${safe}"`,
+      admin: `setaccesslevel "${safe}" admin`,
+      unadmin: `setaccesslevel "${safe}" none`,
+    }[action]
+    if (!command) return { success: false, message: 'Unknown action' }
+    try {
+      const out = await rconFor(profileId, command)
+      emitConsoleOutput(profileId, `> ${command}`)
+      if (out) emitConsoleOutput(profileId, out)
+      return { success: true, message: out }
+    } catch (e) {
+      return { success: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('server:restartWithWarning', async (_event, profileId: string, minutes: number) => {
+    const srv = runningServers.get(profileId)
+    if (!srv || srv.status !== 'running') return { success: false, message: 'Server is not running' }
+    scheduleRestart(profileId, srv, Math.max(1, minutes), 'for an update')
+    return { success: true }
+  })
+
+  ipcMain.handle('server:listBackups', async (_event, profileId: string) => {
+    const profile = getProfile(profileId)
+    if (!profile) return []
+    return listBackupNames(profile).map(name => ({ name, sizeMb: dirSizeMb(join(backupRoot(profile), name)) }))
+  })
+
+  ipcMain.handle('server:backupNow', async (_event, profileId: string) => {
+    const profile = getProfile(profileId)
+    if (!profile) return { success: false, message: 'Profile not found' }
+    try {
+      const made = await backupWorld(profile, 'manual')
+      return made ? { success: true, message: 'Backup made.' } : { success: false, message: 'No world to back up yet.' }
+    } catch (e) {
+      return { success: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('server:restoreBackup', async (_event, profileId: string, name: string) => restoreBackup(profileId, name))
+
+  ipcMain.handle('server:openBackups', async (_event, profileId: string) => {
+    const profile = getProfile(profileId)
+    if (!profile) return ''
+    mkdirSync(backupRoot(profile), { recursive: true })
+    return backupRoot(profile)
+  })
+
   ipcMain.handle('server:networkInfo', async () => ({
     publicIp: await getPublicIp(),
     lanIps: getLanIps(),
@@ -706,6 +956,11 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
 
   // pick up servers that were left running when the app was closed
   setTimeout(() => { reattachRunning().catch(() => undefined) }, 3000)
+  // look up the latest server build in the background so the first Start doesn't wait on it
+  setTimeout(() => {
+    const dir = loadSettings().serverInstallPath
+    if (isServerInstalled(dir)) checkServerUpdate(dir).catch(() => undefined)
+  }, 8000)
 }
 
 function emitConsoleOutput(profileId: string, line: string) {
@@ -723,6 +978,12 @@ function emitStatusChange(profileId: string, status: Status) {
 function emitPlayers(profileId: string, players: string[]) {
   if (mainWindowRef && !mainWindowRef.isDestroyed()) {
     mainWindowRef.webContents.send('server:players', profileId, players)
+  }
+}
+
+function emitModUpdates(profileId: string, names: string[]) {
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+    mainWindowRef.webContents.send('server:modUpdates', profileId, names)
   }
 }
 

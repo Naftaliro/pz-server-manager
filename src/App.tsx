@@ -18,7 +18,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 export default function App() {
   const {
     activeView, setActiveView, settings, setSettings, profiles, setProfiles,
-    setServerStatus, appendConsoleLog, setPlayers, addProblem,
+    setServerStatus, appendConsoleLog, setPlayers, addProblem, setModUpdates,
   } = useAppStore()
   const [ready, setReady] = useState(false)
 
@@ -46,6 +46,7 @@ export default function App() {
       window.electronAPI.server.onStatusChange((id, status) => setServerStatus(id, status as ServerStatus)),
       window.electronAPI.server.onPlayers((id, names) => setPlayers(id, names)),
       window.electronAPI.server.onProblem((id, problem) => addProblem(id, problem)),
+      window.electronAPI.server.onModUpdates((id, names) => setModUpdates(id, names)),
     ]
     window.electronAPI.server.getAllStatuses().then(statuses => {
       Object.entries(statuses).forEach(([id, status]) => setServerStatus(id, status as ServerStatus))

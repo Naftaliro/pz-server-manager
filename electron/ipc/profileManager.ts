@@ -37,6 +37,12 @@ export interface ServerProfile {
   maxPlayers: number
   mods: ModEntry[]
   launchMode?: 'managed' | 'passthrough'
+  // reliability switches, all on unless turned off
+  autoRestart?: boolean
+  restartOnModUpdate?: boolean
+  backupsEnabled?: boolean
+  backupsToKeep?: number
+  playitAddress?: string
   iniSettings: Record<string, unknown>
   sandboxSettings: Record<string, unknown>
   createdAt: string

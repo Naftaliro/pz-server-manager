@@ -40,6 +40,12 @@ export interface ServerProfile {
   maxPlayers: number
   mods: ModEntry[]
   launchMode: LaunchMode
+  autoRestart?: boolean
+  restartOnModUpdate?: boolean
+  backupsEnabled?: boolean
+  backupsToKeep?: number
+  // address the user pasted in, used if we can't read it from playit
+  playitAddress?: string
   iniSettings: Record<string, unknown>
   sandboxSettings: Record<string, unknown>
   createdAt: string
@@ -53,6 +59,8 @@ export interface AppSettings {
   serverInstallPath: string
   buildVersion: BuildVersion
   advancedMode: boolean
+  steamManaged: boolean
+  playitEnabled: boolean
 }
 
 // 'starting' = loading world/mods, 'running' = players can join
@@ -81,6 +89,9 @@ interface AppState {
 
   players: Record<string, string[]>
   setPlayers: (profileId: string, players: string[]) => void
+
+  modUpdates: Record<string, string[]>
+  setModUpdates: (profileId: string, names: string[]) => void
 
   problems: Record<string, ServerProblemReport[]>
   addProblem: (profileId: string, problem: ServerProblemReport) => void
@@ -129,6 +140,11 @@ export const useAppStore = create<AppState>((set) => ({
   players: {},
   setPlayers: (profileId, players) => set((state) => ({
     players: { ...state.players, [profileId]: players }
+  })),
+
+  modUpdates: {},
+  setModUpdates: (profileId, names) => set((state) => ({
+    modUpdates: { ...state.modUpdates, [profileId]: names }
   })),
 
   problems: {},

@@ -8,6 +8,8 @@ import { setupModHandlers } from './ipc/modManager'
 import { setupWorldHandlers } from './ipc/worldManager'
 import { setupUpdaterHandlers } from './ipc/updater'
 import { setupAppSettingsHandlers } from './ipc/appSettings'
+import { setupPlayitHandlers } from './ipc/playit'
+import { setupNetworkHandlers } from './ipc/network'
 
 // vite-plugin-electron passes the dev server address when running `npm run dev`
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
@@ -31,7 +33,7 @@ function createWindow() {
       // the mod browser shows the real Steam Workshop in a <webview>
       webviewTag: true,
     },
-    icon: join(__dirname, '../public/icon.ico'),
+    icon: join(__dirname, '../build/icon.png'),
   })
 
   if (devServerUrl) {
@@ -87,6 +89,8 @@ app.whenReady().then(() => {
 
   // Register all IPC handlers
   setupAppSettingsHandlers()
+  setupPlayitHandlers()
+  setupNetworkHandlers()
   setupSteamCmdHandlers()
   setupServerHandlers(mainWindow)
   setupProfileHandlers()

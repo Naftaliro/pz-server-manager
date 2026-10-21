@@ -25,6 +25,10 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
     welcome: String(profile.iniSettings?.ServerWelcomeMessage || ''),
     port: profile.port,
     buildVersion: profile.buildVersion,
+    autoRestart: profile.autoRestart !== false,
+    restartOnModUpdate: profile.restartOnModUpdate !== false,
+    backupsEnabled: profile.backupsEnabled !== false,
+    backupsToKeep: profile.backupsToKeep || 5,
   })
   const [form, setForm] = useState(fromProfile)
   const [totalMem, setTotalMem] = useState(16384)
@@ -49,6 +53,10 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
       port: form.port,
       udpPort: form.port + 1,
       buildVersion: form.buildVersion,
+      autoRestart: form.autoRestart,
+      restartOnModUpdate: form.restartOnModUpdate,
+      backupsEnabled: form.backupsEnabled,
+      backupsToKeep: form.backupsToKeep,
       iniSettings: {
         ...p.iniSettings,
         PVP: form.pvp,
@@ -149,6 +157,17 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
               </button>
             ))}
           </div>
+        </Card>
+
+        <Card title="Keep it running">
+          <Toggle label="Restart if it crashes" hint="Brings the server back by itself if it stops unexpectedly (gives up after 3 crashes in 30 minutes)." value={form.autoRestart} onChange={v => set('autoRestart', v)} />
+          <Toggle label="Restart when a mod updates" hint="When a mod updates on the Workshop, players get a 5 minute warning in chat and the server restarts with the new version. Otherwise nobody with the update can join." value={form.restartOnModUpdate} onChange={v => set('restartOnModUpdate', v)} />
+          <Toggle label="Back up the world every time it starts" hint="Restore from the World section on the Overview page." value={form.backupsEnabled} onChange={v => set('backupsEnabled', v)} />
+          {form.backupsEnabled && (
+            <Field label={`Keep the last ${form.backupsToKeep} backups`}>
+              <input type="range" min={1} max={20} value={form.backupsToKeep} onChange={e => set('backupsToKeep', Number(e.target.value))} className="w-full" />
+            </Field>
+          )}
         </Card>
 
         <Card title="Performance">

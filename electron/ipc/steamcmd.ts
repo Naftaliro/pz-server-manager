@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { join, dirname } from 'path'
-import { existsSync, mkdirSync, readdirSync, statSync } from 'fs'
-import { spawn } from 'child_process'
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync } from 'fs'
+import { spawn, execFile } from 'child_process'
 import https from 'https'
 import fs from 'fs'
 import { loadSettings, steamcmdExe } from './appSettings'
@@ -25,6 +25,8 @@ function exclusive<T>(job: () => Promise<T>): Promise<T> {
 
 export function setupSteamCmdHandlers() {
   ipcMain.handle('steamcmd:checkInstalled', async (_event, installDir: string) => isServerInstalled(installDir))
+  ipcMain.handle('steamcmd:checkUpdate', async (_event, installDir: string) => checkServerUpdate(installDir))
+  ipcMain.handle('steamcmd:findSteamInstall', async () => findSteamInstalledServer())
 
   ipcMain.handle('steamcmd:download', async (_event, targetDir: string) => {
     try {
@@ -51,6 +53,86 @@ export function setupSteamCmdHandlers() {
     const send = (payload: ModDownloadEvent) => { if (!sender.isDestroyed()) sender.send(channel, payload) }
     return downloadMods(workshopIds, send)
   })
+}
+
+// ── Is the server out of date? ────────────────────────────────────────────────
+// The #1 reason friends can't join: Steam updated the game, the server didn't.
+// Compare the build in the server's appmanifest with what Steam says is current.
+
+export function installedBuild(installDir: string): { buildId: string | null; branch: string } {
+  // steamcmd puts the manifest inside the server folder, the Steam client keeps it in the
+  // library's steamapps folder (two levels up from steamapps/common/<server>)
+  const candidates = [
+    join(installDir, 'steamapps', `appmanifest_${PZ_SERVER_APP_ID}.acf`),
+    join(installDir, '..', '..', `appmanifest_${PZ_SERVER_APP_ID}.acf`),
+  ]
+  const manifest = candidates.find(p => existsSync(p))
+  try {
+    if (!manifest) throw new Error('no manifest')
+    const acf = readFileSync(manifest, 'utf-8')
+    return {
+      buildId: acf.match(/"buildid"\s+"(\d+)"/i)?.[1] || null,
+      branch: acf.match(/"BetaKey"\s+"([^"]*)"/i)?.[1] || 'public',
+    }
+  } catch {
+    return { buildId: null, branch: 'public' }
+  }
+}
+
+let latestCache: { branch: string; buildId: string; at: number } | null = null
+
+async function latestBuild(branch: string): Promise<string | null> {
+  if (latestCache && latestCache.branch === branch && Date.now() - latestCache.at < 30 * 60 * 1000) return latestCache.buildId
+  const settings = loadSettings()
+  let exe = steamcmdExe(settings)
+  if (!existsSync(exe)) {
+    try { exe = await ensureSteamCmd(settings.steamcmdDir) } catch { return null }
+  }
+  let out = ''
+  await exclusive(() => runSteamCmd(exe, ['+login anonymous', '+app_info_update 1', `+app_info_print ${PZ_SERVER_APP_ID}`, '+quit'], (l) => { out += l + '\n' }))
+  // ..."branches" { "public" { "buildid" "123" ... } "legacy41" { ... } }
+  const branches = out.slice(out.search(/"branches"/i))
+  const block = branches.match(new RegExp(`"${branch}"\\s*\\{([^}]*)\\}`, 'i'))?.[1]
+  const buildId = block?.match(/"buildid"\s+"(\d+)"/i)?.[1] || null
+  if (buildId) latestCache = { branch, buildId, at: Date.now() }
+  return buildId
+}
+
+export async function checkServerUpdate(installDir: string): Promise<{ checked: boolean; updateAvailable: boolean; installed: string | null; latest: string | null; steamManaged: boolean }> {
+  const steamManaged = loadSettings().steamManaged
+  const { buildId, branch } = installedBuild(installDir)
+  if (!buildId) return { checked: false, updateAvailable: false, installed: null, latest: null, steamManaged }
+  const latest = await latestBuild(branch || 'public')
+  return { checked: !!latest, updateAvailable: !!latest && latest !== buildId, installed: buildId, latest, steamManaged }
+}
+
+// ── Already installed through Steam? ──────────────────────────────────────────
+// Lots of people already have "Project Zomboid Dedicated Server" in their Steam library.
+// No point downloading 7 GB again.
+
+function steamPath(): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile('reg', ['query', 'HKCU\\Software\\Valve\\Steam', '/v', 'SteamPath'], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
+      if (err) return resolve(null)
+      const m = stdout.match(/SteamPath\s+REG_SZ\s+(.+)/i)
+      resolve(m ? m[1].trim().replace(/\//g, '\\') : null)
+    })
+  })
+}
+
+export async function findSteamInstalledServer(): Promise<string | null> {
+  const steam = await steamPath()
+  if (!steam) return null
+  const libs = new Set<string>([steam])
+  try {
+    const vdf = readFileSync(join(steam, 'steamapps', 'libraryfolders.vdf'), 'utf-8')
+    for (const m of vdf.matchAll(/"path"\s+"([^"]+)"/gi)) libs.add(m[1].replace(/\\\\/g, '\\'))
+  } catch { /* only the main library then */ }
+  for (const lib of libs) {
+    const dir = join(lib, 'steamapps', 'common', 'Project Zomboid Dedicated Server')
+    if (isServerInstalled(dir)) return dir
+  }
+  return null
 }
 
 export function isServerInstalled(installDir: string): boolean {
