@@ -152,12 +152,15 @@ function writeProfileSandbox(serverName: string, dataPath: string, profile: Serv
 // ---------------------------------------------------------------------------
 // Make a copy of StartServer64.bat we can tweak every launch:
 //  - the stock bat only forwards %1 %2, so -adminpassword / -cachedir got dropped
-//  - swap in the profile's memory for -Xms / -Xmx
+//  - swap in the profile's memory for -Xms / -Xmx (stock B42 bat hardcodes 16g, which fails on smaller PCs)
 // Regenerated on every start so Steam updates to the real bat still apply.
 // ---------------------------------------------------------------------------
 function writePatchedStartBat(serverDir: string, serverName: string, memoryMb?: number): string {
   const original = readFileSync(join(serverDir, 'StartServer64.bat'), 'utf-8')
-  let patched = original.replace(/%1 %2(?: %3)?(?: %4)?(?: %5)?(?: %6)?/g, '%*')
+  let patched = original
+    .replace(/%1 %2(?: %3)?(?: %4)?(?: %5)?(?: %6)?/g, '%*')
+    // the stock bat ends in PAUSE, which leaves a "press any key" window behind after every stop
+    .replace(/^\s*PAUSE\s*$/gim, '')
   if (memoryMb && memoryMb >= 1024) {
     patched = patched
       .replace(/-Xms\d+[mMgG]?/g, `-Xms${memoryMb}m`)
@@ -530,10 +533,12 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
     }
 
     // minimized so it stays out of the way but still shows up in the taskbar
+    // built as one verbatim string: node escapes quotes inside args as \" and `start`
+    // chokes on that, so the server silently never launched
     const proc: ChildProcess = spawn(
       'cmd.exe',
-      ['/c', 'start', `"PZ Server - ${serverName}"`, '/min', '/D', serverDir, launcherPath],
-      { cwd: serverDir, detached: true, stdio: 'ignore', shell: false, windowsHide: true }
+      ['/c', `start "PZ Server - ${serverName}" /min /D "${serverDir}" "${launcherPath}"`],
+      { cwd: serverDir, detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true }
     )
     proc.unref()
 

@@ -7,8 +7,8 @@ interface StatusBadgeProps {
 
 export default function StatusBadge({ status, showLabel = true }: StatusBadgeProps) {
   const config = {
-    running: { dot: 'bg-pz-green pulse-green', text: 'text-pz-green', label: 'Running' },
-    starting: { dot: 'bg-pz-yellow pulse-green', text: 'text-pz-yellow', label: 'Starting...' },
+    running: { dot: 'bg-pz-green pulse-green', text: 'text-pz-green', label: 'Online' },
+    starting: { dot: 'bg-pz-yellow pulse-green', text: 'text-pz-yellow', label: 'Starting up...' },
     stopping: { dot: 'bg-pz-red pulse-green', text: 'text-pz-red', label: 'Stopping...' },
     stopped: { dot: 'bg-pz-muted', text: 'text-pz-muted', label: 'Stopped' },
   }
