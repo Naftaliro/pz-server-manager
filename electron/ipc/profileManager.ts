@@ -44,6 +44,9 @@ export interface ServerProfile {
   backupsToKeep?: number
   // restart once a day at this hour (0-23), off when unset
   dailyRestartHour?: number | null
+  // Discord channel webhook for server updates
+  discordWebhook?: string
+  discordPlayerEvents?: boolean
   playitAddress?: string
   iniSettings: Record<string, unknown>
   sandboxSettings: Record<string, unknown>

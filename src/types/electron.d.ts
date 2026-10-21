@@ -23,6 +23,9 @@ interface ElectronAPI {
   system: {
     info: () => Promise<{ totalMemMb: number; platform: string }>
   }
+  discord: {
+    test: (url: string, serverName: string) => Promise<{ success: boolean; message?: string }>
+  }
   diagnostics: {
     copy: () => Promise<string>
     reportError: (where: string, message: string) => void

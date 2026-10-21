@@ -15,6 +15,7 @@ import { workshopContentDir, scanWorkshopItem, fetchModDetails, PZ_APP_ID } from
 import { loadSettings } from './appSettings'
 import { ensurePlayitRunning, PLAYIT_INTEGRATION } from './playit'
 import { firewallRuleExists } from './network'
+import { notify, escapeDiscord, DISCORD_COLORS } from './discord'
 
 // 'starting' = java is up but still loading the world/mods, 'running' = friends can join
 type Status = 'starting' | 'running' | 'stopping' | 'stopped'
@@ -33,9 +34,13 @@ interface ServerProcess {
   players: string[]
   // set while a planned restart (mod update) is counting down
   pendingRestart: NodeJS.Timeout | null
+  // picked back up after the app was reopened, so Discord already knows it's online
+  reattached?: boolean
 }
 
 const runningServers = new Map<string, ServerProcess>()
+// servers going down on purpose to come right back (restart button, daily, mod update)
+const restarting = new Set<string>()
 // last few problems per server, kept for the diagnostics report
 const recentProblems = new Map<string, Array<{ hint: string; line: string; at: number }>>()
 let mainWindowRef: BrowserWindow | null = null
@@ -298,14 +303,28 @@ function markRunning(profileId: string, srv: ServerProcess) {
   srv.status = 'running'
   emitStatusChange(profileId, 'running')
   emitConsoleOutput(profileId, `[PZ Manager] Server is up, players can join now.`)
-  patchProfile(profileId, { lastStarted: new Date().toISOString() })
+  const profile = patchProfile(profileId, { lastStarted: new Date().toISOString() })
+  if (!srv.reattached) {
+    const name = `**${escapeDiscord(profile?.name || srv.serverName)}**`
+    const back = restarting.delete(profileId)
+    const addressFor = async () => profile?.playitAddress || (await getPublicIp().then(ip => ip && `${ip}:${profile?.port || 16261}`))
+    void addressFor().then(address => notify(profile, `🟢 ${name} is ${back ? 'back ' : ''}online${address ? `\nJoin at \`${address}\`` : ''}`, DISCORD_COLORS.green))
+  }
 
   // keep the player list fresh while it's running
+  let polledOnce = false
   const pollPlayers = async () => {
     try {
       const out = await rconFor(profileId, 'players', 4000)
       // "Players connected (2):\n-alice\n-bob"
       const names = out.split(/\r?\n/).filter(l => l.trim().startsWith('-')).map(l => l.trim().slice(1))
+      // the first poll is everyone already on, not people joining
+      if (polledOnce) {
+        const profile = getProfile(profileId)
+        for (const n of names.filter(n => !srv.players.includes(n))) notify(profile, `➡️ ${escapeDiscord(n)} joined (${names.length} online)`, DISCORD_COLORS.blue, 'players')
+        for (const n of srv.players.filter(n => !names.includes(n))) notify(profile, `⬅️ ${escapeDiscord(n)} left (${names.length} online)`, DISCORD_COLORS.gray, 'players')
+      }
+      polledOnce = true
       srv.players = names
       emitPlayers(profileId, names)
     } catch { /* rcon not up yet or busy, try again next time */ }
@@ -331,6 +350,10 @@ function cleanup(profileId: string) {
   if (srv.modTimer) clearInterval(srv.modTimer)
   if (srv.pendingRestart) clearTimeout(srv.pendingRestart)
   runningServers.delete(profileId)
+  if (srv.status === 'stopping' && !restarting.has(profileId)) {
+    const profile = getProfile(profileId)
+    notify(profile, `🔴 **${escapeDiscord(profile?.name || srv.serverName)}** was stopped`, DISCORD_COLORS.gray)
+  }
   emitPlayers(profileId, [])
   emitStatusChange(profileId, 'stopped')
 }
@@ -373,17 +396,22 @@ function handleCrash(profileId: string) {
   recent.push(Date.now())
   crashTimes.set(profileId, recent)
 
+  const name = `**${escapeDiscord(profile.name)}**`
   if (profile.autoRestart === false) {
     emitProblem(profileId, 'The server stopped unexpectedly. Check the console log to see why.', 'Server process exited')
+    notify(profile, `💥 ${name} crashed`, DISCORD_COLORS.red)
     return
   }
   if (recent.length > 3) {
     emitProblem(profileId, 'The server keeps crashing, so it was not restarted again. The console log should say why (often a broken mod).', 'Crashed 3 times in 30 minutes')
+    notify(profile, `💥 ${name} keeps crashing, so it was left off. The host needs to take a look.`, DISCORD_COLORS.red)
     return
   }
+  restarting.add(profileId)
+  notify(profile, `💥 ${name} crashed, restarting it...`, DISCORD_COLORS.red)
   emitProblem(profileId, 'The server crashed, restarting it automatically...', 'Server process exited unexpectedly')
   emitConsoleOutput(profileId, `[PZ Manager] Server crashed, restarting in 10 seconds (${recent.length}/3)...`)
-  setTimeout(() => { if (!runningServers.has(profileId)) void startServer(profileId) }, 10000)
+  setTimeout(() => { if (!runningServers.has(profileId)) void startAfterRestart(profileId) }, 10000)
 }
 
 // ---------------------------------------------------------------------------
@@ -418,19 +446,29 @@ async function checkModUpdates(profileId: string, srv: ServerProcess) {
   if (profile.restartOnModUpdate !== false) scheduleRestart(profileId, srv, 5, 'to update mods')
 }
 
+// a failed start shouldn't leave the next manual start saying "back online"
+async function startAfterRestart(profileId: string) {
+  const result = await startServer(profileId)
+  if (!result.success) restarting.delete(profileId)
+  return result
+}
+
 // Warn players in chat, then restart
 function scheduleRestart(profileId: string, srv: ServerProcess, minutes: number, reason: string) {
   if (srv.pendingRestart) return
   const say = (msg: string) => rconFor(profileId, `servermsg "${msg}"`).catch(() => undefined)
   say(`Server restarting in ${minutes} minutes ${reason}`)
   emitConsoleOutput(profileId, `[PZ Manager] Restarting in ${minutes} minutes ${reason}.`)
+  const profile = getProfile(profileId)
+  notify(profile, `🔄 **${escapeDiscord(profile?.name || srv.serverName)}** restarts in ${minutes} minutes ${reason}`, DISCORD_COLORS.yellow)
   const oneMinuteLeft = setTimeout(() => say(`Server restarting in 1 minute ${reason}`), (minutes - 1) * 60 * 1000)
   srv.pendingRestart = setTimeout(async () => {
     clearTimeout(oneMinuteLeft)
     await say('Restarting now, see you in a minute!')
+    restarting.add(profileId)
     await stopServer(profileId)
     await new Promise(r => setTimeout(r, 3000))
-    await startServer(profileId)
+    await startAfterRestart(profileId)
   }, minutes * 60 * 1000)
 }
 
@@ -565,6 +603,7 @@ async function reattachRunning() {
     const srv: ServerProcess = {
       pid, status: 'starting', serverName, serverDir: profile.serverInstallPath,
       logPath, logOffset: 0, watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
+      reattached: true,
     }
     runningServers.set(profile.id, srv)
     emitStatusChange(profile.id, 'starting')
@@ -907,8 +946,10 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
   ipcMain.handle('server:restart', async (_event, profileId: string) => {
     if (runningServers.has(profileId)) {
       emitConsoleOutput(profileId, `[PZ Manager] Restarting server...`)
+      restarting.add(profileId)
       await stopServer(profileId)
       await new Promise(resolve => setTimeout(resolve, 2000))
+      return startAfterRestart(profileId)
     }
     return startServer(profileId)
   })

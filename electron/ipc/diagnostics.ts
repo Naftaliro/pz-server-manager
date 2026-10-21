@@ -6,6 +6,7 @@ import { listProfiles } from './profileManager'
 import { serverDiagnostics } from './serverManager'
 import { getPlayitState } from './playit'
 import { firewallRuleExists } from './network'
+import { lastDiscordError } from './discord'
 
 // "Copy diagnostics": one paste-able report so a friend saying "it doesn't work"
 // turns into something fixable. Gets pasted into public GitHub issues, so
@@ -26,6 +27,7 @@ function secrets(): string[] {
   for (const p of listProfiles()) {
     found.add(p.adminPassword)
     found.add(p.serverPassword)
+    if (p.discordWebhook) found.add(p.discordWebhook)
     for (const [key, value] of Object.entries(p.iniSettings || {})) {
       if (SECRET_KEY.test(key) && typeof value === 'string') found.add(value)
     }
@@ -100,6 +102,7 @@ export async function buildDiagnostics(): Promise<string> {
       `build: ${p.buildVersion}, ports: ${p.port}/${p.udpPort}, memory: ${p.memory} MB, launch: ${p.launchMode || 'managed'}`,
       `auto restart: ${p.autoRestart !== false}, restart on mod update: ${p.restartOnModUpdate !== false}, backups: ${p.backupsEnabled !== false} (keep ${p.backupsToKeep || 5})`,
       `daily restart: ${p.dailyRestartHour == null ? 'off' : `${p.dailyRestartHour}:00`}`,
+      `discord: ${p.discordWebhook ? `on${p.discordPlayerEvents ? ' (with joins)' : ''}${lastDiscordError.has(p.discordWebhook) ? `, last error: ${lastDiscordError.get(p.discordWebhook)}` : ''}` : 'off'}`,
       `last started: ${p.lastStarted || 'never'}`,
       `mods (${p.mods.length}): ${p.mods.map(m => `${m.workshopId} [${m.modId || '?'}]`).join(', ') || 'none'}`,
     )

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Save, Sliders, FileCode2, Settings2, Copy, Trash2, Skull, CheckCircle, Eye, EyeOff } from 'lucide-react'
+import { Save, Sliders, FileCode2, Settings2, Copy, Trash2, Skull, CheckCircle, Eye, EyeOff, Send, Loader, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile, BuildVersion } from '../store/useAppStore'
 import ConfirmDialog from './ConfirmDialog'
@@ -30,6 +30,8 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
     backupsEnabled: profile.backupsEnabled !== false,
     backupsToKeep: profile.backupsToKeep || 5,
     dailyRestartHour: profile.dailyRestartHour ?? null,
+    discordWebhook: profile.discordWebhook || '',
+    discordPlayerEvents: !!profile.discordPlayerEvents,
   })
   const [form, setForm] = useState(fromProfile)
   const [totalMem, setTotalMem] = useState(16384)
@@ -59,6 +61,8 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
       backupsEnabled: form.backupsEnabled,
       backupsToKeep: form.backupsToKeep,
       dailyRestartHour: form.dailyRestartHour,
+      discordWebhook: form.discordWebhook.trim(),
+      discordPlayerEvents: form.discordPlayerEvents,
       iniSettings: {
         ...p.iniSettings,
         PVP: form.pvp,
@@ -182,6 +186,16 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
           )}
         </Card>
 
+        <Card title="Discord">
+          <DiscordSettings
+            webhook={form.discordWebhook}
+            playerEvents={form.discordPlayerEvents}
+            serverName={form.name || profile.name}
+            onWebhook={v => set('discordWebhook', v)}
+            onPlayerEvents={v => set('discordPlayerEvents', v)}
+          />
+        </Card>
+
         <Card title="Performance">
           <Field
             label={`Memory: ${(form.memory / 1024).toFixed(form.memory % 1024 ? 1 : 0)} GB`}
@@ -292,5 +306,70 @@ function Toggle({ label, hint, value, onChange }: { label: string; hint?: string
         {hint && <div className="text-xs text-pz-muted">{hint}</div>}
       </div>
     </button>
+  )
+}
+
+// Post server updates to a Discord channel through a webhook link
+const isWebhookUrl = (url: string) => /^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\/\d+\/[\w-]+\/?$/.test(url.trim())
+
+function DiscordSettings({ webhook, playerEvents, serverName, onWebhook, onPlayerEvents }: {
+  webhook: string
+  playerEvents: boolean
+  serverName: string
+  onWebhook: (v: string) => void
+  onPlayerEvents: (v: boolean) => void
+}) {
+  const [howTo, setHowTo] = useState(!webhook)
+  const [test, setTest] = useState<{ busy?: boolean; ok?: boolean; message?: string }>({})
+  const valid = isWebhookUrl(webhook)
+
+  const sendTest = async () => {
+    setTest({ busy: true })
+    const r = await window.electronAPI.discord.test(webhook, serverName)
+    setTest({ ok: r.success, message: r.success ? 'Sent! Check your Discord channel.' : r.message })
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-pz-subtext -mt-1">
+        Post to a Discord channel when the server comes online (with the address to join), crashes, restarts or gets stopped.
+      </p>
+
+      <button onClick={() => setHowTo(!howTo)} className="text-xs text-pz-blue flex items-center gap-1">
+        {howTo ? <ChevronDown size={12} /> : <ChevronRight size={12} />} How do I get a webhook link?
+      </button>
+      {howTo && (
+        <ol className="text-xs text-pz-subtext list-decimal pl-5 space-y-1">
+          <li>In Discord, hover over the channel you want updates in and click the gear (<b>Edit Channel</b>).</li>
+          <li>Go to <b>Integrations</b> → <b>Webhooks</b> → <b>New Webhook</b>.</li>
+          <li>Click the new webhook, then <b>Copy Webhook URL</b>.</li>
+          <li>Paste it below, hit <b>Send test message</b>, then <b>Save</b>.</li>
+        </ol>
+      )}
+      <p className="text-xs text-pz-muted">You need to be an admin of the Discord server (or have "Manage Webhooks"). Anyone with the link can post in that channel, so keep it to yourself.</p>
+
+      <div className="flex gap-2">
+        <input
+          type="password"
+          value={webhook}
+          onChange={e => { onWebhook(e.target.value); setTest({}) }}
+          placeholder="https://discord.com/api/webhooks/..."
+          className="input"
+        />
+        <button onClick={sendTest} disabled={!valid || test.busy} className="btn-outline flex-shrink-0 text-xs">
+          {test.busy ? <Loader size={12} className="animate-spin" /> : <Send size={12} />} Send test message
+        </button>
+      </div>
+      {webhook && !valid && <p className="text-xs text-pz-yellow flex items-center gap-1"><AlertCircle size={12} /> That doesn't look like a webhook link. It should start with https://discord.com/api/webhooks/</p>}
+      {test.message && (
+        <p className={`text-xs flex items-center gap-1 ${test.ok ? 'text-pz-green' : 'text-pz-yellow'}`}>
+          {test.ok ? <CheckCircle size={12} /> : <AlertCircle size={12} />} {test.message}
+        </p>
+      )}
+
+      {webhook && (
+        <Toggle label="Also post when players join or leave" hint="Handy for small groups, noisy for big ones." value={playerEvents} onChange={onPlayerEvents} />
+      )}
+    </div>
   )
 }

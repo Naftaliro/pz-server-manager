@@ -11,6 +11,7 @@ import { setupAppSettingsHandlers } from './ipc/appSettings'
 import { setupPlayitHandlers } from './ipc/playit'
 import { setupNetworkHandlers } from './ipc/network'
 import { setupDiagnosticsHandlers } from './ipc/diagnostics'
+import { setupDiscordHandlers } from './ipc/discord'
 
 // vite-plugin-electron passes the dev server address when running `npm run dev`
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
@@ -90,6 +91,7 @@ app.whenReady().then(() => {
 
   // Register all IPC handlers
   setupDiagnosticsHandlers()
+  setupDiscordHandlers()
   setupAppSettingsHandlers()
   setupPlayitHandlers()
   setupNetworkHandlers()

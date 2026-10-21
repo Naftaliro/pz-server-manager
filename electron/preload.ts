@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     info: () => ipcRenderer.invoke('system:info'),
   },
 
+  discord: {
+    test: (url: string, serverName: string) => ipcRenderer.invoke('discord:test', url, serverName),
+  },
+
   diagnostics: {
     copy: () => ipcRenderer.invoke('diagnostics:copy'),
     reportError: (where: string, message: string) => ipcRenderer.send('diagnostics:reportError', where, message),
