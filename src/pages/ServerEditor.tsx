@@ -377,14 +377,14 @@ export default function ServerEditor() {
                             : 'border-pz-border text-pz-muted hover:border-pz-text'
                         }`}
                       >
-                        {v === 'b41' ? 'Build 41 (Stable)' : 'Build 42 (Unstable)'}
+                        {v === 'b41' ? 'Build 41 (Legacy)' : 'Build 42 (Stable)'}
                       </button>
                     ))}
                   </div>
                   <p className="text-xs text-pz-muted mt-1">
                     {form.buildVersion === 'b41'
-                      ? 'B41 is the stable release. Mods and Workshop search will be filtered to B41-compatible items.'
-                      : 'B42 is the current unstable branch with animals, crafting, and new game modes. Mods will be filtered to B42-compatible items.'}
+                      ? 'B41 is the old build on the legacy41 Steam branch. Players have to switch to that branch to join. Mods will be filtered to B41-compatible items.'
+                      : 'B42 is the current stable release with animals, crafting, and new game modes. Mods will be filtered to B42-compatible items.'}
                   </p>
                 </FormField>
               </Section>

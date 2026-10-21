@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { spawn, exec, ChildProcess } from 'child_process'
+import { spawn, exec, execFile, ChildProcess } from 'child_process'
 import { join } from 'path'
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'fs'
 import { getProfile } from './profileManager'
@@ -49,7 +49,7 @@ function writeProfileIni(
     Password: profile.serverPassword || '',
     // Mod lists from the mods array
     WorkshopItems: profile.mods.map(m => m.workshopId).filter(Boolean).join(';'),
-    Mods: profile.mods.map(m => m.modId).filter(Boolean).join(';'),
+    Mods: formatModIds(profile.mods.map(m => m.modId), profile.buildVersion),
   }
 
   const lines: string[] = [
@@ -64,6 +64,35 @@ function writeProfileIni(
   }
 
   writeFileSync(iniPath, lines.join('\n') + '\n', 'utf-8')
+}
+
+// B42 wants Mods=\ModA;\ModB, B41 wants Mods=ModA;ModB
+export function formatModIds(modIds: string[], buildVersion?: string): string {
+  return modIds
+    .flatMap(id => (id || '').split(';'))
+    .map(id => id.trim().replace(/^\\+/, ''))
+    .filter(Boolean)
+    .map(id => (buildVersion === 'b41' ? id : `\\${id}`))
+    .join(';')
+}
+
+// ---------------------------------------------------------------------------
+// Make a copy of StartServer64.bat we can tweak every launch:
+//  - the stock bat only forwards %1 %2, so -adminpassword / -cachedir got dropped
+//  - swap in the profile's memory for -Xms / -Xmx
+// Regenerated on every start so Steam updates to the real bat still apply.
+// ---------------------------------------------------------------------------
+function writePatchedStartBat(serverDir: string, serverName: string, memoryMb?: number): string {
+  const original = readFileSync(join(serverDir, 'StartServer64.bat'), 'utf-8')
+  let patched = original.replace(/%1 %2(?: %3)?(?: %4)?(?: %5)?(?: %6)?/g, '%*')
+  if (memoryMb && memoryMb >= 1024) {
+    patched = patched
+      .replace(/-Xms\d+[mMgG]?/g, `-Xms${memoryMb}m`)
+      .replace(/-Xmx\d+[mMgG]?/g, `-Xmx${memoryMb}m`)
+  }
+  const name = `_pzm_StartServer64_${serverName}.bat`
+  writeFileSync(join(serverDir, name), patched)
+  return name
 }
 
 // ---------------------------------------------------------------------------
@@ -116,18 +145,25 @@ function writeProfileSandbox(
 // ---------------------------------------------------------------------------
 function findServerPid(serverName: string): Promise<number | null> {
   return new Promise((resolve) => {
-    exec(
-      `wmic process where "name='java.exe'" get ProcessId,CommandLine /format:csv`,
-      { timeout: 8000 },
+    // wmic got removed in newer Windows 11 builds, so ask CIM through powershell
+    const script = `Get-CimInstance Win32_Process -Filter "Name LIKE 'java%.exe'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { timeout: 15000, windowsHide: true },
       (err, stdout) => {
-        if (err || !stdout) return resolve(null)
-        const lines = stdout.split('\n')
-        for (const line of lines) {
-          if (line.includes(`-servername`) && line.includes(serverName)) {
-            const parts = line.trim().split(',')
-            const pid = parseInt(parts[parts.length - 1], 10)
-            if (!isNaN(pid)) return resolve(pid)
-          }
+        if (err || !stdout || !stdout.trim()) return resolve(null)
+        let procs: Array<{ ProcessId: number; CommandLine: string | null }>
+        try {
+          const parsed = JSON.parse(stdout)
+          procs = Array.isArray(parsed) ? parsed : [parsed]
+        } catch {
+          return resolve(null)
+        }
+        for (const p of procs) {
+          const match = (p.CommandLine || '').match(/-servername\s+"?([^"\s]+)"?/i)
+          // exact match so "Server1" doesn't grab "Server10"
+          if (match && match[1] === serverName) return resolve(p.ProcessId)
         }
         resolve(null)
       }
@@ -153,7 +189,9 @@ function killProcessTree(pid: number): Promise<void> {
 export function setupServerHandlers(mainWindow: BrowserWindow | null) {
   mainWindowRef = mainWindow
 
-  ipcMain.handle('server:start', async (_event, profileId: string) => {
+  ipcMain.handle('server:start', async (_event, profileId: string) => startServer(profileId))
+
+  async function startServer(profileId: string): Promise<{ success: boolean; message: string }> {
     try {
       if (runningServers.has(profileId)) {
         const srv = runningServers.get(profileId)!
@@ -211,6 +249,17 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
       // -----------------------------------------------------------------------
       const launcherPath = join(serverDir, `_pzm_launch_${serverName}.bat`)
 
+      let startBatName = 'StartServer64.bat'
+      try {
+        startBatName = writePatchedStartBat(serverDir, serverName, launchMode === 'managed' ? profile.memory : undefined)
+        if (launchMode === 'managed' && profile.memory) {
+          emitConsoleOutput(profileId, `[PZ Manager] Memory: ${profile.memory} MB`)
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        emitConsoleOutput(profileId, `[PZ Manager] ⚠ Couldn't patch StartServer64.bat, using stock one: ${msg}`)
+      }
+
       // Build the -cachedir argument to point PZ at the correct data directory
       // so it reads OUR named config files, not the default Zomboid folder
       const cacheArg = dataPath !== resolveDataPath() ? `-cachedir "${dataPath}"` : ''
@@ -226,7 +275,7 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
         `echo  Mods: ${profile.mods.length}`,
         `echo ================================================`,
         `echo.`,
-        `call StartServer64.bat -servername "${serverName}" -adminpassword "${adminPassword}"${cacheArg ? ' ' + cacheArg : ''}`,
+        `call ${startBatName} -servername "${serverName}" -adminpassword "${adminPassword}"${cacheArg ? ' ' + cacheArg : ''}`,
         `echo.`,
         `echo ============================================`,
         `echo  Server stopped. You may close this window.`,
@@ -301,7 +350,7 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
       const msg = error instanceof Error ? error.message : String(error)
       return { success: false, message: msg }
     }
-  })
+  }
 
   ipcMain.handle('server:stop', async (_event, profileId: string) => {
     const srv = runningServers.get(profileId)
@@ -362,7 +411,7 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
       emitStatusChange(profileId, 'stopped')
       await new Promise(resolve => setTimeout(resolve, 2000))
     }
-    return ipcMain.emit('server:start', { sender: mainWindowRef?.webContents }, profileId)
+    return startServer(profileId)
   })
 
   ipcMain.handle('server:getStatus', async (_event, profileId: string) => {

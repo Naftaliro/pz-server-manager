@@ -8,6 +8,7 @@ export default function InstallServer() {
   const { setActiveView } = useAppStore()
   const [steamcmdDir, setSteamcmdDir] = useState('C:\\PZServerManager\\steamcmd')
   const [serverDir, setServerDir] = useState('C:\\PZServer')
+  const [buildVersion, setBuildVersion] = useState<'b41' | 'b42'>('b42')
   const [step, setStep] = useState<Step>('idle')
   const [logs, setLogs] = useState<string[]>([])
   const [errorMsg, setErrorMsg] = useState('')
@@ -61,7 +62,8 @@ export default function InstallServer() {
       const installResult = await window.electronAPI.steamcmd.installServer(
         dlResult.path || `${steamcmdDir}\\steamcmd.exe`,
         serverDir,
-        (line) => addLog(line)
+        (line) => addLog(line),
+        buildVersion
       )
 
       if (!installResult.success) {
@@ -91,7 +93,8 @@ export default function InstallServer() {
       const result = await window.electronAPI.steamcmd.updateServer(
         `${steamcmdDir}\\steamcmd.exe`,
         serverDir,
-        (line) => addLog(line)
+        (line) => addLog(line),
+        buildVersion
       )
 
       if (!result.success) throw new Error(result.message)
@@ -166,6 +169,31 @@ export default function InstallServer() {
               </button>
             </div>
             <p className="text-xs text-pz-muted mt-1">Where to install the PZ dedicated server files (~4 GB)</p>
+          </div>
+
+          <div>
+            <label className="label">Build</label>
+            <div className="flex gap-3">
+              {(['b42', 'b41'] as const).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setBuildVersion(v)}
+                  disabled={isRunning}
+                  className={`flex-1 py-2 rounded-md border text-sm font-semibold transition-colors ${
+                    buildVersion === v
+                      ? 'bg-pz-green/20 border-pz-green text-pz-green'
+                      : 'border-pz-border text-pz-muted hover:border-pz-text'
+                  }`}
+                >
+                  {v === 'b42' ? 'Build 42 (Stable)' : 'Build 41 (Legacy)'}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-pz-muted mt-1">
+              {buildVersion === 'b42'
+                ? 'Current public release. This is what everyone gets by default on Steam.'
+                : 'Old build on the legacy41 Steam branch. Players have to switch to that branch too.'}
+            </p>
           </div>
         </div>
 

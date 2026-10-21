@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Search, Plus, Trash2, ArrowLeft, Save, ExternalLink, Package, AlertCircle, GripVertical, Hash, Upload, FileText, CheckCircle, Download, Copy, Pencil, X as XIcon } from 'lucide-react'
+import { Search, Plus, Trash2, ArrowLeft, Save, ExternalLink, Package, AlertCircle, GripVertical, Hash, Upload, FileText, CheckCircle, Download, Copy, Pencil, X as XIcon, ScanSearch } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ModEntry } from '../store/useAppStore'
 
@@ -28,11 +28,22 @@ function parseModsFromIni(iniContent: string): { workshopIds: string[]; modIds: 
     }
     if (/^Mods\s*=/i.test(trimmed)) {
       const val = trimmed.split('=').slice(1).join('=').trim()
-      if (val) modIds.push(...val.split(';').map(s => s.trim()).filter(Boolean))
+      // B42 ini files put a \ in front of each id, we store them without it
+      if (val) modIds.push(...val.split(';').map(s => s.trim().replace(/^\\+/, '')).filter(Boolean))
     }
   }
 
   return { workshopIds, modIds }
+}
+
+// B42 wants Mods=\ModA;\ModB, B41 wants Mods=ModA;ModB (same as the one in serverManager)
+function formatModIds(modIds: string[], buildVersion?: string): string {
+  return modIds
+    .flatMap(id => (id || '').split(';'))
+    .map(id => id.trim().replace(/^\\+/, ''))
+    .filter(Boolean)
+    .map(id => (buildVersion === 'b41' ? id : `\\${id}`))
+    .join(';')
 }
 
 export default function ModManager() {
@@ -74,6 +85,52 @@ export default function ModManager() {
 
   const cancelEdit = () => setEditingModId(null)
 
+  // Mod IDs read from the downloaded workshop files (workshopId -> ids)
+  const [detectedIds, setDetectedIds] = useState<Record<string, string[]>>({})
+  const [detecting, setDetecting] = useState(false)
+  const [detectMsg, setDetectMsg] = useState('')
+
+  const handleDetectIds = async () => {
+    if (!profile) return
+    setDetecting(true)
+    setDetectMsg('')
+    try {
+      const result = await window.electronAPI.mods.scanInstalled(profile.serverInstallPath, mods.map(m => m.workshopId))
+      if (!result.success) {
+        setDetectMsg(result.message || 'Scan failed')
+        return
+      }
+      const found = result.found || {}
+      setDetectedIds(found)
+      // only one id in the item? just use it. more than one, let them pick below
+      let updated = 0
+      const next = mods.map(m => {
+        const ids = found[m.workshopId]
+        if (ids && ids.length === 1 && ids[0] !== m.modId) {
+          updated++
+          return { ...m, modId: ids[0] }
+        }
+        return m
+      })
+      setMods(next)
+      const scanned = Object.keys(found).length
+      const multi = Object.values(found).filter(ids => ids.length > 1).length
+      setDetectMsg(result.message || `Checked ${scanned} of ${mods.length} mods. ${updated} updated${multi ? `, ${multi} have more than one mod inside, pick which ones below` : ''}. Hit Save to keep it.`)
+    } finally {
+      setDetecting(false)
+    }
+  }
+
+  // toggle one id in a mod's ;-separated id list
+  const toggleModId = (workshopId: string, id: string) => {
+    setMods(prev => prev.map(m => {
+      if (m.workshopId !== workshopId) return m
+      const current = m.modId.split(';').map(s => s.trim()).filter(Boolean)
+      const next = current.includes(id) ? current.filter(x => x !== id) : [...current, id]
+      return { ...m, modId: next.join(';') || m.modId }
+    }))
+  }
+
   // Import tab state
   const [importText, setImportText] = useState('')
   const [importResult, setImportResult] = useState<{ added: number; skipped: number; fetching: boolean; done: boolean; error: string } | null>(null)
@@ -96,7 +153,7 @@ export default function ModManager() {
     setSearchPage(page)
 
     try {
-      const buildVersion = profile?.buildVersion || 'b41'
+      const buildVersion = profile?.buildVersion || 'b42'
       const result = await window.electronAPI.mods.search(searchQuery, page, buildVersion)
       if (result.success) {
         setSearchResults(result.mods)
@@ -246,7 +303,7 @@ export default function ModManager() {
         mods,
         iniSettings: {
           ...profile.iniSettings,
-          Mods: mods.map(m => m.modId).join(';'),
+          Mods: formatModIds(mods.map(m => m.modId), profile.buildVersion),
           WorkshopItems: mods.map(m => m.workshopId).join(';'),
         },
         updatedAt: new Date().toISOString(),
@@ -271,7 +328,7 @@ export default function ModManager() {
   // ── Export helpers ──────────────────────────────────────────────────────────
   const getExportText = () => {
     const workshopLine = `WorkshopItems=${mods.map(m => m.workshopId).join(';')}`
-    const modsLine = `Mods=${mods.map(m => m.modId).join(';')}`
+    const modsLine = `Mods=${formatModIds(mods.map(m => m.modId), profile?.buildVersion)}`
     return `${workshopLine}\n${modsLine}`
   }
 
@@ -361,10 +418,21 @@ export default function ModManager() {
                   <p className="text-xs text-pz-muted">
                     Mod load order matters in Project Zomboid. Drag to reorder (top = loaded first).
                   </p>
-                  <button onClick={() => setActiveTab('import')} className="btn-outline text-xs py-1 px-2">
-                    <Upload size={12} /> Import .ini
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleDetectIds}
+                      disabled={detecting}
+                      className="btn-outline text-xs py-1 px-2"
+                      title="Read the real mod IDs from the files the server downloaded"
+                    >
+                      <ScanSearch size={12} /> {detecting ? 'Checking...' : 'Detect mod IDs'}
+                    </button>
+                    <button onClick={() => setActiveTab('import')} className="btn-outline text-xs py-1 px-2">
+                      <Upload size={12} /> Import .ini
+                    </button>
+                  </div>
                 </div>
+                {detectMsg && <p className="text-xs text-pz-muted -mt-2 mb-2">{detectMsg}</p>}
                 {mods.map((mod, idx) => (
                   <div key={mod.workshopId} className="card p-3 flex flex-col gap-2">
                     <div className="flex items-center gap-3">
@@ -412,6 +480,27 @@ export default function ModManager() {
                         </button>
                       </div>
                     </div>
+
+                    {/* Picker for workshop items that contain several mods */}
+                    {(detectedIds[mod.workshopId]?.length ?? 0) > 1 && (
+                      <div className="ml-10 pl-3 border-l-2 border-pz-border flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs text-pz-muted mr-1">Mods in this item:</span>
+                        {detectedIds[mod.workshopId].map(id => {
+                          const on = mod.modId.split(';').map(s => s.trim()).includes(id)
+                          return (
+                            <button
+                              key={id}
+                              onClick={() => toggleModId(mod.workshopId, id)}
+                              className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                                on ? 'bg-pz-green/20 border-pz-green text-pz-green' : 'border-pz-border text-pz-muted hover:border-pz-text'
+                              }`}
+                            >
+                              {on ? '✓ ' : ''}{id}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
 
                     {/* Inline edit panel */}
                     {editingModId === mod.workshopId && (
@@ -707,6 +796,11 @@ export default function ModManager() {
               {/* Popular mods */}
               <div className="card p-5 mt-4">
                 <h3 className="section-title mb-3">Popular Mods (Quick Add)</h3>
+                {profile?.buildVersion !== 'b41' && (
+                  <p className="text-xs text-pz-muted mb-3">
+                    These are mostly old B41 picks, check the workshop page to see if they've been updated for B42.
+                  </p>
+                )}
                 <div className="space-y-2">
                   {POPULAR_MODS.map(mod => (
                     <div key={mod.workshopId} className="flex items-center justify-between gap-3">

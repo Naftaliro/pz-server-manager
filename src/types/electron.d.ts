@@ -41,12 +41,14 @@ interface ElectronAPI {
     installServer: (
       steamcmdPath: string,
       installDir: string,
-      onProgress: (line: string) => void
+      onProgress: (line: string) => void,
+      buildVersion?: 'b41' | 'b42'
     ) => Promise<{ success: boolean; message: string }>
     updateServer: (
       steamcmdPath: string,
       installDir: string,
-      onProgress: (line: string) => void
+      onProgress: (line: string) => void,
+      buildVersion?: 'b41' | 'b42'
     ) => Promise<{ success: boolean; message: string }>
     checkInstalled: (installDir: string) => Promise<boolean>
   }
@@ -84,6 +86,11 @@ interface ElectronAPI {
     getDetails: (workshopIds: string[]) => Promise<{
       success: boolean
       mods: WorkshopMod[]
+      message?: string
+    }>
+    scanInstalled: (serverInstallPath: string, workshopIds: string[]) => Promise<{
+      success: boolean
+      found: Record<string, string[]>
       message?: string
     }>
   }

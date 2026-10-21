@@ -1,6 +1,8 @@
 import { ipcMain } from 'electron'
 import https from 'https'
 import http from 'http'
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
+import { join } from 'path'
 
 const PZ_APP_ID = '108600'
 
@@ -178,7 +180,52 @@ function cleanDescription(text: string): string {
     .trim()
 }
 
+// Read id= out of every mod.info in a downloaded workshop item.
+// B41 keeps it at mods/<Mod>/mod.info, B42 puts it in mods/<Mod>/42/mod.info (or 42.x, common etc)
+function scanWorkshopItem(itemDir: string): string[] {
+  const ids: string[] = []
+  const modsDir = join(itemDir, 'mods')
+  if (!existsSync(modsDir)) return ids
+
+  const readId = (infoPath: string) => {
+    if (!existsSync(infoPath)) return
+    const match = readFileSync(infoPath, 'utf-8').match(/^\s*id\s*=\s*(.+?)\s*$/im)
+    if (match && !ids.includes(match[1])) ids.push(match[1])
+  }
+
+  for (const mod of readdirSync(modsDir)) {
+    const modDir = join(modsDir, mod)
+    try { if (!statSync(modDir).isDirectory()) continue } catch { continue }
+    readId(join(modDir, 'mod.info'))
+    for (const sub of readdirSync(modDir)) {
+      const subDir = join(modDir, sub)
+      try { if (statSync(subDir).isDirectory()) readId(join(subDir, 'mod.info')) } catch { /* skip */ }
+    }
+  }
+  return ids
+}
+
 export function setupModHandlers() {
+  // Look through the server's downloaded workshop content for the real mod ids
+  // (only works once the server has started at least once and pulled the mods)
+  ipcMain.handle('mods:scanInstalled', async (_event, serverInstallPath: string, workshopIds: string[]) => {
+    try {
+      const contentDir = join(serverInstallPath, 'steamapps', 'workshop', 'content', '108600')
+      const found: Record<string, string[]> = {}
+      if (!existsSync(contentDir)) {
+        return { success: true, found, message: 'No downloaded workshop mods yet. Start the server once so it downloads them.' }
+      }
+      for (const id of workshopIds) {
+        const itemDir = join(contentDir, id)
+        if (existsSync(itemDir)) found[id] = scanWorkshopItem(itemDir)
+      }
+      return { success: true, found }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error)
+      return { success: false, message: msg, found: {} }
+    }
+  })
+
   // Search Steam Workshop for PZ mods — now accepts optional buildVersion for filtering
   ipcMain.handle('mods:search', async (_event, query: string, page: number = 1, buildVersion?: 'b41' | 'b42') => {
     try {

@@ -8,6 +8,11 @@ import fs from 'fs'
 const STEAMCMD_URL = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 const PZ_SERVER_APP_ID = '380870'
 
+// B42 is the default public branch now, B41 lives on the legacy41 beta
+function branchArgs(buildVersion?: string): string {
+  return buildVersion === 'b41' ? ' -beta legacy41' : ''
+}
+
 export function setupSteamCmdHandlers() {
   // Check if server is installed
   ipcMain.handle('steamcmd:checkInstalled', async (_event, installDir: string) => {
@@ -48,13 +53,13 @@ export function setupSteamCmdHandlers() {
   })
 
   // Install server
-  ipcMain.handle('steamcmd:installServer', async (event, { steamcmdPath, installDir, channel }) => {
-    return runSteamCmdInstall(event, steamcmdPath, installDir, channel, false)
+  ipcMain.handle('steamcmd:installServer', async (event, { steamcmdPath, installDir, channel, buildVersion }) => {
+    return runSteamCmdInstall(event, steamcmdPath, installDir, channel, false, buildVersion)
   })
 
   // Update server
-  ipcMain.handle('steamcmd:updateServer', async (event, { steamcmdPath, installDir, channel }) => {
-    return runSteamCmdInstall(event, steamcmdPath, installDir, channel, true)
+  ipcMain.handle('steamcmd:updateServer', async (event, { steamcmdPath, installDir, channel, buildVersion }) => {
+    return runSteamCmdInstall(event, steamcmdPath, installDir, channel, true, buildVersion)
   })
 }
 
@@ -63,7 +68,8 @@ async function runSteamCmdInstall(
   steamcmdPath: string,
   installDir: string,
   channel: string,
-  isUpdate: boolean
+  isUpdate: boolean,
+  buildVersion?: string
 ) {
   try {
     if (!existsSync(installDir)) {
@@ -80,11 +86,12 @@ async function runSteamCmdInstall(
     sendProgress(isUpdate ? 'Starting server update...' : 'Starting server installation...')
     sendProgress(`SteamCMD path: ${steamcmdPath}`)
     sendProgress(`Install directory: ${installDir}`)
+    sendProgress(`Branch: ${buildVersion === 'b41' ? 'legacy41 (Build 41)' : 'public (Build 42)'}`)
 
     const args = [
       `+force_install_dir "${installDir}"`,
       '+login anonymous',
-      `+app_update ${PZ_SERVER_APP_ID} -beta unstable validate`,
+      `+app_update ${PZ_SERVER_APP_ID}${branchArgs(buildVersion)} validate`,
       '+quit'
     ]
 

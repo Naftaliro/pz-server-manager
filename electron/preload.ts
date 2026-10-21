@@ -23,16 +23,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // SteamCMD
   steamcmd: {
     download: (targetDir: string) => ipcRenderer.invoke('steamcmd:download', targetDir),
-    installServer: (steamcmdPath: string, installDir: string, onProgress: (line: string) => void) => {
+    installServer: (steamcmdPath: string, installDir: string, onProgress: (line: string) => void, buildVersion?: 'b41' | 'b42') => {
       const channel = `steamcmd:progress:${Date.now()}`
       ipcRenderer.on(channel, (_e, line) => onProgress(line))
-      return ipcRenderer.invoke('steamcmd:installServer', { steamcmdPath, installDir, channel })
+      return ipcRenderer.invoke('steamcmd:installServer', { steamcmdPath, installDir, channel, buildVersion })
         .finally(() => ipcRenderer.removeAllListeners(channel))
     },
-    updateServer: (steamcmdPath: string, installDir: string, onProgress: (line: string) => void) => {
+    updateServer: (steamcmdPath: string, installDir: string, onProgress: (line: string) => void, buildVersion?: 'b41' | 'b42') => {
       const channel = `steamcmd:progress:${Date.now()}`
       ipcRenderer.on(channel, (_e, line) => onProgress(line))
-      return ipcRenderer.invoke('steamcmd:updateServer', { steamcmdPath, installDir, channel })
+      return ipcRenderer.invoke('steamcmd:updateServer', { steamcmdPath, installDir, channel, buildVersion })
         .finally(() => ipcRenderer.removeAllListeners(channel))
     },
     checkInstalled: (installDir: string) => ipcRenderer.invoke('steamcmd:checkInstalled', installDir),
@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mods: {
     search: (query: string, page: number, buildVersion?: 'b41' | 'b42') => ipcRenderer.invoke('mods:search', query, page, buildVersion),
     getDetails: (workshopIds: string[]) => ipcRenderer.invoke('mods:getDetails', workshopIds),
+    scanInstalled: (serverInstallPath: string, workshopIds: string[]) => ipcRenderer.invoke('mods:scanInstalled', serverInstallPath, workshopIds),
   },
 
   // World management
