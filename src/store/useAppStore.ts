@@ -1,11 +1,24 @@
 import { create } from 'zustand'
 
+export interface ModFileEntry {
+  id: string
+  name: string
+  requires: string[]
+  maps: string[]
+}
+
 export interface ModEntry {
   workshopId: string
+  // enabled mod ids, ;-separated (one workshop item can hold several mods)
   modId: string
   name: string
   description?: string
   thumbnailUrl?: string
+  fileSize?: number
+  // what the downloaded files actually contain (from mod.info)
+  infos?: ModFileEntry[]
+  requires?: string[]
+  maps?: string[]
 }
 
 export type BuildVersion = 'b41' | 'b42'
@@ -14,6 +27,7 @@ export type LaunchMode = 'managed' | 'passthrough'
 export interface ServerProfile {
   id: string
   name: string
+  serverName?: string
   description: string
   buildVersion: BuildVersion
   serverInstallPath: string
@@ -33,33 +47,61 @@ export interface ServerProfile {
   lastStarted?: string
 }
 
+export interface AppSettings {
+  setupComplete: boolean
+  steamcmdDir: string
+  serverInstallPath: string
+  buildVersion: BuildVersion
+  advancedMode: boolean
+}
+
+// 'starting' = loading world/mods, 'running' = players can join
 export type ServerStatus = 'stopped' | 'starting' | 'running' | 'stopping'
 
+export type View = 'setup' | 'home' | 'create' | 'server' | 'editor' | 'sandbox' | 'raweditor' | 'appsettings'
+export type ServerTab = 'overview' | 'mods' | 'settings' | 'console'
+
+export interface ModDownloadState {
+  state: 'queued' | 'downloading' | 'done' | 'failed'
+  bytes?: number
+  message?: string
+}
+
 interface AppState {
-  // Profiles
+  settings: AppSettings | null
+  setSettings: (settings: AppSettings) => void
+
   profiles: ServerProfile[]
   setProfiles: (profiles: ServerProfile[]) => void
   updateProfile: (profile: ServerProfile) => void
   removeProfile: (id: string) => void
 
-  // Server statuses
   serverStatuses: Record<string, ServerStatus>
   setServerStatus: (profileId: string, status: ServerStatus) => void
 
-  // Console logs
+  players: Record<string, string[]>
+  setPlayers: (profileId: string, players: string[]) => void
+
+  problems: Record<string, ServerProblemReport[]>
+  addProblem: (profileId: string, problem: ServerProblemReport) => void
+  clearProblems: (profileId: string) => void
+
   consoleLogs: Record<string, string[]>
   appendConsoleLog: (profileId: string, line: string) => void
   clearConsoleLogs: (profileId: string) => void
 
-  // UI state
+  modDownloads: Record<string, ModDownloadState>
+  setModDownload: (workshopId: string, state: ModDownloadState) => void
+
   activeProfileId: string | null
   setActiveProfileId: (id: string | null) => void
-  activeView: 'dashboard' | 'editor' | 'sandbox' | 'mods' | 'console' | 'install' | 'raweditor'
-  setActiveView: (view: AppState['activeView']) => void
-  editorTab: 'basic' | 'server' | 'sandbox' | 'mods'
-  setEditorTab: (tab: AppState['editorTab']) => void
+  activeView: View
+  setActiveView: (view: View) => void
+  serverTab: ServerTab
+  setServerTab: (tab: ServerTab) => void
+  // open a server on a given tab in one go
+  openServer: (id: string, tab?: ServerTab) => void
 
-  // Loading states
   isLoading: boolean
   setIsLoading: (loading: boolean) => void
   loadingMessage: string
@@ -67,6 +109,9 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
+  settings: null,
+  setSettings: (settings) => set({ settings }),
+
   profiles: [],
   setProfiles: (profiles) => set({ profiles }),
   updateProfile: (profile) => set((state) => ({
@@ -81,23 +126,45 @@ export const useAppStore = create<AppState>((set) => ({
     serverStatuses: { ...state.serverStatuses, [profileId]: status }
   })),
 
+  players: {},
+  setPlayers: (profileId, players) => set((state) => ({
+    players: { ...state.players, [profileId]: players }
+  })),
+
+  problems: {},
+  addProblem: (profileId, problem) => set((state) => {
+    const existing = state.problems[profileId] || []
+    // same hint twice in a row is just noise
+    if (existing.some(p => p.hint === problem.hint)) return {}
+    return { problems: { ...state.problems, [profileId]: [...existing, problem].slice(-5) } }
+  }),
+  clearProblems: (profileId) => set((state) => ({
+    problems: { ...state.problems, [profileId]: [] }
+  })),
+
   consoleLogs: {},
   appendConsoleLog: (profileId, line) => set((state) => {
     const existing = state.consoleLogs[profileId] || []
     const newLogs = [...existing, line]
-    const trimmed = newLogs.length > 2000 ? newLogs.slice(-2000) : newLogs
+    const trimmed = newLogs.length > 3000 ? newLogs.slice(-3000) : newLogs
     return { consoleLogs: { ...state.consoleLogs, [profileId]: trimmed } }
   }),
   clearConsoleLogs: (profileId) => set((state) => ({
     consoleLogs: { ...state.consoleLogs, [profileId]: [] }
   })),
 
+  modDownloads: {},
+  setModDownload: (workshopId, st) => set((state) => ({
+    modDownloads: { ...state.modDownloads, [workshopId]: st }
+  })),
+
   activeProfileId: null,
   setActiveProfileId: (id) => set({ activeProfileId: id }),
-  activeView: 'dashboard',
+  activeView: 'home',
   setActiveView: (view) => set({ activeView: view }),
-  editorTab: 'basic',
-  setEditorTab: (tab) => set({ editorTab: tab }),
+  serverTab: 'overview',
+  setServerTab: (tab) => set({ serverTab: tab }),
+  openServer: (id, tab = 'overview') => set({ activeProfileId: id, activeView: 'server', serverTab: tab }),
 
   isLoading: false,
   setIsLoading: (loading) => set({ isLoading: loading }),

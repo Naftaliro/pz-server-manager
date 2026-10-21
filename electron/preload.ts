@@ -11,6 +11,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Shell
   shell: {
     openExternal: (url: string) => ipcRenderer.send('shell:openExternal', url),
+    openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
+  },
+
+  system: {
+    info: () => ipcRenderer.invoke('system:info'),
+  },
+
+  // App-wide settings
+  settings: {
+    get: () => ipcRenderer.invoke('settings:get'),
+    set: (patch: unknown) => ipcRenderer.invoke('settings:set', patch),
   },
 
   // Dialog
@@ -36,6 +47,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         .finally(() => ipcRenderer.removeAllListeners(channel))
     },
     checkInstalled: (installDir: string) => ipcRenderer.invoke('steamcmd:checkInstalled', installDir),
+    downloadMods: (workshopIds: string[], onEvent: (e: unknown) => void) => {
+      const channel = `steamcmd:mods:${Date.now()}:${Math.random()}`
+      ipcRenderer.on(channel, (_e, payload) => onEvent(payload))
+      return ipcRenderer.invoke('steamcmd:downloadMods', { workshopIds, channel })
+        .finally(() => ipcRenderer.removeAllListeners(channel))
+    },
   },
 
   // Server management
@@ -46,14 +63,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getStatus: (profileId: string) => ipcRenderer.invoke('server:getStatus', profileId),
     getAllStatuses: () => ipcRenderer.invoke('server:getAllStatuses'),
     sendCommand: (profileId: string, command: string) => ipcRenderer.invoke('server:sendCommand', profileId, command),
+    getPlayers: (profileId: string) => ipcRenderer.invoke('server:getPlayers', profileId),
+    preflight: (profileId: string) => ipcRenderer.invoke('server:preflight', profileId),
+    networkInfo: () => ipcRenderer.invoke('server:networkInfo'),
+    onPlayers: (callback: (profileId: string, players: string[]) => void) => {
+      const handler = (_e: unknown, profileId: string, players: string[]) => callback(profileId, players)
+      ipcRenderer.on('server:players', handler)
+      return () => ipcRenderer.removeListener('server:players', handler)
+    },
+    onProblem: (callback: (profileId: string, problem: { hint: string; line: string; at: number }) => void) => {
+      const handler = (_e: unknown, profileId: string, problem: { hint: string; line: string; at: number }) => callback(profileId, problem)
+      ipcRenderer.on('server:problem', handler)
+      return () => ipcRenderer.removeListener('server:problem', handler)
+    },
     onConsoleOutput: (profileId: string, callback: (line: string) => void) => {
       const channel = `server:console:${profileId}`
-      ipcRenderer.on(channel, (_e, line) => callback(line))
-      return () => ipcRenderer.removeAllListeners(channel)
+      const handler = (_e: unknown, line: string) => callback(line)
+      ipcRenderer.on(channel, handler)
+      return () => ipcRenderer.removeListener(channel, handler)
     },
     onStatusChange: (callback: (profileId: string, status: string) => void) => {
-      ipcRenderer.on('server:statusChange', (_e, profileId, status) => callback(profileId, status))
-      return () => ipcRenderer.removeAllListeners('server:statusChange')
+      const handler = (_e: unknown, profileId: string, status: string) => callback(profileId, status)
+      ipcRenderer.on('server:statusChange', handler)
+      return () => ipcRenderer.removeListener('server:statusChange', handler)
     },
   },
 
@@ -76,8 +108,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Mod management
   mods: {
-    search: (query: string, page: number, buildVersion?: 'b41' | 'b42') => ipcRenderer.invoke('mods:search', query, page, buildVersion),
     getDetails: (workshopIds: string[]) => ipcRenderer.invoke('mods:getDetails', workshopIds),
+    getCollection: (workshopId: string) => ipcRenderer.invoke('mods:getCollection', workshopId),
     scanInstalled: (serverInstallPath: string, workshopIds: string[]) => ipcRenderer.invoke('mods:scanInstalled', serverInstallPath, workshopIds),
   },
 

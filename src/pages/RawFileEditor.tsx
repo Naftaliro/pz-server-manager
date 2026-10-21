@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { ArrowLeft, Save, RefreshCw, FileText, AlertCircle, CheckCircle, FolderOpen, Info, Search, X, ChevronUp, ChevronDown } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
+import { getServerName } from '../lib/profile'
 
 type FileTab = 'ini' | 'sandbox'
 
@@ -28,7 +29,7 @@ export default function RawFileEditor() {
   // Resolve paths from the profile
   useEffect(() => {
     if (!profile) return
-    const serverName = profile.name.replace(/[^a-zA-Z0-9_-]/g, '_')
+    const serverName = getServerName(profile)
     const base = profile.worldSavePath
       ? profile.worldSavePath.replace(/\\$/, '')
       : '%USERPROFILE%\\Zomboid'
@@ -141,7 +142,7 @@ export default function RawFileEditor() {
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-4 px-6 py-4 border-b border-pz-border bg-pz-darker flex-shrink-0">
-        <button onClick={() => setActiveView('editor')} className="btn-ghost p-1.5">
+        <button onClick={() => setActiveView('server')} className="btn-ghost p-1.5">
           <ArrowLeft size={16} />
         </button>
         <div className="flex-1">

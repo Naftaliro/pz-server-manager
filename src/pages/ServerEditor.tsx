@@ -3,6 +3,7 @@ import { Save, FolderOpen, ArrowLeft, Settings2, Package, Sliders, Trash2, Alert
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile, BuildVersion, LaunchMode } from '../store/useAppStore'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { getServerName, formatModIds, dataPath as profileDataPath } from '../lib/profile'
 
 const DEFAULT_PROFILE: Omit<ServerProfile, 'id' | 'createdAt' | 'updatedAt'> = {
   name: '',
@@ -34,7 +35,7 @@ const MAPS = [
 ]
 
 export default function ServerEditor() {
-  const { activeProfileId, setActiveView, setActiveProfileId, profiles, setProfiles } = useAppStore()
+  const { activeProfileId, setActiveView, setActiveProfileId, profiles, setProfiles, openServer } = useAppStore()
   const [form, setForm] = useState<Omit<ServerProfile, 'id' | 'createdAt' | 'updatedAt'>>(DEFAULT_PROFILE)
   const [tab, setTab] = useState<'basic' | 'network' | 'gameplay' | 'pvp' | 'safehouses' | 'advanced' | 'discord' | 'danger'>('basic')
   const [saving, setSaving] = useState(false)
@@ -90,14 +91,14 @@ export default function ServerEditor() {
     if (!validate()) return
     setSaving(true)
     try {
-      const serverName = form.name.replace(/[^a-zA-Z0-9_-]/g, '_')
+      const serverName = existingProfile ? getServerName(existingProfile) : form.name.replace(/[^a-zA-Z0-9_-]/g, '_')
       const iniSettings = {
         ...(existingProfile?.iniSettings || {}),
         ...form.iniSettings,
         DefaultPort: form.port,
         MaxPlayers: form.maxPlayers,
         Password: form.serverPassword,
-        Mods: form.mods.map(m => m.modId).join(';'),
+        Mods: formatModIds(form.mods.map(m => m.modId), form.buildVersion),
         WorkshopItems: form.mods.map(m => m.workshopId).join(';'),
       }
       const profileData = {
@@ -110,12 +111,11 @@ export default function ServerEditor() {
         updatedAt: new Date().toISOString(),
       }
       const saved = await window.electronAPI.profiles.save(profileData)
-      const dataPath = form.worldSavePath || `%USERPROFILE%\\Zomboid`
+      const dataPath = profileDataPath(form)
       await window.electronAPI.config.writeIni(serverName, dataPath, iniSettings)
       const updated = await window.electronAPI.profiles.list()
       setProfiles(updated)
-      if (!activeProfileId) setActiveProfileId(saved.id)
-      setActiveView('dashboard')
+      openServer(saved.id, 'settings')
     } catch (err) {
       console.error('Save error:', err)
       alert('Failed to save profile. Please check the console for details.')
@@ -126,8 +126,8 @@ export default function ServerEditor() {
 
   const handleWipe = async () => {
     if (!existingProfile) return
-    const serverName = existingProfile.name.replace(/[^a-zA-Z0-9_-]/g, '_')
-    const dataPath = form.worldSavePath || `%USERPROFILE%\\Zomboid`
+    const serverName = getServerName(existingProfile)
+    const dataPath = profileDataPath(form)
     const result = await window.electronAPI.world.wipe(serverName, dataPath)
     setWipeMsg(result.message)
     setWipeConfirm(false)
@@ -176,7 +176,7 @@ export default function ServerEditor() {
         DefaultPort: form.port,
         MaxPlayers: form.maxPlayers,
         Password: form.serverPassword,
-        Mods: form.mods.map(m => m.modId).join(';'),
+        Mods: formatModIds(form.mods.map(m => m.modId), form.buildVersion),
         WorkshopItems: form.mods.map(m => m.workshopId).join(';'),
       }
       const lines = Object.entries(iniSettings).map(([k, v]) => `${k}=${v}`)
@@ -260,7 +260,7 @@ export default function ServerEditor() {
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-4 px-6 py-4 border-b border-pz-border bg-pz-darker flex-shrink-0">
-        <button onClick={() => setActiveView('dashboard')} className="btn-ghost p-1.5">
+        <button onClick={() => activeProfileId ? openServer(activeProfileId, 'settings') : setActiveView('home')} className="btn-ghost p-1.5">
           <ArrowLeft size={16} />
         </button>
         <div className="flex-1">
@@ -275,7 +275,7 @@ export default function ServerEditor() {
               <button onClick={() => { setActiveProfileId(activeProfileId); setActiveView('sandbox') }} className="btn-outline">
                 <Sliders size={14} /> Sandbox
               </button>
-              <button onClick={() => { setActiveProfileId(activeProfileId); setActiveView('mods') }} className="btn-outline">
+              <button onClick={() => activeProfileId && openServer(activeProfileId, 'mods')} className="btn-outline">
                 <Package size={14} /> Mods
               </button>
             </>
@@ -1035,7 +1035,7 @@ export default function ServerEditor() {
                           Permanently deletes all world save data for this server. Player characters, base builds, and world state will be lost. Server settings and mods are preserved.
                         </p>
                         <p className="text-xs text-pz-muted mt-1">
-                          World save path: <code className="text-pz-text">{(form.worldSavePath || '%USERPROFILE%\\Zomboid') + '\\Saves\\Multiplayer\\' + (form.name.replace(/[^a-zA-Z0-9_-]/g, '_') || 'serverName')}</code>
+                          World save path: <code className="text-pz-text">{(form.worldSavePath || '%USERPROFILE%\\Zomboid') + '\\Saves\\Multiplayer\\' + (existingProfile ? getServerName(existingProfile) : 'serverName')}</code>
                         </p>
                         {wipeMsg && <p className="text-xs text-pz-green mt-2">{wipeMsg}</p>}
                       </div>

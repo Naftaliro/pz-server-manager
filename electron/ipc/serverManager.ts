@@ -1,23 +1,38 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { spawn, exec, execFile, ChildProcess } from 'child_process'
 import { join } from 'path'
-import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'fs'
-import { getProfile } from './profileManager'
+import { existsSync, writeFileSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from 'fs'
+import { randomBytes } from 'crypto'
+import dgram from 'dgram'
+import os from 'os'
+import https from 'https'
+import { getProfile, listProfiles, patchProfile, getServerName } from './profileManager'
+import type { ServerProfile } from './profileManager'
+import { rconCommand } from './rcon'
+import { isServerInstalled } from './steamcmd'
+import { workshopContentDir, scanWorkshopItem } from './modManager'
+
+// 'starting' = java is up but still loading the world/mods, 'running' = friends can join
+type Status = 'starting' | 'running' | 'stopping' | 'stopped'
 
 interface ServerProcess {
-  watcher: NodeJS.Timeout | null
   pid: number | null
-  status: 'starting' | 'running' | 'stopping' | 'stopped'
-  startTime: Date
+  status: Status
   serverName: string
   serverDir: string
+  logPath: string
+  logOffset: number
+  watcher: NodeJS.Timeout | null
+  logTimer: NodeJS.Timeout | null
+  playersTimer: NodeJS.Timeout | null
+  players: string[]
 }
 
 const runningServers = new Map<string, ServerProcess>()
 let mainWindowRef: BrowserWindow | null = null
 
 // ---------------------------------------------------------------------------
-// Resolve the Zomboid data directory (where Server/ and Saves/ live)
+// Paths
 // ---------------------------------------------------------------------------
 function resolveDataPath(worldSavePath?: string): string {
   const raw = worldSavePath || '%USERPROFILE%\\Zomboid'
@@ -25,21 +40,56 @@ function resolveDataPath(worldSavePath?: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Write a complete INI file for this profile to the Zomboid\Server folder.
-// Merges all profile settings so PZ sees a fully-populated config.
+// Mods: B42 wants Mods=\ModA;\ModB, B41 wants Mods=ModA;ModB
 // ---------------------------------------------------------------------------
-function writeProfileIni(
-  serverName: string,
-  dataPath: string,
-  profile: Awaited<ReturnType<typeof getProfile>>
-): void {
-  if (!profile) return
+export function formatModIds(modIds: string[], buildVersion?: string): string {
+  return modIds
+    .flatMap(id => (id || '').split(';'))
+    .map(id => id.trim().replace(/^\\+/, ''))
+    .filter(Boolean)
+    .map(id => (buildVersion === 'b41' ? id : `\\${id}`))
+    .join(';')
+}
+
+function enabledIds(mod: ServerProfile['mods'][number]): string[] {
+  return (mod.modId || '').split(';').map(s => s.trim().replace(/^\\+/, '')).filter(Boolean)
+}
+
+// Keep the user's order, but make sure anything a mod requires loads before it
+export function orderModIds(profile: ServerProfile): string[] {
+  const ids = profile.mods.flatMap(enabledIds)
+  const requires = new Map<string, string[]>()
+  for (const m of profile.mods) for (const id of enabledIds(m)) requires.set(id, m.requires || [])
+
+  const present = new Set(ids)
+  const out: string[] = []
+  const visiting = new Set<string>()
+  const visit = (id: string) => {
+    if (out.includes(id) || visiting.has(id)) return
+    visiting.add(id)
+    for (const dep of requires.get(id) || []) if (present.has(dep)) visit(dep)
+    visiting.delete(id)
+    out.push(id)
+  }
+  ids.forEach(visit)
+  return out
+}
+
+// Map= needs the mod map folders first and the vanilla map last
+function buildMapLine(profile: ServerProfile): string {
+  const base = String(profile.iniSettings?.Map || 'Muldraugh, KY')
+  const modMaps = profile.mods.flatMap(m => m.maps || [])
+  const parts = [...modMaps, ...base.split(';').map(s => s.trim())].filter(Boolean)
+  return [...new Set(parts)].join(';')
+}
+
+// ---------------------------------------------------------------------------
+// Config writers
+// ---------------------------------------------------------------------------
+function writeProfileIni(serverName: string, dataPath: string, profile: ServerProfile): void {
   const serverDir = join(dataPath, 'Server')
   if (!existsSync(serverDir)) mkdirSync(serverDir, { recursive: true })
 
-  const iniPath = join(serverDir, `${serverName}.ini`)
-
-  // Build the complete settings object: stored iniSettings + top-level profile fields
   const settings: Record<string, unknown> = {
     ...(profile.iniSettings || {}),
     // Always override these from the profile so they stay in sync
@@ -47,9 +97,9 @@ function writeProfileIni(
     UDPPort: profile.udpPort,
     MaxPlayers: profile.maxPlayers,
     Password: profile.serverPassword || '',
-    // Mod lists from the mods array
     WorkshopItems: profile.mods.map(m => m.workshopId).filter(Boolean).join(';'),
-    Mods: formatModIds(profile.mods.map(m => m.modId), profile.buildVersion),
+    Mods: formatModIds(orderModIds(profile), profile.buildVersion),
+    Map: buildMapLine(profile),
   }
 
   const lines: string[] = [
@@ -62,18 +112,41 @@ function writeProfileIni(
     if (value === null || value === undefined) continue
     lines.push(`${key}=${value}`)
   }
-
-  writeFileSync(iniPath, lines.join('\n') + '\n', 'utf-8')
+  writeFileSync(join(serverDir, `${serverName}.ini`), lines.join('\n') + '\n', 'utf-8')
 }
 
-// B42 wants Mods=\ModA;\ModB, B41 wants Mods=ModA;ModB
-export function formatModIds(modIds: string[], buildVersion?: string): string {
-  return modIds
-    .flatMap(id => (id || '').split(';'))
-    .map(id => id.trim().replace(/^\\+/, ''))
-    .filter(Boolean)
-    .map(id => (buildVersion === 'b41' ? id : `\\${id}`))
-    .join(';')
+function luaValue(value: unknown): string {
+  if (typeof value === 'boolean' || typeof value === 'number') return String(value)
+  // some defaults were stored with their quotes already on, don't double them up
+  const str = String(value).replace(/^"(.*)"$/, '$1').replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  return `"${str}"`
+}
+
+function writeProfileSandbox(serverName: string, dataPath: string, profile: ServerProfile): void {
+  const serverDir = join(dataPath, 'Server')
+  if (!existsSync(serverDir)) mkdirSync(serverDir, { recursive: true })
+
+  const settings = profile.sandboxSettings || {}
+  const zombieConfig = (settings.ZombieConfig as Record<string, unknown>) || {}
+  const lines: string[] = [
+    '-- Project Zomboid Sandbox Configuration',
+    `-- Profile: ${profile.name}`,
+    '-- Generated by PZ Server Manager',
+    '',
+    'SandboxVars = {',
+  ]
+  for (const [key, value] of Object.entries(settings)) {
+    if (key === 'ZombieConfig' || value === null || value === undefined) continue
+    lines.push(`    ${key} = ${luaValue(value)},`)
+  }
+  lines.push('    ZombieConfig = {')
+  for (const [key, value] of Object.entries(zombieConfig)) {
+    if (value === null || value === undefined) continue
+    lines.push(`        ${key} = ${luaValue(value)},`)
+  }
+  lines.push('    },')
+  lines.push('}')
+  writeFileSync(join(serverDir, `${serverName}_SandboxVars.lua`), lines.join('\n') + '\n', 'utf-8')
 }
 
 // ---------------------------------------------------------------------------
@@ -96,84 +169,43 @@ function writePatchedStartBat(serverDir: string, serverName: string, memoryMb?: 
 }
 
 // ---------------------------------------------------------------------------
-// Write a complete SandboxVars.lua for this profile.
+// Process helpers
 // ---------------------------------------------------------------------------
-function writeProfileSandbox(
-  serverName: string,
-  dataPath: string,
-  profile: Awaited<ReturnType<typeof getProfile>>
-): void {
-  if (!profile) return
-  const serverDir = join(dataPath, 'Server')
-  if (!existsSync(serverDir)) mkdirSync(serverDir, { recursive: true })
 
-  const luaPath = join(serverDir, `${serverName}_SandboxVars.lua`)
-  const settings = profile.sandboxSettings || {}
-  const zombieConfig = (settings.ZombieConfig as Record<string, unknown>) || {}
-
-  const lines: string[] = [
-    '-- Project Zomboid Sandbox Configuration',
-    `-- Profile: ${profile.name}`,
-    '-- Generated by PZ Server Manager',
-    '',
-    'SandboxVars = {',
-  ]
-
-  for (const [key, value] of Object.entries(settings)) {
-    if (key === 'ZombieConfig') continue
-    if (value === null || value === undefined) continue
-    if (typeof value === 'boolean') lines.push(`    ${key} = ${value},`)
-    else if (typeof value === 'number') lines.push(`    ${key} = ${value},`)
-    else lines.push(`    ${key} = "${value}",`)
-  }
-
-  lines.push('    ZombieConfig = {')
-  for (const [key, value] of Object.entries(zombieConfig)) {
-    if (value === null || value === undefined) continue
-    if (typeof value === 'boolean') lines.push(`        ${key} = ${value},`)
-    else if (typeof value === 'number') lines.push(`        ${key} = ${value},`)
-    else lines.push(`        ${key} = "${value}",`)
-  }
-  lines.push('    },')
-  lines.push('}')
-
-  writeFileSync(luaPath, lines.join('\n') + '\n', 'utf-8')
-}
-
-// ---------------------------------------------------------------------------
-// Find the PID of the java.exe process that owns our server
-// ---------------------------------------------------------------------------
-function findServerPid(serverName: string): Promise<number | null> {
+// wmic got removed in newer Windows 11 builds, so ask CIM through powershell.
+// Returns every java process that has a -servername, keyed by that name.
+function findServerPids(): Promise<Map<string, number>> {
   return new Promise((resolve) => {
-    // wmic got removed in newer Windows 11 builds, so ask CIM through powershell
     const script = `Get-CimInstance Win32_Process -Filter "Name LIKE 'java%.exe'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`
     execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
       { timeout: 15000, windowsHide: true },
       (err, stdout) => {
-        if (err || !stdout || !stdout.trim()) return resolve(null)
-        let procs: Array<{ ProcessId: number; CommandLine: string | null }>
+        const result = new Map<string, number>()
+        if (err || !stdout || !stdout.trim()) return resolve(result)
         try {
           const parsed = JSON.parse(stdout)
-          procs = Array.isArray(parsed) ? parsed : [parsed]
-        } catch {
-          return resolve(null)
-        }
-        for (const p of procs) {
-          const match = (p.CommandLine || '').match(/-servername\s+"?([^"\s]+)"?/i)
-          // exact match so "Server1" doesn't grab "Server10"
-          if (match && match[1] === serverName) return resolve(p.ProcessId)
-        }
-        resolve(null)
+          const procs: Array<{ ProcessId: number; CommandLine: string | null }> = Array.isArray(parsed) ? parsed : [parsed]
+          for (const p of procs) {
+            const match = (p.CommandLine || '').match(/-servername\s+"?([^"\s]+)"?/i)
+            if (match) result.set(match[1], p.ProcessId)
+          }
+        } catch { /* bad json, treat as none */ }
+        resolve(result)
       }
     )
   })
 }
 
+async function findServerPid(serverName: string): Promise<number | null> {
+  // exact match so "Server1" doesn't grab "Server10"
+  return (await findServerPids()).get(serverName) ?? null
+}
+
 function isPidAlive(pid: number): Promise<boolean> {
   return new Promise((resolve) => {
-    exec(`tasklist /FI "PID eq ${pid}" /NH`, { timeout: 5000 }, (err, stdout) => {
+    exec(`tasklist /FI "PID eq ${pid}" /NH`, { timeout: 5000, windowsHide: true }, (err, stdout) => {
       if (err) return resolve(false)
       resolve(stdout.includes(String(pid)))
     })
@@ -182,266 +214,464 @@ function isPidAlive(pid: number): Promise<boolean> {
 
 function killProcessTree(pid: number): Promise<void> {
   return new Promise((resolve) => {
-    exec(`taskkill /PID ${pid} /T /F`, { timeout: 10000 }, () => resolve())
+    exec(`taskkill /PID ${pid} /T /F`, { timeout: 10000, windowsHide: true }, () => resolve())
   })
 }
 
+// Last resort when RCON isn't answering: type into the console window
+function sendKeysToWindow(serverName: string, text: string): Promise<void> {
+  const escaped = text.replace(/'/g, "''").replace(/[+^%~(){}[\]]/g, '{$&}')
+  return new Promise((resolve) => {
+    exec(
+      `powershell -NoProfile -Command "& {$wshell = New-Object -ComObject wscript.shell; $wshell.AppActivate('PZ Server - ${serverName}'); Start-Sleep -Milliseconds 200; $wshell.SendKeys('${escaped}{ENTER}')}"`,
+      { timeout: 5000, windowsHide: true },
+      () => resolve()
+    )
+  })
+}
+
+function rconFor(profileId: string, command: string, timeoutMs?: number): Promise<string> {
+  const profile = getProfile(profileId)
+  if (!profile) return Promise.reject(new Error('Profile not found'))
+  const port = Number(profile.iniSettings?.RCONPort || 27015)
+  const password = String(profile.iniSettings?.RCONPassword || '')
+  if (!password) return Promise.reject(new Error('No RCON password set'))
+  return rconCommand(port, password, command, timeoutMs)
+}
+
+// ---------------------------------------------------------------------------
+// Server log tailing. PZ writes everything to <data>\server-console.txt,
+// which is how we know when it's actually ready and what went wrong.
+// ---------------------------------------------------------------------------
+const READY_PATTERN = /SERVER STARTED/i
+const PROBLEM_PATTERNS: Array<{ pattern: RegExp; hint: string }> = [
+  { pattern: /required mod .* not found|mod .* is missing|missing.*required/i, hint: 'A mod needs another mod that is not in your list.' },
+  { pattern: /workshop.*(fail|error)|failed to download|ItemNotFound|item state.*not installed/i, hint: 'A workshop mod failed to download. Try "Download mods" on the Mods tab.' },
+  { pattern: /Address already in use|BindException/i, hint: 'The port is already in use. Another server might still be running.' },
+  { pattern: /OutOfMemoryError|Could not reserve enough space/i, hint: 'The server ran out of memory. Lower or raise the memory setting depending on your PC.' },
+  { pattern: /map.*not found|cannot find map/i, hint: 'A map mod is missing or its map name is wrong.' },
+]
+
+function tailLog(profileId: string, srv: ServerProcess) {
+  if (!existsSync(srv.logPath)) return
+  let size: number
+  try { size = statSync(srv.logPath).size } catch { return }
+  if (size < srv.logOffset) srv.logOffset = 0 // file got recreated on launch
+  if (size === srv.logOffset) return
+
+  const fd = openSync(srv.logPath, 'r')
+  try {
+    const length = Math.min(size - srv.logOffset, 512 * 1024)
+    const buf = Buffer.alloc(length)
+    readSync(fd, buf, 0, length, srv.logOffset)
+    srv.logOffset += length
+    for (const line of buf.toString('utf-8').split(/\r?\n/)) {
+      if (!line.trim()) continue
+      emitConsoleOutput(profileId, line)
+      if (srv.status === 'starting' && READY_PATTERN.test(line)) markRunning(profileId, srv)
+      for (const p of PROBLEM_PATTERNS) {
+        if (p.pattern.test(line)) {
+          emitProblem(profileId, p.hint, line)
+          break
+        }
+      }
+    }
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function markRunning(profileId: string, srv: ServerProcess) {
+  if (srv.status !== 'starting') return
+  srv.status = 'running'
+  emitStatusChange(profileId, 'running')
+  emitConsoleOutput(profileId, `[PZ Manager] Server is up, players can join now.`)
+  patchProfile(profileId, { lastStarted: new Date().toISOString() })
+
+  // keep the player list fresh while it's running
+  const pollPlayers = async () => {
+    try {
+      const out = await rconFor(profileId, 'players', 4000)
+      // "Players connected (2):\n-alice\n-bob"
+      const names = out.split(/\r?\n/).filter(l => l.trim().startsWith('-')).map(l => l.trim().slice(1))
+      srv.players = names
+      emitPlayers(profileId, names)
+    } catch { /* rcon not up yet or busy, try again next time */ }
+  }
+  pollPlayers()
+  srv.playersTimer = setInterval(pollPlayers, 20000)
+}
+
+function cleanup(profileId: string) {
+  const srv = runningServers.get(profileId)
+  if (!srv) return
+  if (srv.watcher) clearInterval(srv.watcher)
+  if (srv.logTimer) clearInterval(srv.logTimer)
+  if (srv.playersTimer) clearInterval(srv.playersTimer)
+  runningServers.delete(profileId)
+  emitPlayers(profileId, [])
+  emitStatusChange(profileId, 'stopped')
+}
+
+// Start watching a server process we know the PID of
+function attach(profileId: string, srv: ServerProcess, pid: number) {
+  srv.pid = pid
+  srv.logTimer = setInterval(() => tailLog(profileId, srv), 1000)
+
+  // if the log never shows up (custom setups), RCON answering means it's ready too
+  let rconChecks = 0
+  srv.watcher = setInterval(async () => {
+    if (!srv.pid) return
+    if (!(await isPidAlive(srv.pid))) {
+      emitConsoleOutput(profileId, `[PZ Manager] Server process (PID ${srv.pid}) has stopped.`)
+      cleanup(profileId)
+      return
+    }
+    if (srv.status === 'starting' && ++rconChecks % 3 === 0) {
+      try {
+        await rconFor(profileId, 'players', 3000)
+        markRunning(profileId, srv)
+      } catch { /* still loading */ }
+    }
+  }, 5000)
+}
+
+// On app launch, pick back up any servers that were left running
+async function reattachRunning() {
+  const pids = await findServerPids()
+  if (pids.size === 0) return
+  for (const profile of listProfiles()) {
+    const serverName = getServerName(profile)
+    const pid = pids.get(serverName)
+    if (!pid || runningServers.has(profile.id)) continue
+    const dataPath = resolveDataPath(profile.worldSavePath)
+    const logPath = join(dataPath, 'server-console.txt')
+    const srv: ServerProcess = {
+      pid, status: 'starting', serverName, serverDir: profile.serverInstallPath,
+      logPath, logOffset: 0, watcher: null, logTimer: null, playersTimer: null, players: [],
+    }
+    runningServers.set(profile.id, srv)
+    emitStatusChange(profile.id, 'starting')
+    emitConsoleOutput(profile.id, `[PZ Manager] Found this server already running (PID ${pid}), reconnected.`)
+    attach(profile.id, srv, pid)
+    // replays the existing log, which flips it to running if it already finished loading
+    tailLog(profile.id, srv)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pre-start checks. Each issue says what's wrong in plain words.
+// ---------------------------------------------------------------------------
+interface PreflightIssue {
+  level: 'error' | 'warning'
+  message: string
+  fix?: 'install-server' | 'download-mods' | 'open-mods' | 'open-settings'
+}
+
+function udpPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = dgram.createSocket('udp4')
+    sock.once('error', () => { sock.close(); resolve(false) })
+    sock.bind(port, () => { sock.close(); resolve(true) })
+  })
+}
+
+async function preflight(profileId: string): Promise<PreflightIssue[]> {
+  const profile = getProfile(profileId)
+  if (!profile) return [{ level: 'error', message: 'This server profile no longer exists.' }]
+  const issues: PreflightIssue[] = []
+
+  if (!isServerInstalled(profile.serverInstallPath)) {
+    issues.push({ level: 'error', message: `The game server isn't installed at ${profile.serverInstallPath}.`, fix: 'install-server' })
+  }
+
+  // ports clash with another server in the app?
+  for (const other of listProfiles()) {
+    if (other.id === profile.id) continue
+    const otherRunning = runningServers.has(other.id)
+    if (otherRunning && other.port === profile.port) {
+      issues.push({ level: 'error', message: `"${other.name}" is already running on port ${other.port}. Stop it first or change this server's port.`, fix: 'open-settings' })
+    }
+  }
+  if (!runningServers.has(profile.id) && !(await udpPortFree(profile.port))) {
+    issues.push({ level: 'error', message: `Port ${profile.port} is being used by something else (maybe a server that's still shutting down).` })
+  }
+
+  // memory
+  const totalMb = Math.floor(os.totalmem() / 1024 / 1024)
+  if (profile.memory > totalMb - 2048) {
+    issues.push({ level: 'error', message: `Memory is set to ${profile.memory} MB but this PC only has ${totalMb} MB. Lower it in Settings.`, fix: 'open-settings' })
+  } else if (profile.buildVersion !== 'b41' && profile.memory < 4096) {
+    issues.push({ level: 'warning', message: `Only ${profile.memory} MB of memory. B42 servers really want 8192 MB or more.`, fix: 'open-settings' })
+  }
+
+  // mods
+  const contentDir = workshopContentDir(profile.serverInstallPath)
+  const notDownloaded = profile.mods.filter(m => !existsSync(join(contentDir, m.workshopId)))
+  if (notDownloaded.length > 0) {
+    issues.push({
+      level: 'warning',
+      message: `${notDownloaded.length} mod${notDownloaded.length > 1 ? 's are' : ' is'} not downloaded yet. The server will try on start, but downloading here first is more reliable.`,
+      fix: 'download-mods',
+    })
+  }
+
+  const enabled = new Set(profile.mods.flatMap(enabledIds))
+  for (const m of profile.mods) {
+    if (!m.modId || m.modId === m.workshopId) {
+      issues.push({ level: 'error', message: `"${m.name}" doesn't have a mod ID yet. Download it so the app can read it, or type it in.`, fix: 'open-mods' })
+    }
+  }
+
+  // requirements from the downloaded mod.info files (fresh scan, in case files changed)
+  for (const m of profile.mods) {
+    const itemDir = join(contentDir, m.workshopId)
+    if (!existsSync(itemDir)) continue
+    const infos = scanWorkshopItem(itemDir).filter(i => enabledIds(m).includes(i.id))
+    for (const info of infos) {
+      for (const dep of info.requires) {
+        if (!enabled.has(dep)) {
+          issues.push({ level: 'error', message: `"${m.name}" needs the mod "${dep}", which isn't in your list.`, fix: 'open-mods' })
+        }
+      }
+    }
+  }
+
+  return issues
+}
+
+// ---------------------------------------------------------------------------
+// Start / stop
+// ---------------------------------------------------------------------------
+async function startServer(profileId: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const existing = runningServers.get(profileId)
+    if (existing && existing.status !== 'stopped') {
+      return { success: false, message: 'Server is already running' }
+    }
+
+    let profile = getProfile(profileId)
+    if (!profile) return { success: false, message: 'Profile not found' }
+
+    const serverDir = profile.serverInstallPath
+    if (!existsSync(join(serverDir, 'StartServer64.bat'))) {
+      return { success: false, message: 'Server files not found. Install the server first.' }
+    }
+
+    // older profiles had no RCON password, the app needs one to talk to the server
+    if (!profile.iniSettings?.RCONPassword) {
+      profile = patchProfile(profileId, {
+        iniSettings: { ...profile.iniSettings, RCONPassword: randomBytes(12).toString('hex') },
+      }) || profile
+    }
+
+    const serverName = getServerName(profile)
+    const adminPassword = profile.adminPassword || 'admin'
+    const dataPath = resolveDataPath(profile.worldSavePath)
+    const launchMode = profile.launchMode || 'managed'
+    emitConsoleOutput(profileId, `[PZ Manager] Launch mode: ${launchMode}`)
+    emitConsoleOutput(profileId, `[PZ Manager] Data path: ${dataPath}`)
+
+    // In 'passthrough' mode the user edits files directly and the app must NOT overwrite them
+    if (launchMode === 'managed') {
+      emitConsoleOutput(profileId, `[PZ Manager] Writing config files for "${serverName}"...`)
+      try {
+        writeProfileIni(serverName, dataPath, profile)
+        emitConsoleOutput(profileId, `[PZ Manager] ✓ Wrote ${serverName}.ini`)
+      } catch (e) {
+        emitConsoleOutput(profileId, `[PZ Manager] ⚠ Failed to write INI: ${e instanceof Error ? e.message : String(e)}`)
+      }
+      try {
+        writeProfileSandbox(serverName, dataPath, profile)
+        emitConsoleOutput(profileId, `[PZ Manager] ✓ Wrote ${serverName}_SandboxVars.lua`)
+      } catch (e) {
+        emitConsoleOutput(profileId, `[PZ Manager] ⚠ Failed to write SandboxVars: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    } else {
+      emitConsoleOutput(profileId, `[PZ Manager] Passthrough mode — using existing config files as-is`)
+    }
+
+    let startBatName = 'StartServer64.bat'
+    try {
+      startBatName = writePatchedStartBat(serverDir, serverName, launchMode === 'managed' ? profile.memory : undefined)
+      if (launchMode === 'managed' && profile.memory) emitConsoleOutput(profileId, `[PZ Manager] Memory: ${profile.memory} MB`)
+    } catch (e) {
+      emitConsoleOutput(profileId, `[PZ Manager] ⚠ Couldn't patch StartServer64.bat, using stock one: ${e instanceof Error ? e.message : String(e)}`)
+    }
+
+    // -cachedir points PZ at a custom data folder so it reads OUR named config files
+    const cacheArg = dataPath !== resolveDataPath() ? ` -cachedir="${dataPath}"` : ''
+    const launcherPath = join(serverDir, `_pzm_launch_${serverName}.bat`)
+    writeFileSync(launcherPath, [
+      `@echo off`,
+      `title PZ Server - ${serverName}`,
+      `cd /d "${serverDir}"`,
+      `echo ================================================`,
+      `echo  Project Zomboid Server: ${serverName}`,
+      `echo  Managed by PZ Server Manager - use the app to stop it`,
+      `echo ================================================`,
+      `call ${startBatName} -servername "${serverName}" -adminpassword "${adminPassword}"${cacheArg}`,
+    ].join('\r\n'))
+
+    // minimized so it stays out of the way but still shows up in the taskbar
+    const proc: ChildProcess = spawn(
+      'cmd.exe',
+      ['/c', 'start', `"PZ Server - ${serverName}"`, '/min', '/D', serverDir, launcherPath],
+      { cwd: serverDir, detached: true, stdio: 'ignore', shell: false, windowsHide: true }
+    )
+    proc.unref()
+
+    const logPath = join(dataPath, 'server-console.txt')
+    const srv: ServerProcess = {
+      pid: null, status: 'starting', serverName, serverDir,
+      logPath, logOffset: 0, watcher: null, logTimer: null, playersTimer: null, players: [],
+    }
+    runningServers.set(profileId, srv)
+    emitStatusChange(profileId, 'starting')
+    emitConsoleOutput(profileId, `[PZ Manager] Starting up. First start with mods can take a few minutes...`)
+
+    let attempts = 0
+    const pollForPid = async () => {
+      if (!runningServers.has(profileId)) return
+      attempts++
+      const pid = await findServerPid(serverName)
+      if (pid) {
+        emitConsoleOutput(profileId, `[PZ Manager] Server process found (PID ${pid}), loading world...`)
+        attach(profileId, srv, pid)
+      } else if (attempts < 45) {
+        setTimeout(pollForPid, 2000)
+      } else {
+        emitConsoleOutput(profileId, `[PZ Manager] The server never started. Open its window in the taskbar to see why.`)
+        emitProblem(profileId, 'The server process never started.', 'Java process not found after 90 seconds')
+        cleanup(profileId)
+      }
+    }
+    setTimeout(pollForPid, 3000)
+
+    return { success: true, message: `Server "${serverName}" launching...` }
+  } catch (error: unknown) {
+    return { success: false, message: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function stopServer(profileId: string): Promise<{ success: boolean; message: string }> {
+  const srv = runningServers.get(profileId)
+  if (!srv) return { success: false, message: 'Server is not running' }
+
+  srv.status = 'stopping'
+  emitStatusChange(profileId, 'stopping')
+  emitConsoleOutput(profileId, `[PZ Manager] Saving and stopping "${srv.serverName}"...`)
+
+  if (srv.pid) {
+    try {
+      await rconFor(profileId, 'quit', 4000)
+    } catch {
+      emitConsoleOutput(profileId, `[PZ Manager] RCON didn't answer, sending quit to the console window instead`)
+      await sendKeysToWindow(srv.serverName, 'quit')
+    }
+
+    // give it time to save the world
+    for (let waited = 0; waited < 60000; waited += 2000) {
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      if (!(await isPidAlive(srv.pid))) {
+        emitConsoleOutput(profileId, `[PZ Manager] Server stopped.`)
+        break
+      }
+    }
+    if (await isPidAlive(srv.pid)) {
+      emitConsoleOutput(profileId, `[PZ Manager] Server didn't stop on its own, force-stopping...`)
+      await killProcessTree(srv.pid)
+    }
+  }
+  cleanup(profileId)
+  return { success: true, message: 'Server stopped.' }
+}
+
+// ---------------------------------------------------------------------------
+// Network info for the "invite friends" box
+// ---------------------------------------------------------------------------
+let cachedPublicIp: { ip: string; at: number } | null = null
+
+function getPublicIp(): Promise<string | null> {
+  if (cachedPublicIp && Date.now() - cachedPublicIp.at < 10 * 60 * 1000) return Promise.resolve(cachedPublicIp.ip)
+  return new Promise((resolve) => {
+    const req = https.get('https://api.ipify.org', (res) => {
+      let data = ''
+      res.on('data', (c: Buffer) => { data += c })
+      res.on('end', () => {
+        const ip = data.trim()
+        if (/^[\d.]+$/.test(ip)) {
+          cachedPublicIp = { ip, at: Date.now() }
+          resolve(ip)
+        } else resolve(null)
+      })
+    })
+    req.on('error', () => resolve(null))
+    req.setTimeout(5000, () => { req.destroy(); resolve(null) })
+  })
+}
+
+function getLanIps(): string[] {
+  const out: string[] = []
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs || []) {
+      if (a.family === 'IPv4' && !a.internal && !a.address.startsWith('169.254.')) out.push(a.address)
+    }
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// IPC
+// ---------------------------------------------------------------------------
 export function setupServerHandlers(mainWindow: BrowserWindow | null) {
   mainWindowRef = mainWindow
 
   ipcMain.handle('server:start', async (_event, profileId: string) => startServer(profileId))
-
-  async function startServer(profileId: string): Promise<{ success: boolean; message: string }> {
-    try {
-      if (runningServers.has(profileId)) {
-        const srv = runningServers.get(profileId)!
-        if (srv.status === 'running' || srv.status === 'starting') {
-          return { success: false, message: 'Server is already running' }
-        }
-      }
-
-      const profile = await getProfile(profileId)
-      if (!profile) return { success: false, message: 'Profile not found' }
-
-      const serverDir = profile.serverInstallPath
-      const startBat = join(serverDir, 'StartServer64.bat')
-
-      if (!existsSync(startBat)) {
-        return { success: false, message: 'Server files not found. Please verify the Server Install Path in Server Config.' }
-      }
-
-      const serverName = profile.name.replace(/[^a-zA-Z0-9_-]/g, '_')
-      const adminPassword = profile.adminPassword || 'admin'
-      const dataPath = resolveDataPath(profile.worldSavePath)
-
-      // -----------------------------------------------------------------------
-      // Write config files ONLY when launchMode is 'managed' (the default).
-      // In 'passthrough' mode the user edits files directly and the app must
-      // NOT overwrite them.
-      // -----------------------------------------------------------------------
-      const launchMode = profile.launchMode || 'managed'
-      emitConsoleOutput(profileId, `[PZ Manager] Launch mode: ${launchMode}`)
-      emitConsoleOutput(profileId, `[PZ Manager] Data path: ${dataPath}`)
-
-      if (launchMode === 'managed') {
-        emitConsoleOutput(profileId, `[PZ Manager] Writing config files for profile "${serverName}"...`)
-        try {
-          writeProfileIni(serverName, dataPath, profile)
-          emitConsoleOutput(profileId, `[PZ Manager] ✓ Wrote ${serverName}.ini`)
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e)
-          emitConsoleOutput(profileId, `[PZ Manager] ⚠ Failed to write INI: ${msg}`)
-        }
-        try {
-          writeProfileSandbox(serverName, dataPath, profile)
-          emitConsoleOutput(profileId, `[PZ Manager] ✓ Wrote ${serverName}_SandboxVars.lua`)
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e)
-          emitConsoleOutput(profileId, `[PZ Manager] ⚠ Failed to write SandboxVars: ${msg}`)
-        }
-      } else {
-        emitConsoleOutput(profileId, `[PZ Manager] Passthrough mode — using existing config files as-is (not overwriting)`)
-        emitConsoleOutput(profileId, `[PZ Manager] Config: ${dataPath}\\Server\\${serverName}.ini`)
-      }
-
-      // -----------------------------------------------------------------------
-      // Write the launcher batch file and open it in a new visible console window
-      // -----------------------------------------------------------------------
-      const launcherPath = join(serverDir, `_pzm_launch_${serverName}.bat`)
-
-      let startBatName = 'StartServer64.bat'
-      try {
-        startBatName = writePatchedStartBat(serverDir, serverName, launchMode === 'managed' ? profile.memory : undefined)
-        if (launchMode === 'managed' && profile.memory) {
-          emitConsoleOutput(profileId, `[PZ Manager] Memory: ${profile.memory} MB`)
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        emitConsoleOutput(profileId, `[PZ Manager] ⚠ Couldn't patch StartServer64.bat, using stock one: ${msg}`)
-      }
-
-      // Build the -cachedir argument to point PZ at the correct data directory
-      // so it reads OUR named config files, not the default Zomboid folder
-      const cacheArg = dataPath !== resolveDataPath() ? `-cachedir "${dataPath}"` : ''
-
-      const launcherContent = [
-        `@echo off`,
-        `title PZ Server - ${serverName}`,
-        `cd /d "${serverDir}"`,
-        `echo ================================================`,
-        `echo  Project Zomboid Server: ${serverName}`,
-        `echo  Profile: ${profile.name}`,
-        `echo  Port: ${profile.port}`,
-        `echo  Mods: ${profile.mods.length}`,
-        `echo ================================================`,
-        `echo.`,
-        `call ${startBatName} -servername "${serverName}" -adminpassword "${adminPassword}"${cacheArg ? ' ' + cacheArg : ''}`,
-        `echo.`,
-        `echo ============================================`,
-        `echo  Server stopped. You may close this window.`,
-        `echo ============================================`,
-        `pause`,
-      ].join('\r\n')
-
-      writeFileSync(launcherPath, launcherContent)
-
-      const proc: ChildProcess = spawn(
-        'cmd.exe',
-        ['/c', 'start', `"PZ Server - ${serverName}"`, '/D', serverDir, launcherPath],
-        {
-          cwd: serverDir,
-          detached: true,
-          stdio: 'ignore',
-          shell: false,
-        }
-      )
-      proc.unref()
-
-      const serverEntry: ServerProcess = {
-        watcher: null,
-        pid: null,
-        status: 'starting',
-        startTime: new Date(),
-        serverName,
-        serverDir,
-      }
-      runningServers.set(profileId, serverEntry)
-      emitStatusChange(profileId, 'starting')
-      emitConsoleOutput(profileId, `[PZ Manager] Server console window opened. Waiting for Java process...`)
-      emitConsoleOutput(profileId, `[PZ Manager] Config: ${dataPath}\\Server\\${serverName}.ini`)
-
-      // Poll for the java.exe PID
-      let attempts = 0
-      const maxAttempts = 30
-
-      const pollForPid = async () => {
-        attempts++
-        const pid = await findServerPid(serverName)
-        if (pid) {
-          serverEntry.pid = pid
-          serverEntry.status = 'running'
-          emitStatusChange(profileId, 'running')
-          emitConsoleOutput(profileId, `[PZ Manager] Server process detected (PID ${pid}). Server is running!`)
-
-          serverEntry.watcher = setInterval(async () => {
-            if (!serverEntry.pid) return
-            const alive = await isPidAlive(serverEntry.pid)
-            if (!alive) {
-              emitConsoleOutput(profileId, `[PZ Manager] Server process (PID ${serverEntry.pid}) has stopped.`)
-              if (serverEntry.watcher) clearInterval(serverEntry.watcher)
-              runningServers.delete(profileId)
-              emitStatusChange(profileId, 'stopped')
-            }
-          }, 5000)
-
-        } else if (attempts < maxAttempts) {
-          setTimeout(pollForPid, 2000)
-        } else {
-          emitConsoleOutput(profileId, `[PZ Manager] Could not detect server process after 60s. Check the console window for errors.`)
-          runningServers.delete(profileId)
-          emitStatusChange(profileId, 'stopped')
-        }
-      }
-
-      setTimeout(pollForPid, 3000)
-
-      return { success: true, message: `Server "${serverName}" launching...` }
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error)
-      return { success: false, message: msg }
-    }
-  }
-
-  ipcMain.handle('server:stop', async (_event, profileId: string) => {
-    const srv = runningServers.get(profileId)
-    if (!srv) return { success: false, message: 'Server is not running' }
-
-    try {
-      srv.status = 'stopping'
-      emitStatusChange(profileId, 'stopping')
-      emitConsoleOutput(profileId, `[PZ Manager] Stopping server "${srv.serverName}"...`)
-
-      if (srv.pid) {
-        emitConsoleOutput(profileId, `[PZ Manager] Sending stop signal to PID ${srv.pid}...`)
-
-        await new Promise<void>((resolve) => {
-          exec(
-            `powershell -Command "& {$wshell = New-Object -ComObject wscript.shell; $wshell.AppActivate('PZ Server - ${srv.serverName}'); Start-Sleep -Milliseconds 200; $wshell.SendKeys('quit{ENTER}')}"`,
-            { timeout: 5000 },
-            () => resolve()
-          )
-        })
-
-        let waited = 0
-        while (waited < 30000) {
-          await new Promise(resolve => setTimeout(resolve, 2000))
-          waited += 2000
-          const alive = await isPidAlive(srv.pid)
-          if (!alive) {
-            emitConsoleOutput(profileId, `[PZ Manager] Server stopped gracefully.`)
-            break
-          }
-        }
-
-        const stillAlive = await isPidAlive(srv.pid)
-        if (stillAlive) {
-          emitConsoleOutput(profileId, `[PZ Manager] Force-stopping server...`)
-          await killProcessTree(srv.pid)
-        }
-      }
-
-      if (srv.watcher) clearInterval(srv.watcher)
-      runningServers.delete(profileId)
-      emitStatusChange(profileId, 'stopped')
-
-      return { success: true, message: 'Server stopped.' }
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error)
-      return { success: false, message: msg }
-    }
-  })
+  ipcMain.handle('server:stop', async (_event, profileId: string) => stopServer(profileId))
 
   ipcMain.handle('server:restart', async (_event, profileId: string) => {
-    const srv = runningServers.get(profileId)
-    if (srv && srv.pid) {
-      if (srv.watcher) clearInterval(srv.watcher)
+    if (runningServers.has(profileId)) {
       emitConsoleOutput(profileId, `[PZ Manager] Restarting server...`)
-      await killProcessTree(srv.pid)
-      runningServers.delete(profileId)
-      emitStatusChange(profileId, 'stopped')
+      await stopServer(profileId)
       await new Promise(resolve => setTimeout(resolve, 2000))
     }
     return startServer(profileId)
   })
 
-  ipcMain.handle('server:getStatus', async (_event, profileId: string) => {
-    const srv = runningServers.get(profileId)
-    return srv ? srv.status : 'stopped'
-  })
+  ipcMain.handle('server:getStatus', async (_event, profileId: string) => runningServers.get(profileId)?.status || 'stopped')
 
   ipcMain.handle('server:getAllStatuses', async () => {
     const statuses: Record<string, string> = {}
-    runningServers.forEach((srv, id) => {
-      statuses[id] = srv.status
-    })
+    runningServers.forEach((srv, id) => { statuses[id] = srv.status })
     return statuses
   })
 
+  ipcMain.handle('server:getPlayers', async (_event, profileId: string) => runningServers.get(profileId)?.players || [])
+
   ipcMain.handle('server:sendCommand', async (_event, profileId: string, command: string) => {
     const srv = runningServers.get(profileId)
-    if (!srv || !srv.pid) {
-      return { success: false, message: 'Server is not running' }
+    if (!srv || !srv.pid) return { success: false, message: 'Server is not running' }
+    emitConsoleOutput(profileId, `> ${command}`)
+    try {
+      const out = await rconFor(profileId, command)
+      if (out) out.split(/\r?\n/).forEach(line => emitConsoleOutput(profileId, line))
+      return { success: true, output: out }
+    } catch {
+      await sendKeysToWindow(srv.serverName, command)
+      return { success: true, output: '' }
     }
-    emitConsoleOutput(profileId, `[PZ Manager] Sending command: ${command}`)
-    await new Promise<void>((resolve) => {
-      exec(
-        `powershell -Command "& {$wshell = New-Object -ComObject wscript.shell; $wshell.AppActivate('PZ Server - ${srv.serverName}'); Start-Sleep -Milliseconds 100; $wshell.SendKeys('${command.replace(/'/g, "''")}'); $wshell.SendKeys('{ENTER}')}"`,
-        { timeout: 5000 },
-        () => resolve()
-      )
-    })
-    return { success: true }
   })
+
+  ipcMain.handle('server:preflight', async (_event, profileId: string) => preflight(profileId))
+
+  ipcMain.handle('server:networkInfo', async () => ({
+    publicIp: await getPublicIp(),
+    lanIps: getLanIps(),
+  }))
+
+  // pick up servers that were left running when the app was closed
+  setTimeout(() => { reattachRunning().catch(() => undefined) }, 3000)
 }
 
 function emitConsoleOutput(profileId: string, line: string) {
@@ -450,8 +680,20 @@ function emitConsoleOutput(profileId: string, line: string) {
   }
 }
 
-function emitStatusChange(profileId: string, status: string) {
+function emitStatusChange(profileId: string, status: Status) {
   if (mainWindowRef && !mainWindowRef.isDestroyed()) {
     mainWindowRef.webContents.send('server:statusChange', profileId, status)
+  }
+}
+
+function emitPlayers(profileId: string, players: string[]) {
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+    mainWindowRef.webContents.send('server:players', profileId, players)
+  }
+}
+
+function emitProblem(profileId: string, hint: string, line: string) {
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+    mainWindowRef.webContents.send('server:problem', profileId, { hint, line, at: Date.now() })
   }
 }

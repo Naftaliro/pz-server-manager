@@ -6,6 +6,14 @@ interface ElectronAPI {
   }
   shell: {
     openExternal: (url: string) => void
+    openPath: (path: string) => Promise<string>
+  }
+  system: {
+    info: () => Promise<{ totalMemMb: number; platform: string }>
+  }
+  settings: {
+    get: () => Promise<import('../store/useAppStore').AppSettings>
+    set: (patch: Partial<import('../store/useAppStore').AppSettings>) => Promise<import('../store/useAppStore').AppSettings>
   }
   dialog: {
     openFolder: () => Promise<string | null>
@@ -51,6 +59,12 @@ interface ElectronAPI {
       buildVersion?: 'b41' | 'b42'
     ) => Promise<{ success: boolean; message: string }>
     checkInstalled: (installDir: string) => Promise<boolean>
+    downloadMods: (workshopIds: string[], onEvent: (e: ModDownloadEvent) => void) => Promise<{
+      success: boolean
+      done: string[]
+      failed: string[]
+      message?: string
+    }>
   }
   server: {
     start: (profileId: string) => Promise<{ success: boolean; message: string }>
@@ -58,7 +72,12 @@ interface ElectronAPI {
     restart: (profileId: string) => Promise<{ success: boolean; message: string }>
     getStatus: (profileId: string) => Promise<string>
     getAllStatuses: () => Promise<Record<string, string>>
-    sendCommand: (profileId: string, command: string) => Promise<{ success: boolean }>
+    sendCommand: (profileId: string, command: string) => Promise<{ success: boolean; output?: string; message?: string }>
+    getPlayers: (profileId: string) => Promise<string[]>
+    preflight: (profileId: string) => Promise<PreflightIssue[]>
+    networkInfo: () => Promise<{ publicIp: string | null; lanIps: string[] }>
+    onPlayers: (callback: (profileId: string, players: string[]) => void) => () => void
+    onProblem: (callback: (profileId: string, problem: ServerProblem) => void) => () => void
     onConsoleOutput: (profileId: string, callback: (line: string) => void) => () => void
     onStatusChange: (callback: (profileId: string, status: string) => void) => () => void
   }
@@ -76,21 +95,20 @@ interface ElectronAPI {
     writeSandbox: (serverName: string, dataPath: string, settings: unknown) => Promise<{ success: boolean; message?: string }>
   }
   mods: {
-    search: (query: string, page: number, buildVersion?: 'b41' | 'b42') => Promise<{
-      success: boolean
-      mods: WorkshopMod[]
-      total?: number
-      hasMore?: boolean
-      message?: string
-    }>
     getDetails: (workshopIds: string[]) => Promise<{
       success: boolean
       mods: WorkshopMod[]
       message?: string
     }>
+    getCollection: (workshopId: string) => Promise<{
+      success: boolean
+      isCollection: boolean
+      mods: WorkshopMod[]
+      message?: string
+    }>
     scanInstalled: (serverInstallPath: string, workshopIds: string[]) => Promise<{
       success: boolean
-      found: Record<string, string[]>
+      found: Record<string, ModInfo[]>
       message?: string
     }>
   }
@@ -107,9 +125,34 @@ interface ElectronAPI {
   }
 }
 
+interface ModDownloadEvent {
+  workshopId: string
+  state: 'queued' | 'downloading' | 'done' | 'failed'
+  bytes?: number
+  message?: string
+}
+
+interface ModInfo {
+  id: string
+  name: string
+  requires: string[]
+  maps: string[]
+}
+
+interface PreflightIssue {
+  level: 'error' | 'warning'
+  message: string
+  fix?: 'install-server' | 'download-mods' | 'open-mods' | 'open-settings'
+}
+
+interface ServerProblem {
+  hint: string
+  line: string
+  at: number
+}
+
 interface WorkshopMod {
   workshopId: string
-  modId: string
   name: string
   description: string
   thumbnailUrl: string
@@ -123,6 +166,11 @@ declare global {
   interface Window {
     electronAPI: ElectronAPI
   }
+  type WorkshopModDetails = WorkshopMod
+  type ModFileInfo = ModInfo
+  type ModDownloadProgress = ModDownloadEvent
+  type ServerPreflightIssue = PreflightIssue
+  type ServerProblemReport = ServerProblem
 }
 
 export {}

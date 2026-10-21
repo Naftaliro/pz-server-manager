@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Save, ArrowLeft, RotateCcw, Download, Upload, Search, X } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
+import { PRESETS } from '../lib/presets'
+import { dataPath as profileDataPath, getServerName } from '../lib/profile'
 
 type SandboxSettings = Record<string, unknown>
 
@@ -40,45 +42,6 @@ const DEFAULT_SANDBOX_SETTINGS: SandboxSettings = {
   AnimalPopulationPeakDay: 28, AnimalChanceSpawnOnFarm: 1, AgingModifierSpeed: 1.0,
   MilkIncreaseSpeed: 1.0, WoolIncreaseSpeed: 1.0,
   CraftMultiplier: 1.0, MaxCraftableItemsOnGround: 0,
-}
-
-const PRESETS = {
-  apocalypse: {
-    label: 'Apocalypse',
-    description: 'Lore-canon mode. Zombie respawn disabled, more firearms.',
-    settings: {
-      Zombies: 4, Distribution: 1, DayLength: 3, XpMultiplier: 1.0,
-      FoodLoot: 4, WeaponLoot: 3, OtherLoot: 3,
-      ZombieConfig: { Speed: 3, Strength: 2, Toughness: 2, RespawnHours: 0, PopulationMultiplier: 1.0 }
-    }
-  },
-  outbreak: {
-    label: 'Outbreak',
-    description: 'Faster progression, more forgiving. Good for limited time.',
-    settings: {
-      Zombies: 3, Distribution: 1, DayLength: 3, XpMultiplier: 2.0,
-      FoodLoot: 5, WeaponLoot: 4, OtherLoot: 4,
-      ZombieConfig: { Speed: 3, Strength: 2, Toughness: 2, RespawnHours: 72, PopulationMultiplier: 0.75 }
-    }
-  },
-  extinction: {
-    label: 'Extinction',
-    description: 'Veterans only. Sprinters, scarce supplies.',
-    settings: {
-      Zombies: 1, Distribution: 1, DayLength: 3, XpMultiplier: 1.0,
-      FoodLoot: 2, WeaponLoot: 2, OtherLoot: 2,
-      ZombieConfig: { Speed: 1, Strength: 1, Toughness: 1, RespawnHours: 72, PopulationMultiplier: 2.0 }
-    }
-  },
-  rising: {
-    label: 'Rising',
-    description: 'Cozy apocalypse. More building materials, less combat pressure.',
-    settings: {
-      Zombies: 5, Distribution: 1, DayLength: 3, XpMultiplier: 1.5,
-      FoodLoot: 5, WeaponLoot: 3, OtherLoot: 5,
-      ZombieConfig: { Speed: 3, Strength: 3, Toughness: 3, RespawnHours: 72, PopulationMultiplier: 0.5 }
-    }
-  },
 }
 
 export default function SandboxEditor() {
@@ -127,8 +90,8 @@ export default function SandboxEditor() {
     setSaving(true)
     try {
       const fullSettings = { ...settings, ZombieConfig: zombieConfig }
-      const serverName = profile.name.replace(/[^a-zA-Z0-9_-]/g, '_')
-      const dataPath = profile.worldSavePath || `%USERPROFILE%\\Zomboid`
+      const serverName = getServerName(profile)
+      const dataPath = profileDataPath(profile)
       await window.electronAPI.config.writeSandbox(serverName, dataPath, fullSettings)
       const updatedProfile = { ...profile, sandboxSettings: fullSettings, updatedAt: new Date().toISOString() }
       await window.electronAPI.profiles.save(updatedProfile)
@@ -237,7 +200,7 @@ export default function SandboxEditor() {
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-4 px-6 py-4 border-b border-pz-border bg-pz-darker flex-shrink-0">
-        <button onClick={() => setActiveView('editor')} className="btn-ghost p-1.5">
+        <button onClick={() => setActiveView('server')} className="btn-ghost p-1.5">
           <ArrowLeft size={16} />
         </button>
         <div className="flex-1">

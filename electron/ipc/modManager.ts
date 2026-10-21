@@ -1,19 +1,12 @@
 import { ipcMain } from 'electron'
 import https from 'https'
-import http from 'http'
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'
 
-const PZ_APP_ID = '108600'
+export const PZ_APP_ID = '108600'
 
-// B41 tag used in Steam Workshop items
-const B41_TAGS = ['build 41', 'b41', 'build41', 'multiplayer', 'mp']
-// B42 tag used in Steam Workshop items
-const B42_TAGS = ['build 42', 'b42', 'build42']
-
-interface WorkshopMod {
+export interface WorkshopDetails {
   workshopId: string
-  modId: string
   name: string
   description: string
   thumbnailUrl: string
@@ -23,37 +16,23 @@ interface WorkshopMod {
   fileSize: number
 }
 
-// Generic HTTPS GET returning raw string (follows redirects)
-function httpsGet(url: string, redirects = 0): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (redirects > 10) { reject(new Error('Too many redirects')); return }
-    const lib = url.startsWith('https') ? https : http
-    const req = (lib as typeof https).get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-      }
-    }, (res) => {
-      if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) && res.headers.location) {
-        httpsGet(res.headers.location, redirects + 1).then(resolve).catch(reject)
-        return
-      }
-      let data = ''
-      res.on('data', (chunk: Buffer) => { data += chunk })
-      res.on('end', () => resolve(data))
-      res.on('error', reject)
-    })
-    req.on('error', reject)
-    req.end()
-  })
+// What we find inside a downloaded workshop item (one per mod.info id)
+export interface ModInfo {
+  id: string
+  name: string
+  requires: string[]
+  maps: string[]
 }
 
-// HTTPS POST with form-encoded body
+// The old workshop search scraped steamcommunity.com HTML, which broke when Steam
+// moved the browse page to JS rendering and gets rate limited fast. Browsing now
+// happens in a real webview (see WorkshopBrowser.tsx), these keyless endpoints
+// are only used to get details about ids we already know.
+
 function httpsPost(url: string, body: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(url)
-    const options = {
+    const req = https.request({
       hostname: urlObj.hostname,
       path: urlObj.pathname + urlObj.search,
       method: 'POST',
@@ -62,219 +41,159 @@ function httpsPost(url: string, body: string): Promise<string> {
         'Content-Length': Buffer.byteLength(body),
         'User-Agent': 'Mozilla/5.0',
       },
-    }
-    const req = https.request(options, (res) => {
+    }, (res) => {
       let data = ''
       res.on('data', (chunk: Buffer) => { data += chunk })
-      res.on('end', () => resolve(data))
+      res.on('end', () => {
+        if (res.statusCode && res.statusCode >= 400) reject(new Error(`Steam returned ${res.statusCode}`))
+        else resolve(data)
+      })
       res.on('error', reject)
     })
     req.on('error', reject)
+    req.setTimeout(15000, () => req.destroy(new Error('Steam took too long to answer')))
     req.write(body)
     req.end()
   })
 }
 
-// Step 1: Scrape the Steam Workshop browse/search page to extract published file IDs
-// Optionally pass a requiredTag to filter by B41/B42 on the Steam side
-async function scrapeWorkshopIds(query: string, page: number, buildVersion?: 'b41' | 'b42'): Promise<{ ids: string[], hasMore: boolean }> {
-  const start = (page - 1) * 9
-
-  // Build URL — add a required_tags filter when a buildVersion is specified
-  let url = `https://steamcommunity.com/workshop/browse/?appid=${PZ_APP_ID}&searchtext=${encodeURIComponent(query)}&browsesort=textsearch&section=readytouseitems&actualsort=textsearch&p=${page}&start=${start}&count=9`
-
-  // Steam Workshop tag filtering: "Build 41" or "Build 42"
-  if (buildVersion === 'b41') {
-    url += '&requiredtags%5B%5D=Build+41'
-  } else if (buildVersion === 'b42') {
-    url += '&requiredtags%5B%5D=Build+42'
+export async function fetchModDetails(ids: string[]): Promise<WorkshopDetails[]> {
+  const out: WorkshopDetails[] = []
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100)
+    const params = [`itemcount=${batch.length}`, ...batch.map((id, n) => `publishedfileids[${n}]=${id}`)].join('&')
+    const raw = await httpsPost('https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/', params)
+    const details: Array<Record<string, unknown>> = JSON.parse(raw)?.response?.publishedfiledetails || []
+    for (const item of details) {
+      if (item.result !== 1) continue
+      out.push({
+        workshopId: String(item.publishedfileid),
+        name: String(item.title || 'Unknown Mod'),
+        description: cleanDescription(String(item.description || '')).substring(0, 300),
+        thumbnailUrl: String(item.preview_url || ''),
+        subscriptions: Number(item.subscriptions || 0),
+        tags: Array.isArray(item.tags) ? (item.tags as Array<{ tag: string }>).map(t => t.tag) : [],
+        timeUpdated: Number(item.time_updated || 0),
+        fileSize: Number(item.file_size || 0),
+      })
+    }
   }
-
-  const html = await httpsGet(url)
-  const idMatches = html.match(/filedetails\/\?id=(\d+)/g) || []
-  const ids = [...new Set(idMatches.map(m => m.replace('filedetails/?id=', '')))]
-  const hasMore = ids.length >= 9
-
-  return { ids, hasMore }
+  return out
 }
 
-// Step 2: Fetch full details for a list of workshop IDs via the POST endpoint (no API key needed)
-async function fetchModDetails(ids: string[]): Promise<WorkshopMod[]> {
-  if (ids.length === 0) return []
-
-  const params = [`itemcount=${ids.length}`, ...ids.map((id, i) => `publishedfileids[${i}]=${id}`)].join('&')
-  const rawData = await httpsPost(
-    'https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/',
-    params
+// Returns the child workshop ids if this is a collection, otherwise null
+async function fetchCollectionChildren(id: string): Promise<string[] | null> {
+  const raw = await httpsPost(
+    'https://api.steampowered.com/ISteamRemoteStorage/GetCollectionDetails/v1/',
+    `collectioncount=1&publishedfileids[0]=${id}`
   )
-
-  const data = JSON.parse(rawData)
-  const details: Array<Record<string, unknown>> = data?.response?.publishedfiledetails || []
-
-  return details
-    .filter(item => item.result === 1)
-    .map(item => ({
-      workshopId: String(item.publishedfileid),
-      modId: extractModId(String(item.description || ''), String(item.title || '')),
-      name: String(item.title || 'Unknown Mod'),
-      description: cleanDescription(String(item.description || '')).substring(0, 300),
-      thumbnailUrl: String(item.preview_url || ''),
-      subscriptions: Number(item.subscriptions || 0),
-      tags: Array.isArray(item.tags)
-        ? (item.tags as Array<{ tag: string }>).map(t => t.tag)
-        : [],
-      timeUpdated: Number(item.time_updated || 0),
-      fileSize: Number(item.file_size || 0),
-    }))
+  const entry = JSON.parse(raw)?.response?.collectiondetails?.[0]
+  if (!entry || entry.result !== 1 || !Array.isArray(entry.children)) return null
+  return (entry.children as Array<{ publishedfileid: string }>).map(c => String(c.publishedfileid))
 }
 
-// Post-filter mods by build version based on their tags
-// If a mod has no build tags at all, include it (it may be compatible with both)
-function filterByBuildVersion(mods: WorkshopMod[], buildVersion: 'b41' | 'b42'): WorkshopMod[] {
-  return mods.filter(mod => {
-    const lowerTags = mod.tags.map(t => t.toLowerCase())
-
-    const hasB41Tag = B41_TAGS.some(t => lowerTags.includes(t))
-    const hasB42Tag = B42_TAGS.some(t => lowerTags.includes(t))
-
-    // If mod has no build-specific tags, include it (untagged = likely compatible with both)
-    if (!hasB41Tag && !hasB42Tag) return true
-
-    if (buildVersion === 'b41') return hasB41Tag
-    if (buildVersion === 'b42') return hasB42Tag
-    return true
-  })
-}
-
-// Extract the PZ Mod ID from the workshop description (common pattern in PZ mods)
-function extractModId(description: string, title: string): string {
-  const patterns = [
-    /Mod\s+ID[:\s]+([A-Za-z0-9_]+)/i,
-    /ModID[:\s]+([A-Za-z0-9_]+)/i,
-    /mod_id[:\s]+([A-Za-z0-9_]+)/i,
-    /\[b\]Mod\s+ID[:\s]*\[\/b\]\s*([A-Za-z0-9_]+)/i,
-    /Mod\s+ID[:\s]*\*?\*?([A-Za-z0-9_]+)/i,
-  ]
-  for (const pattern of patterns) {
-    const match = description.match(pattern)
-    if (match?.[1]) return match[1]
-  }
-  return title.replace(/[^A-Za-z0-9_]/g, '').substring(0, 64) || 'UnknownMod'
-}
-
-// Strip Steam BBCode tags from description for display
 function cleanDescription(text: string): string {
   return text
-    .replace(/\[url=[^\]]*\]/gi, '')
-    .replace(/\[\/url\]/gi, '')
-    .replace(/\[b\]|\[\/b\]/gi, '')
-    .replace(/\[i\]|\[\/i\]/gi, '')
-    .replace(/\[h[1-6]\]|\[\/h[1-6]\]/gi, '')
-    .replace(/\[list\]|\[\/list\]/gi, '')
-    .replace(/\[\*\]/gi, '• ')
+    .replace(/\[img\][^[]*\[\/img\]/gi, '')
     .replace(/\[table\].*?\[\/table\]/gis, '')
-    .replace(/\[tr\]|\[\/tr\]|\[td\]|\[\/td\]/gi, '')
-    .replace(/\[img\][^\[]*\[\/img\]/gi, '')
+    .replace(/\[\*\]/gi, '• ')
     .replace(/\[\/?\w+[^\]]*\]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
 }
 
-// Read id= out of every mod.info in a downloaded workshop item.
-// B41 keeps it at mods/<Mod>/mod.info, B42 puts it in mods/<Mod>/42/mod.info (or 42.x, common etc)
-function scanWorkshopItem(itemDir: string): string[] {
-  const ids: string[] = []
-  const modsDir = join(itemDir, 'mods')
-  if (!existsSync(modsDir)) return ids
+// ── Reading downloaded workshop items ─────────────────────────────────────────
 
-  const readId = (infoPath: string) => {
-    if (!existsSync(infoPath)) return
-    const match = readFileSync(infoPath, 'utf-8').match(/^\s*id\s*=\s*(.+?)\s*$/im)
-    if (match && !ids.includes(match[1])) ids.push(match[1])
+export function workshopContentDir(serverInstallPath: string): string {
+  return join(serverInstallPath, 'steamapps', 'workshop', 'content', PZ_APP_ID)
+}
+
+function isDir(p: string): boolean {
+  try { return statSync(p).isDirectory() } catch { return false }
+}
+
+function listDirs(p: string): string[] {
+  try { return readdirSync(p).filter(n => isDir(join(p, n))) } catch { return [] }
+}
+
+function parseModInfo(text: string): { id?: string; name?: string; requires: string[] } {
+  const get = (key: string) => text.match(new RegExp(`^\\s*${key}\\s*=\\s*(.+?)\\s*$`, 'im'))?.[1]
+  const require = get('require')
+  return {
+    id: get('id')?.replace(/^\\+/, ''),
+    name: get('name'),
+    requires: require
+      ? require.split(/[,;]/).map(s => s.trim().replace(/^\\+/, '')).filter(Boolean)
+      : [],
   }
+}
 
-  for (const mod of readdirSync(modsDir)) {
+// B41 keeps mod.info at mods/<Mod>/mod.info, B42 at mods/<Mod>/42/mod.info (or 42.x),
+// with shared stuff in mods/<Mod>/common. Maps live under media/maps/<MapFolder> in any of those.
+export function scanWorkshopItem(itemDir: string): ModInfo[] {
+  const found = new Map<string, ModInfo>()
+  const modsDir = join(itemDir, 'mods')
+
+  for (const mod of listDirs(modsDir)) {
     const modDir = join(modsDir, mod)
-    try { if (!statSync(modDir).isDirectory()) continue } catch { continue }
-    readId(join(modDir, 'mod.info'))
-    for (const sub of readdirSync(modDir)) {
-      const subDir = join(modDir, sub)
-      try { if (statSync(subDir).isDirectory()) readId(join(subDir, 'mod.info')) } catch { /* skip */ }
+    const roots = [modDir, ...listDirs(modDir).map(sub => join(modDir, sub))]
+
+    let info: ModInfo | null = null
+    const maps = new Set<string>()
+    for (const root of roots) {
+      const infoPath = join(root, 'mod.info')
+      if (existsSync(infoPath)) {
+        const parsed = parseModInfo(readFileSync(infoPath, 'utf-8'))
+        if (parsed.id) {
+          // prefer the 42 folder's mod.info, it's the one B42 actually reads
+          if (!info || /[\\/]42[^\\/]*$/.test(root)) {
+            info = { id: parsed.id, name: parsed.name || parsed.id, requires: parsed.requires, maps: [] }
+          }
+        }
+      }
+      for (const m of listDirs(join(root, 'media', 'maps'))) maps.add(m)
+    }
+    if (info) {
+      info.maps = [...maps]
+      found.set(info.id, info)
     }
   }
-  return ids
+  return [...found.values()]
 }
 
 export function setupModHandlers() {
-  // Look through the server's downloaded workshop content for the real mod ids
-  // (only works once the server has started at least once and pulled the mods)
+  // Details for workshop ids. If one of them is a collection we hand back its children too.
+  ipcMain.handle('mods:getDetails', async (_event, workshopIds: string[]) => {
+    try {
+      if (!workshopIds?.length) return { success: true, mods: [] }
+      return { success: true, mods: await fetchModDetails(workshopIds) }
+    } catch (error: unknown) {
+      return { success: false, message: error instanceof Error ? error.message : String(error), mods: [] }
+    }
+  })
+
+  ipcMain.handle('mods:getCollection', async (_event, workshopId: string) => {
+    try {
+      const children = await fetchCollectionChildren(workshopId)
+      if (!children) return { success: true, isCollection: false, mods: [] }
+      return { success: true, isCollection: true, mods: await fetchModDetails(children) }
+    } catch (error: unknown) {
+      return { success: false, message: error instanceof Error ? error.message : String(error), isCollection: false, mods: [] }
+    }
+  })
+
+  // Read mod ids, requirements and maps out of whatever is already downloaded
   ipcMain.handle('mods:scanInstalled', async (_event, serverInstallPath: string, workshopIds: string[]) => {
     try {
-      const contentDir = join(serverInstallPath, 'steamapps', 'workshop', 'content', '108600')
-      const found: Record<string, string[]> = {}
-      if (!existsSync(contentDir)) {
-        return { success: true, found, message: 'No downloaded workshop mods yet. Start the server once so it downloads them.' }
-      }
+      const contentDir = workshopContentDir(serverInstallPath)
+      const found: Record<string, ModInfo[]> = {}
       for (const id of workshopIds) {
         const itemDir = join(contentDir, id)
         if (existsSync(itemDir)) found[id] = scanWorkshopItem(itemDir)
       }
       return { success: true, found }
     } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error)
-      return { success: false, message: msg, found: {} }
-    }
-  })
-
-  // Search Steam Workshop for PZ mods — now accepts optional buildVersion for filtering
-  ipcMain.handle('mods:search', async (_event, query: string, page: number = 1, buildVersion?: 'b41' | 'b42') => {
-    try {
-      if (!query || query.trim().length === 0) {
-        return { success: true, mods: [], total: 0 }
-      }
-
-      // Pass buildVersion to scraper for Steam-side tag filtering
-      const { ids, hasMore } = await scrapeWorkshopIds(query.trim(), page, buildVersion)
-
-      if (ids.length === 0) {
-        return { success: true, mods: [], total: 0, hasMore: false }
-      }
-
-      const rawMods = await fetchModDetails(ids)
-
-      // Also apply client-side post-filter for any mods that slipped through
-      const mods = buildVersion ? filterByBuildVersion(rawMods, buildVersion) : rawMods
-
-      return {
-        success: true,
-        mods,
-        total: mods.length,
-        hasMore,
-        buildVersion: buildVersion || null,
-      }
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error)
-      return { success: false, message: msg, mods: [], total: 0 }
-    }
-  })
-
-  // Get details for specific workshop IDs (used when loading saved mod lists)
-  ipcMain.handle('mods:getDetails', async (_event, workshopIds: string[]) => {
-    try {
-      if (!workshopIds || workshopIds.length === 0) {
-        return { success: true, mods: [] }
-      }
-      const batchSize = 100
-      const allMods: WorkshopMod[] = []
-      for (let i = 0; i < workshopIds.length; i += batchSize) {
-        const batch = workshopIds.slice(i, i + batchSize)
-        const mods = await fetchModDetails(batch)
-        allMods.push(...mods)
-      }
-      return { success: true, mods: allMods }
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error)
-      return { success: false, message: msg, mods: [] }
+      return { success: false, message: error instanceof Error ? error.message : String(error), found: {} }
     }
   })
 }

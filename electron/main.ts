@@ -7,6 +7,7 @@ import { setupFileHandlers } from './ipc/fileManager'
 import { setupModHandlers } from './ipc/modManager'
 import { setupWorldHandlers } from './ipc/worldManager'
 import { setupUpdaterHandlers } from './ipc/updater'
+import { setupAppSettingsHandlers } from './ipc/appSettings'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -26,6 +27,8 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // the mod browser shows the real Steam Workshop in a <webview>
+      webviewTag: true,
     },
     icon: join(__dirname, '../public/icon.ico'),
   })
@@ -42,10 +45,47 @@ function createWindow() {
   })
 }
 
+// Only steamcommunity.com is allowed inside the workshop webview, and it never gets node or a preload
+const WORKSHOP_HOSTS = ['steamcommunity.com', 'store.steampowered.com']
+const isWorkshopUrl = (url: string) => {
+  try { return WORKSHOP_HOSTS.includes(new URL(url).hostname) } catch { return false }
+}
+
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (e, webPreferences, params) => {
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    if (!isWorkshopUrl(params.src)) e.preventDefault()
+  })
+
+  if (contents.getType() === 'webview') {
+    // links to anything that isn't steam open in the real browser instead
+    contents.setWindowOpenHandler(({ url }) => {
+      if (isWorkshopUrl(url)) contents.loadURL(url)
+      else if (/^https?:\/\//.test(url)) shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    contents.on('will-navigate', (e, url) => {
+      // steam wraps outside links in /linkfilter/?u=..., unwrap those and send them to the browser
+      if (url.includes('/linkfilter/')) {
+        e.preventDefault()
+        const target = new URL(url).searchParams.get('u') || new URL(url).searchParams.get('url')
+        if (target && /^https?:\/\//.test(target)) shell.openExternal(target)
+        return
+      }
+      if (isWorkshopUrl(url)) return
+      e.preventDefault()
+      if (/^https?:\/\//.test(url)) shell.openExternal(url)
+    })
+  }
+})
+
 app.whenReady().then(() => {
   createWindow()
 
   // Register all IPC handlers
+  setupAppSettingsHandlers()
   setupSteamCmdHandlers()
   setupServerHandlers(mainWindow)
   setupProfileHandlers()
@@ -67,7 +107,17 @@ app.whenReady().then(() => {
 
   // Open external links in browser
   ipcMain.on('shell:openExternal', (_event, url: string) => {
-    shell.openExternal(url)
+    if (/^https?:\/\//.test(url)) shell.openExternal(url)
+  })
+
+  ipcMain.handle('system:info', async () => {
+    const os = await import('os')
+    return { totalMemMb: Math.floor(os.totalmem() / 1024 / 1024), platform: process.platform }
+  })
+
+  // Open a folder in Explorer (env vars like %USERPROFILE% allowed)
+  ipcMain.handle('shell:openPath', async (_event, p: string) => {
+    return shell.openPath(p.replace(/%([^%]+)%/g, (_, name) => process.env[name] || `%${name}%`))
   })
 
   // Open folder dialog

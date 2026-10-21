@@ -2,6 +2,8 @@ import { ipcMain, app } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { v4 as uuidv4 } from 'uuid'
+import { randomBytes } from 'crypto'
+import { loadSettings } from './appSettings'
 
 export interface ModEntry {
   workshopId: string
@@ -9,6 +11,11 @@ export interface ModEntry {
   name: string
   description?: string
   thumbnailUrl?: string
+  // filled in from the downloaded files (mod.info). modId holds the enabled ones, ;-separated
+  infos?: Array<{ id: string; name: string; requires: string[]; maps: string[] }>
+  requires?: string[]
+  maps?: string[]
+  fileSize?: number
 }
 
 export type BuildVersion = 'b41' | 'b42'
@@ -16,6 +23,8 @@ export type BuildVersion = 'b41' | 'b42'
 export interface ServerProfile {
   id: string
   name: string
+  // folder/config name PZ uses, fixed at creation so renaming doesn't orphan the world
+  serverName?: string
   description: string
   buildVersion: BuildVersion
   serverInstallPath: string
@@ -297,6 +306,39 @@ export function getProfile(id: string): ServerProfile | undefined {
   return profiles.find(p => p.id === id)
 }
 
+export function listProfiles(): ServerProfile[] {
+  return loadProfiles()
+}
+
+export function patchProfile(id: string, patch: Partial<ServerProfile>): ServerProfile | undefined {
+  const profiles = loadProfiles()
+  const idx = profiles.findIndex(p => p.id === id)
+  if (idx === -1) return undefined
+  profiles[idx] = { ...profiles[idx], ...patch }
+  saveProfiles(profiles)
+  return profiles[idx]
+}
+
+export function sanitizeServerName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '_')
+}
+
+export function getServerName(profile: Pick<ServerProfile, 'name' | 'serverName'>): string {
+  return profile.serverName || sanitizeServerName(profile.name)
+}
+
+// pick a server name nobody else is using yet
+function uniqueServerName(name: string, profiles: ServerProfile[]): string {
+  const base = sanitizeServerName(name) || 'server'
+  const taken = new Set(profiles.map(p => getServerName(p).toLowerCase()))
+  let candidate = base
+  for (let n = 2; taken.has(candidate.toLowerCase()); n++) candidate = `${base}_${n}`
+  return candidate
+}
+
+const randomId = () => Math.floor(Math.random() * 999999999)
+const randomPassword = () => randomBytes(12).toString('hex')
+
 export function setupProfileHandlers() {
   ipcMain.handle('profiles:list', async () => {
     return loadProfiles()
@@ -324,11 +366,20 @@ export function setupProfileHandlers() {
 
     if (!profile.id) {
       // New profile
+      const settings = loadSettings()
       const newProfile: ServerProfile = {
         ...profile,
         id: uuidv4(),
-        buildVersion: profile.buildVersion || 'b42',
-        iniSettings: mergedIni,
+        serverName: profile.serverName || uniqueServerName(profile.name, profiles),
+        buildVersion: profile.buildVersion || settings.buildVersion || 'b42',
+        serverInstallPath: profile.serverInstallPath || settings.serverInstallPath,
+        iniSettings: {
+          ...mergedIni,
+          ResetID: randomId(),
+          ServerPlayerID: randomId(),
+          // the app talks to the server over RCON, so every server gets its own password
+          RCONPassword: (mergedIni.RCONPassword as string) || randomPassword(),
+        },
         sandboxSettings: mergedSandbox,
         createdAt: now,
         updatedAt: now,
@@ -339,8 +390,11 @@ export function setupProfileHandlers() {
     } else {
       // Update existing
       const idx = profiles.findIndex(p => p.id === profile.id)
+      const previous = idx === -1 ? undefined : profiles[idx]
       const updatedProfile: ServerProfile = {
         ...profile,
+        // older profiles never stored this, lock it to the name the world was created under
+        serverName: profile.serverName || previous?.serverName || sanitizeServerName(previous?.name || profile.name),
         iniSettings: mergedIni,
         sandboxSettings: mergedSandbox,
         updatedAt: now,
@@ -372,6 +426,7 @@ export function setupProfileHandlers() {
       ...JSON.parse(JSON.stringify(original)),
       id: uuidv4(),
       name: `${original.name} (Copy)`,
+      serverName: uniqueServerName(`${getServerName(original)}_copy`, profiles),
       port: original.port + 2,
       udpPort: (original.udpPort || original.port + 1) + 2,
       createdAt: now,
@@ -380,8 +435,10 @@ export function setupProfileHandlers() {
       iniSettings: {
         ...original.iniSettings,
         DefaultPort: original.port + 2,
-        ResetID: Math.floor(Math.random() * 999999999),
-        ServerPlayerID: Math.floor(Math.random() * 999999999),
+        RCONPort: Number(original.iniSettings?.RCONPort || 27015) + 1,
+        RCONPassword: randomPassword(),
+        ResetID: randomId(),
+        ServerPlayerID: randomId(),
       },
     }
 

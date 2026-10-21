@@ -1,0 +1,132 @@
+import { useEffect, useState } from 'react'
+import { FolderOpen, HardDrive, Wrench, RefreshCw, Info, ExternalLink, CheckCircle, AlertCircle } from 'lucide-react'
+import { useAppStore } from '../store/useAppStore'
+import type { BuildVersion } from '../store/useAppStore'
+import InstallRunner from '../components/InstallRunner'
+import { triggerManualUpdateCheck } from '../components/UpdateBanner'
+
+export default function AppSettings() {
+  const { settings, setSettings, profiles } = useAppStore()
+  const [installed, setInstalled] = useState<boolean | null>(null)
+  const [version, setVersion] = useState('')
+  const [mode, setMode] = useState<'install' | 'update'>('update')
+
+  const serverDir = settings?.serverInstallPath || 'C:\\PZServer'
+  const advanced = !!settings?.advancedMode
+
+  const refreshInstalled = () => window.electronAPI.steamcmd.checkInstalled(serverDir).then(ok => {
+    setInstalled(ok)
+    setMode(ok ? 'update' : 'install')
+  })
+
+  useEffect(() => { refreshInstalled() }, [serverDir])
+  useEffect(() => { window.electronAPI.updater.getVersion().then(v => setVersion(v.version)).catch(() => undefined) }, [])
+
+  const update = async (patch: Partial<NonNullable<typeof settings>>) => setSettings(await window.electronAPI.settings.set(patch))
+
+  const pickServerDir = async () => {
+    const folder = await window.electronAPI.dialog.openFolder()
+    if (!folder) return
+    const found = await window.electronAPI.fs.findServerBat(folder)
+    const dir = found.success && found.path ? found.path : folder
+    await update({ serverInstallPath: dir })
+    // keep existing servers pointed at the same install
+    for (const p of profiles) {
+      if (p.serverInstallPath !== dir) await window.electronAPI.profiles.save({ ...p, serverInstallPath: dir })
+    }
+    useAppStore.getState().setProfiles(await window.electronAPI.profiles.list())
+  }
+
+  return (
+    <div className="h-full overflow-y-auto p-6">
+      <div className="max-w-2xl mx-auto space-y-4">
+        <h1 className="text-xl font-semibold text-pz-text">App settings</h1>
+
+        <div className="card p-5 space-y-4">
+          <h3 className="section-title flex items-center gap-2"><HardDrive size={14} /> Game server files</h3>
+          <div>
+            <label className="label">Installed at</label>
+            <div className="flex gap-2">
+              <input value={serverDir} readOnly className="input" />
+              <button onClick={pickServerDir} className="btn-outline flex-shrink-0" title="Change"><FolderOpen size={14} /></button>
+            </div>
+            <p className={`text-xs mt-1 flex items-center gap-1 ${installed ? 'text-pz-green' : 'text-pz-yellow'}`}>
+              {installed === null ? '' : installed
+                ? <><CheckCircle size={12} /> Server is installed</>
+                : <><AlertCircle size={12} /> No server here yet</>}
+            </p>
+          </div>
+          <p className="text-xs text-pz-subtext">
+            When the game gets an update on Steam, update the server too, otherwise nobody can join. Stop your servers first.
+          </p>
+          <InstallRunner
+            key={`${serverDir}-${settings?.buildVersion}-${mode}`}
+            steamcmdDir={settings?.steamcmdDir || 'C:\\PZServerManager\\steamcmd'}
+            serverDir={serverDir}
+            buildVersion={settings?.buildVersion || 'b42'}
+            mode={mode}
+            onDone={refreshInstalled}
+          />
+        </div>
+
+        <div className="card p-5 space-y-3">
+          <h3 className="section-title flex items-center gap-2"><Wrench size={14} /> Advanced mode</h3>
+          <button onClick={() => update({ advancedMode: !advanced })} className="w-full flex items-center gap-3 text-left">
+            <div className={`w-10 h-5 rounded-full relative transition-colors flex-shrink-0 ${advanced ? 'bg-pz-green' : 'bg-pz-border'}`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-pz-text transition-transform ${advanced ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </div>
+            <div>
+              <div className="text-sm text-pz-text">Show advanced options</div>
+              <div className="text-xs text-pz-muted">Mod IDs, ports, raw config files, launch modes and Build 41. Most people never need these.</div>
+            </div>
+          </button>
+
+          {advanced && (
+            <div className="pt-2 space-y-3 border-t border-pz-border">
+              <div>
+                <label className="label">Server build</label>
+                <div className="flex gap-2">
+                  {(['b42', 'b41'] as BuildVersion[]).map(v => (
+                    <button key={v} onClick={() => update({ buildVersion: v })} className={`flex-1 py-2 rounded-md border text-sm font-semibold transition-colors ${
+                      settings?.buildVersion === v ? 'bg-pz-green/20 border-pz-green text-pz-green' : 'border-pz-border text-pz-muted hover:border-pz-text'
+                    }`}>
+                      {v === 'b42' ? 'Build 42 (stable)' : 'Build 41 (legacy41 branch)'}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-pz-muted mt-1">
+                  Changes which branch Install/Update downloads and the default for new servers. Switching an existing install needs an update run.
+                </p>
+              </div>
+              <div>
+                <label className="label">SteamCMD folder</label>
+                <div className="flex gap-2">
+                  <input value={settings?.steamcmdDir || ''} onChange={e => update({ steamcmdDir: e.target.value })} className="input" />
+                  <button
+                    onClick={async () => { const f = await window.electronAPI.dialog.openFolder(); if (f) update({ steamcmdDir: f }) }}
+                    className="btn-outline flex-shrink-0"
+                  >
+                    <FolderOpen size={14} />
+                  </button>
+                </div>
+              </div>
+              <button onClick={() => window.electronAPI.shell.openPath('%APPDATA%\\pz-server-manager')} className="btn-outline text-xs">
+                <FolderOpen size={12} /> Open app data folder
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="card p-5 space-y-3">
+          <h3 className="section-title flex items-center gap-2"><Info size={14} /> About</h3>
+          <p className="text-sm text-pz-subtext">PZ Server Manager {version && `v${version}`}</p>
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={() => triggerManualUpdateCheck?.()} className="btn-outline text-xs"><RefreshCw size={12} /> Check for app updates</button>
+            <button onClick={() => window.electronAPI.shell.openExternal('https://pzwiki.net/wiki/Dedicated_server')} className="btn-outline text-xs"><ExternalLink size={12} /> PZ server wiki</button>
+            <button onClick={() => window.electronAPI.shell.openExternal('https://github.com/Naftaliro/pz-server-manager/issues')} className="btn-outline text-xs"><ExternalLink size={12} /> Report a problem</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

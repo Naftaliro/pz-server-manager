@@ -1,0 +1,49 @@
+import { useAppStore } from '../store/useAppStore'
+import type { ServerProfile } from '../store/useAppStore'
+
+export function sanitizeServerName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '_')
+}
+
+// The name PZ uses for the .ini / world folder. Locked at creation so renames are safe.
+export function getServerName(profile: Pick<ServerProfile, 'name' | 'serverName'>): string {
+  return profile.serverName || sanitizeServerName(profile.name)
+}
+
+export function dataPath(profile: Pick<ServerProfile, 'worldSavePath'>): string {
+  return profile.worldSavePath?.replace(/\\$/, '') || '%USERPROFILE%\\Zomboid'
+}
+
+export function formatBytes(bytes?: number): string {
+  if (!bytes) return ''
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`
+}
+
+// B42 wants Mods=\ModA;\ModB, B41 wants Mods=ModA;ModB (same as the backend's)
+export function formatModIds(modIds: string[], buildVersion?: string): string {
+  return modIds
+    .flatMap(id => (id || '').split(';'))
+    .map(id => id.trim().replace(/^\\+/, ''))
+    .filter(Boolean)
+    .map(id => (buildVersion === 'b41' ? id : `\\${id}`))
+    .join(';')
+}
+
+// Save a profile and refresh the store, returns the saved copy
+export async function saveProfile(profile: Partial<ServerProfile> & { id?: string }): Promise<ServerProfile> {
+  const saved = await window.electronAPI.profiles.save(profile)
+  const profiles = await window.electronAPI.profiles.list()
+  useAppStore.getState().setProfiles(profiles)
+  return saved
+}
+
+// Patch the latest stored copy of a profile (avoids stomping on changes made elsewhere)
+export async function patchProfile(id: string, patch: (p: ServerProfile) => Partial<ServerProfile>): Promise<ServerProfile | undefined> {
+  const current = useAppStore.getState().profiles.find(p => p.id === id)
+  if (!current) return undefined
+  return saveProfile({ ...current, ...patch(current), updatedAt: new Date().toISOString() })
+}
+
+export const RECOMMENDED_MEMORY_MB = 8192
