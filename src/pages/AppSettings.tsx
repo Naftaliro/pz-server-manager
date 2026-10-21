@@ -5,6 +5,7 @@ import type { BuildVersion } from '../store/useAppStore'
 import InstallRunner from '../components/InstallRunner'
 import PlayitSetup from '../components/PlayitSetup'
 import { triggerManualUpdateCheck } from '../components/UpdateBanner'
+import CopyDiagnosticsButton from '../components/CopyDiagnosticsButton'
 
 export default function AppSettings() {
   const { settings, setSettings, profiles } = useAppStore()
@@ -165,10 +166,12 @@ export default function AppSettings() {
         <div className="card p-5 space-y-3">
           <h3 className="section-title flex items-center gap-2"><Info size={14} /> About</h3>
           <p className="text-sm text-pz-subtext">PZ Server Manager {version && `v${version}`}</p>
+          <p className="text-xs text-pz-muted">Something not working? Copy the diagnostics and paste them into your report. Passwords, IPs and Steam IDs are left out.</p>
           <div className="flex gap-2 flex-wrap">
             <button onClick={() => triggerManualUpdateCheck?.()} className="btn-outline text-xs"><RefreshCw size={12} /> Check for app updates</button>
             <button onClick={() => window.electronAPI.shell.openExternal('https://pzwiki.net/wiki/Dedicated_server')} className="btn-outline text-xs"><ExternalLink size={12} /> PZ server wiki</button>
-            <button onClick={() => window.electronAPI.shell.openExternal('https://github.com/Naftaliro/pz-server-manager/issues')} className="btn-outline text-xs"><ExternalLink size={12} /> Report a problem</button>
+            <CopyDiagnosticsButton />
+            <button onClick={() => window.electronAPI.shell.openExternal('https://github.com/Naftaliro/pz-server-manager/issues/new')} className="btn-outline text-xs"><ExternalLink size={12} /> Report a problem</button>
           </div>
         </div>
       </div>

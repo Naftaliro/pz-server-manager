@@ -23,6 +23,10 @@ interface ElectronAPI {
   system: {
     info: () => Promise<{ totalMemMb: number; platform: string }>
   }
+  diagnostics: {
+    copy: () => Promise<string>
+    reportError: (where: string, message: string) => void
+  }
   settings: {
     get: () => Promise<import('../store/useAppStore').AppSettings>
     set: (patch: Partial<import('../store/useAppStore').AppSettings>) => Promise<import('../store/useAppStore').AppSettings>

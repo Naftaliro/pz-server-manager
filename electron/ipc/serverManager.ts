@@ -36,6 +36,8 @@ interface ServerProcess {
 }
 
 const runningServers = new Map<string, ServerProcess>()
+// last few problems per server, kept for the diagnostics report
+const recentProblems = new Map<string, Array<{ hint: string; line: string; at: number }>>()
 let mainWindowRef: BrowserWindow | null = null
 
 // ---------------------------------------------------------------------------
@@ -503,6 +505,19 @@ async function restoreBackup(profileId: string, name: string): Promise<{ success
   await cp(join(src, 'world'), worldDir(profile), { recursive: true })
   if (existsSync(join(src, 'players.db'))) await cp(join(src, 'players.db'), dbFile(profile))
   return { success: true, message: 'Backup restored. Start the server to play it.' }
+}
+
+// What the diagnostics report needs to know about one server
+export function serverDiagnostics(profileId: string) {
+  const srv = runningServers.get(profileId)
+  const profile = getProfile(profileId)
+  return {
+    status: srv?.status || 'stopped',
+    pid: srv?.pid ?? null,
+    players: srv?.players.length ?? 0,
+    logPath: profile ? join(resolveDataPath(profile.worldSavePath), 'server-console.txt') : null,
+    problems: recentProblems.get(profileId) || [],
+  }
 }
 
 // On app launch, pick back up any servers that were left running
@@ -988,6 +1003,9 @@ function emitModUpdates(profileId: string, names: string[]) {
 }
 
 function emitProblem(profileId: string, hint: string, line: string) {
+  const list = recentProblems.get(profileId) || []
+  list.push({ hint, line, at: Date.now() })
+  recentProblems.set(profileId, list.slice(-10))
   if (mainWindowRef && !mainWindowRef.isDestroyed()) {
     mainWindowRef.webContents.send('server:problem', profileId, { hint, line, at: Date.now() })
   }

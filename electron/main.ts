@@ -10,6 +10,7 @@ import { setupUpdaterHandlers } from './ipc/updater'
 import { setupAppSettingsHandlers } from './ipc/appSettings'
 import { setupPlayitHandlers } from './ipc/playit'
 import { setupNetworkHandlers } from './ipc/network'
+import { setupDiagnosticsHandlers } from './ipc/diagnostics'
 
 // vite-plugin-electron passes the dev server address when running `npm run dev`
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
@@ -88,6 +89,7 @@ app.whenReady().then(() => {
   createWindow()
 
   // Register all IPC handlers
+  setupDiagnosticsHandlers()
   setupAppSettingsHandlers()
   setupPlayitHandlers()
   setupNetworkHandlers()

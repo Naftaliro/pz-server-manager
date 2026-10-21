@@ -1,6 +1,7 @@
 import { Component } from 'react'
 import type { ReactNode } from 'react'
-import { AlertTriangle, RotateCcw, Copy } from 'lucide-react'
+import { AlertTriangle, RotateCcw } from 'lucide-react'
+import CopyDiagnosticsButton from './CopyDiagnosticsButton'
 
 // If a screen crashes, show what happened instead of a blank window.
 // Servers keep running either way, they live outside the app.
@@ -9,6 +10,10 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, { 
 
   static getDerivedStateFromError(error: Error) {
     return { error }
+  }
+
+  componentDidCatch(error: Error) {
+    window.electronAPI.diagnostics.reportError('screen', `${error.message}\n${error.stack || ''}`)
   }
 
   render() {
@@ -21,11 +26,11 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, { 
             <AlertTriangle size={22} className="text-pz-red" />
             <h2 className="text-lg font-semibold text-pz-text">Something broke on this screen</h2>
           </div>
-          <p className="text-sm text-pz-subtext">Your servers are fine, they keep running. Reloading usually fixes it.</p>
+          <p className="text-sm text-pz-subtext">Your servers are fine, they keep running. Reloading usually fixes it. If it keeps happening, copy the diagnostics and paste them in a bug report.</p>
           <pre className="text-xs text-pz-muted bg-pz-darker rounded-md p-3 overflow-auto max-h-40 select-text">{error.message}</pre>
           <div className="flex gap-2">
             <button onClick={() => location.reload()} className="btn-primary"><RotateCcw size={14} /> Reload</button>
-            <button onClick={() => navigator.clipboard.writeText(`${error.message}\n${error.stack || ''}`)} className="btn-outline"><Copy size={14} /> Copy error</button>
+            <CopyDiagnosticsButton className="btn-outline" />
           </div>
         </div>
       </div>

@@ -18,6 +18,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     info: () => ipcRenderer.invoke('system:info'),
   },
 
+  diagnostics: {
+    copy: () => ipcRenderer.invoke('diagnostics:copy'),
+    reportError: (where: string, message: string) => ipcRenderer.send('diagnostics:reportError', where, message),
+  },
+
   // "Works with playit.gg"
   playit: {
     state: () => ipcRenderer.invoke('playit:state'),
