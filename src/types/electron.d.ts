@@ -139,6 +139,13 @@ interface ElectronAPI {
       found: Record<string, ModInfo[]>
       message?: string
     }>
+    // copy fix mods that ship with the app into <Zomboid>\mods
+    installLocal: (modIds: string[], worldSavePath?: string) => Promise<{
+      success: boolean
+      installed: string[]
+      missing: string[]
+      message?: string
+    }>
   }
   world: {
     wipe: (serverName: string, dataPath: string) => Promise<{ success: boolean; message: string }>

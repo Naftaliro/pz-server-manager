@@ -112,11 +112,11 @@ function isDir(p: string): boolean {
   try { return statSync(p).isDirectory() } catch { return false }
 }
 
-function listDirs(p: string): string[] {
+export function listDirs(p: string): string[] {
   try { return readdirSync(p).filter(n => isDir(join(p, n))) } catch { return [] }
 }
 
-function parseModInfo(text: string): { id?: string; name?: string; requires: string[] } {
+export function parseModInfo(text: string): { id?: string; name?: string; requires: string[] } {
   const get = (key: string) => text.match(new RegExp(`^\\s*${key}\\s*=\\s*(.+?)\\s*$`, 'im'))?.[1]
   const require = get('require')
   return {

@@ -8,7 +8,7 @@ import type { ModEntry, ServerProfile } from '../store/useAppStore'
 import WorkshopBrowser from './WorkshopBrowser'
 import {
   addModsToProfile, downloadAndScan, scanMods, enabledIds, withEnabled, needsChoice, hasRealModId,
-  missingRequirements, disabledRequirements,
+  missingRequirements, disabledRequirements, isLocalMod, modKey,
 } from '../lib/mods'
 import { patchProfile, formatBytes, formatModIds } from '../lib/profile'
 
@@ -26,7 +26,7 @@ export default function ModsPanel({ profile }: { profile: ServerProfile }) {
 
   const missing = useMemo(() => missingRequirements(profile), [profile])
   const switchedOff = useMemo(() => disabledRequirements(profile), [profile])
-  const notDownloaded = profile.mods.filter(m => !m.infos && modDownloads[m.workshopId]?.state !== 'done')
+  const notDownloaded = profile.mods.filter(m => !isLocalMod(m) && !m.infos && modDownloads[m.workshopId]?.state !== 'done')
   const busy = profile.mods.some(m => ['queued', 'downloading'].includes(modDownloads[m.workshopId]?.state || ''))
 
   const setMods = (fn: (mods: ModEntry[]) => ModEntry[]) => patchProfile(profile.id, p => ({ mods: fn(p.mods) }))
@@ -39,16 +39,17 @@ export default function ModsPanel({ profile }: { profile: ServerProfile }) {
     return next
   })
 
-  const remove = (workshopId: string) => setMods(mods => mods.filter(m => m.workshopId !== workshopId))
+  const remove = (key: string) => setMods(mods => mods.filter(m => modKey(m) !== key))
 
-  const toggleId = (workshopId: string, id: string) => setMods(mods => mods.map(m => {
-    if (m.workshopId !== workshopId) return m
+  const toggleId = (key: string, id: string) => setMods(mods => mods.map(m => {
+    if (modKey(m) !== key) return m
     const on = enabledIds(m).filter(x => m.infos?.some(i => i.id === x))
     return withEnabled(m, on.includes(id) ? on.filter(x => x !== id) : [...on, id])
   }))
 
-  const setManualId = (workshopId: string, value: string) => setMods(mods => mods.map(m =>
-    m.workshopId === workshopId ? { ...m, modId: value.trim() || m.workshopId } : m
+  // a local mod with its id cleared would have nothing left to go by, so keep the old one
+  const setManualId = (key: string, value: string) => setMods(mods => mods.map(m =>
+    modKey(m) === key ? { ...m, modId: value.trim() || (isLocalMod(m) ? m.modId : m.workshopId) } : m
   ))
 
   const findOnWorkshop = (query: string) => {
@@ -84,7 +85,7 @@ export default function ModsPanel({ profile }: { profile: ServerProfile }) {
       {/* Browser stays mounted so it keeps its page when you flip tabs */}
       <div className={sub === 'browse' ? 'flex-1 min-h-0' : 'hidden'}>
         <WorkshopBrowser
-          addedIds={profile.mods.map(m => m.workshopId)}
+          addedIds={profile.mods.map(m => m.workshopId).filter(Boolean)}
           buildVersion={profile.buildVersion}
           onAdd={async (items) => { await addModsToProfile(profile.id, items) }}
           searchRequest={searchRequest}
@@ -133,17 +134,17 @@ export default function ModsPanel({ profile }: { profile: ServerProfile }) {
 
               {profile.mods.map((mod, idx) => (
                 <ModRow
-                  key={mod.workshopId}
+                  key={modKey(mod)}
                   mod={mod}
                   index={idx}
                   total={profile.mods.length}
                   advanced={advanced}
-                  download={modDownloads[mod.workshopId]}
+                  download={isLocalMod(mod) ? undefined : modDownloads[mod.workshopId]}
                   onMove={dir => move(idx, dir)}
-                  onRemove={() => remove(mod.workshopId)}
-                  onToggleId={id => toggleId(mod.workshopId, id)}
+                  onRemove={() => remove(modKey(mod))}
+                  onToggleId={id => toggleId(modKey(mod), id)}
                   onRetry={() => downloadAndScan(profile.id, [mod.workshopId])}
-                  onSetId={v => setManualId(mod.workshopId, v)}
+                  onSetId={v => setManualId(modKey(mod), v)}
                 />
               ))}
             </>
@@ -198,6 +199,7 @@ function ModRow({ mod, index, total, advanced, download, onMove, onRemove, onTog
         <button onClick={onRetry} className="underline ml-1">retry</button>
       </Chip>
     )
+    if (isLocalMod(mod)) return <Chip tone="blue">Local mod (Zomboid\mods)</Chip>
     if (needsChoice(mod)) return <Chip tone="yellow"><AlertTriangle size={11} /> Pick which mods to turn on</Chip>
     if (!mod.infos) {
       return hasRealModId(mod)
@@ -234,12 +236,14 @@ function ModRow({ mod, index, total, advanced, download, onMove, onRemove, onTog
               <Pencil size={12} />
             </button>
           )}
-          <button
-            onClick={() => window.electronAPI.shell.openExternal(`https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshopId}`)}
-            className="btn-ghost p-1.5" title="Open on Steam"
-          >
-            <ExternalLink size={12} />
-          </button>
+          {!isLocalMod(mod) && (
+            <button
+              onClick={() => window.electronAPI.shell.openExternal(`https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshopId}`)}
+              className="btn-ghost p-1.5" title="Open on Steam"
+            >
+              <ExternalLink size={12} />
+            </button>
+          )}
           <button onClick={onRemove} className="btn-ghost p-1.5 text-pz-red hover:text-pz-red" title="Remove"><Trash2 size={12} /></button>
         </div>
       </div>
@@ -322,7 +326,7 @@ function ImportExport({ profile }: { profile: ServerProfile }) {
   const [working, setWorking] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  const exportText = `WorkshopItems=${profile.mods.map(m => m.workshopId).join(';')}\nMods=${formatModIds(profile.mods.map(m => m.modId), profile.buildVersion)}`
+  const exportText = `WorkshopItems=${profile.mods.map(m => m.workshopId).filter(Boolean).join(';')}\nMods=${formatModIds(profile.mods.map(m => m.modId), profile.buildVersion)}`
 
   const runImport = async (input: string) => {
     const { workshopIds, modIds } = parseModLines(input)

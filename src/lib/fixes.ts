@@ -18,7 +18,7 @@ export async function applyFix(issue: ServerPreflightIssue, profile: ServerProfi
       return
     case 'download-mods':
       openServer(profile.id, 'mods')
-      void downloadAndScan(profile.id, profile.mods.map(m => m.workshopId))
+      void downloadAndScan(profile.id, profile.mods.map(m => m.workshopId).filter(Boolean))
       return
     case 'firewall': {
       const r = await window.electronAPI.network.addFirewallRule(profile.serverInstallPath)

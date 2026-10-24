@@ -49,7 +49,10 @@ export default function AppSettings() {
     await update({ serverInstallPath: dir })
     // keep existing servers pointed at the same install
     for (const p of profiles) {
-      if (p.serverInstallPath !== dir) await window.electronAPI.profiles.save({ ...p, serverInstallPath: dir })
+      if (p.serverInstallPath === dir) continue
+      // latest copy from disk, so this doesn't undo changes made since the list was loaded
+      const latest = (await window.electronAPI.profiles.get(p.id)) || p
+      await window.electronAPI.profiles.save({ ...latest, serverInstallPath: dir })
     }
     useAppStore.getState().setProfiles(await window.electronAPI.profiles.list())
   }

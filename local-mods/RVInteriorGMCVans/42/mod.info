@@ -1,0 +1,5 @@
+name=RV Interior - '83 GMC Vans
+id=RVInteriorGMCVans
+description=Adds the '83 GMC G-Series vans (G1500 LWB and A-Team Vandura) to [B42]PROJECT RV Interior's van interior.
+require=\PROJECTRVInterior42,\83gmcGseriesVans
+versionMin=42.0.0

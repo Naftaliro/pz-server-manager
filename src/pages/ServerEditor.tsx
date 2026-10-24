@@ -99,10 +99,12 @@ export default function ServerEditor() {
         MaxPlayers: form.maxPlayers,
         Password: form.serverPassword,
         Mods: formatModIds(form.mods.map(m => m.modId), form.buildVersion),
-        WorkshopItems: form.mods.map(m => m.workshopId).join(';'),
+        // local mods have no workshop id
+        WorkshopItems: form.mods.map(m => m.workshopId).filter(Boolean).join(';'),
       }
-      // mods may have changed (downloads finishing) since this editor opened, keep the latest
-      const latest = useAppStore.getState().profiles.find(p => p.id === activeProfileId)
+      // mods may have changed (downloads finishing) since this editor opened, keep the latest from disk
+      const latest = (activeProfileId ? await window.electronAPI.profiles.get(activeProfileId) : null)
+        || useAppStore.getState().profiles.find(p => p.id === activeProfileId)
       const profileData = {
         ...(existingProfile || {}),
         ...form,
@@ -180,7 +182,7 @@ export default function ServerEditor() {
         MaxPlayers: form.maxPlayers,
         Password: form.serverPassword,
         Mods: formatModIds(form.mods.map(m => m.modId), form.buildVersion),
-        WorkshopItems: form.mods.map(m => m.workshopId).join(';'),
+        WorkshopItems: form.mods.map(m => m.workshopId).filter(Boolean).join(';'),
       }
       const lines = Object.entries(iniSettings).map(([k, v]) => `${k}=${v}`)
       const content = lines.join('\n')

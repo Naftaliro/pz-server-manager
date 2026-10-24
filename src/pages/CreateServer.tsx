@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, Lock, Users, Skull, Package, Play, Loader } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Lock, Users, Skull, Package, Play, Loader, Wrench } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import { PRESETS, PRESET_BLURBS } from '../lib/presets'
 import type { PresetKey } from '../lib/presets'
+import { DEV_PRESETS } from '../lib/devPresets'
 import { saveProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
+import { downloadAndScan } from '../lib/mods'
 
 type Step = 0 | 1 | 2
 
@@ -18,6 +20,9 @@ export default function CreateServer() {
   const [password, setPassword] = useState('')
   const [maxPlayers, setMaxPlayers] = useState(8)
   const [preset, setPreset] = useState<PresetKey>('apocalypse')
+  // a developer preset brings its own sandbox and mods, and replaces the difficulty pick
+  const [devKey, setDevKey] = useState<string | null>(null)
+  const devPreset = DEV_PRESETS.find(p => p.key === devKey)
   const [pvp, setPvp] = useState(false)
   const [creating, setCreating] = useState(false)
   const [memory, setMemory] = useState(RECOMMENDED_MEMORY_MB)
@@ -55,8 +60,8 @@ export default function CreateServer() {
       const saved = await saveProfile({
         id: '',
         name: name.trim(),
-        description: '',
-        buildVersion: settings?.buildVersion || 'b42',
+        description: devPreset ? devPreset.description : '',
+        buildVersion: devPreset?.buildVersion || settings?.buildVersion || 'b42',
         serverInstallPath: settings?.serverInstallPath || 'C:\\PZServer',
         worldSavePath: '',
         port,
@@ -65,20 +70,27 @@ export default function CreateServer() {
         adminPassword: randomPassword(),
         serverPassword: password,
         maxPlayers,
-        mods: [],
+        mods: devPreset ? devPreset.mods : [],
         launchMode: 'managed',
         iniSettings: {
+          ...(devPreset?.iniSettings || {}),
+          // what was asked on the first page wins over the preset
           PVP: pvp,
           PublicName: name.trim(),
           Open: true,
           // each server gets its own RCON port so two can run side by side
           RCONPort: nextRconPort(),
         },
-        sandboxSettings: { ...sandbox, ZombieConfig: ZombieConfig || {} },
+        sandboxSettings: devPreset ? devPreset.sandboxSettings : { ...sandbox, ZombieConfig: ZombieConfig || {} },
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       })
-      openServer(saved.id, thenMods ? 'mods' : 'overview')
+      if (devPreset) {
+        // if this fails, the pre-start check names the missing local mod when Start is pressed
+        if (devPreset.localMods.length > 0) await window.electronAPI.mods.installLocal(devPreset.localMods)
+        void downloadAndScan(saved.id, devPreset.mods.map(m => m.workshopId).filter(Boolean))
+      }
+      openServer(saved.id, thenMods || devPreset ? 'mods' : 'overview')
     } finally {
       setCreating(false)
     }
@@ -155,8 +167,8 @@ export default function CreateServer() {
               {(Object.keys(PRESETS) as PresetKey[]).map(key => (
                 <button
                   key={key}
-                  onClick={() => setPreset(key)}
-                  className={`card p-4 text-left transition-all ${preset === key ? 'border-pz-green bg-pz-green/10' : 'hover:border-pz-text/40'}`}
+                  onClick={() => { setPreset(key); setDevKey(null) }}
+                  className={`card p-4 text-left transition-all ${!devPreset && preset === key ? 'border-pz-green bg-pz-green/10' : 'hover:border-pz-text/40'}`}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <Skull size={14} className={preset === key ? 'text-pz-green' : 'text-pz-muted'} />
@@ -167,6 +179,28 @@ export default function CreateServer() {
                 </button>
               ))}
             </div>
+            {DEV_PRESETS.length > 0 && (
+              <div className="space-y-2">
+                <div>
+                  <h2 className="text-sm font-semibold text-pz-text flex items-center gap-1.5"><Wrench size={13} /> Developer presets</h2>
+                  <p className="text-xs text-pz-subtext">Complete setups the developer plays on: mods, settings and sandbox all included.</p>
+                </div>
+                {DEV_PRESETS.map(p => (
+                  <button
+                    key={p.key}
+                    onClick={() => setDevKey(p.key)}
+                    className={`card p-4 text-left w-full transition-all ${devKey === p.key ? 'border-pz-green bg-pz-green/10' : 'hover:border-pz-text/40'}`}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <Package size={14} className={devKey === p.key ? 'text-pz-green' : 'text-pz-muted'} />
+                      <span className="font-semibold text-pz-text">{p.label}</span>
+                      <span className="text-xs text-pz-muted ml-auto">{p.mods.length} mods</span>
+                    </div>
+                    <p className="text-xs text-pz-subtext">{p.description}</p>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="flex justify-between">
               <button onClick={() => setStep(0)} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
               <button onClick={() => setStep(2)} className="btn-primary">Next <ArrowRight size={14} /></button>
@@ -174,7 +208,29 @@ export default function CreateServer() {
           </div>
         )}
 
-        {step === 2 && (
+        {step === 2 && devPreset && (
+          <div className="space-y-5">
+            <div>
+              <h1 className="text-xl font-semibold text-pz-text">Ready to build "{devPreset.label}"</h1>
+              <p className="text-sm text-pz-subtext mt-1">
+                {devPreset.mods.length} mods get downloaded in the background, which can take a while the first time.
+                {devPreset.localMods.length > 0 && ' The fix mods it needs are installed into your Zomboid\\mods folder. Friends joining need them too: see local-mods\\README.md in the project.'}
+              </p>
+            </div>
+            <button onClick={() => create(true)} disabled={creating} className="card p-5 text-left w-full hover:border-pz-green transition-all flex items-center gap-4">
+              <Play size={24} className="text-pz-green flex-shrink-0" />
+              <div className="flex-1">
+                <div className="font-semibold text-pz-text">Create the server</div>
+                <div className="text-xs text-pz-subtext">Opens the Mods tab so you can watch the downloads</div>
+              </div>
+              <ArrowRight size={16} className="text-pz-muted" />
+            </button>
+            {creating && <p className="text-sm text-pz-muted flex items-center gap-2"><Loader size={14} className="animate-spin" /> Creating your server...</p>}
+            <button onClick={() => setStep(1)} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
+          </div>
+        )}
+
+        {step === 2 && !devPreset && (
           <div className="space-y-5">
             <div>
               <h1 className="text-xl font-semibold text-pz-text">Want any mods?</h1>

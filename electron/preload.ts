@@ -148,6 +148,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDetails: (workshopIds: string[]) => ipcRenderer.invoke('mods:getDetails', workshopIds),
     getCollection: (workshopId: string) => ipcRenderer.invoke('mods:getCollection', workshopId),
     scanInstalled: (serverInstallPath: string, workshopIds: string[]) => ipcRenderer.invoke('mods:scanInstalled', serverInstallPath, workshopIds),
+    installLocal: (modIds: string[], worldSavePath?: string) => ipcRenderer.invoke('localMods:install', modIds, worldSavePath),
   },
 
   // World management

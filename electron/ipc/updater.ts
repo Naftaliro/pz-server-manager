@@ -2,6 +2,9 @@ import { ipcMain, app, BrowserWindow, shell } from 'electron'
 import https from 'https'
 import http from 'http'
 import fs from 'fs'
+// plain fs, without Electron's asar patching: the extracted update contains
+// resources/app.asar, which the patched fs treats as a folder and fails to delete
+import originalFs from 'original-fs'
 import path from 'path'
 import { spawn } from 'child_process'
 
@@ -172,8 +175,8 @@ function compareVersions(a: string, b: string): number {
 
 function cleanTempDir(tempDir: string): void {
   try {
-    if (fs.existsSync(tempDir)) {
-      fs.rmSync(tempDir, { recursive: true, force: true })
+    if (originalFs.existsSync(tempDir)) {
+      originalFs.rmSync(tempDir, { recursive: true, force: true })
     }
   } catch {
     // Best-effort cleanup — ignore errors
@@ -289,6 +292,7 @@ export function setupUpdaterHandlers() {
     // ── Step 4: Write the updater batch script ───────────────────────────────────
     const appExe = app.getPath('exe')
     const appDir = path.dirname(appExe)
+    const exeName = path.basename(appExe)
 
     // Use short 8.3-safe variable names inside the batch to avoid quoting issues
     const batchScript = [
@@ -300,7 +304,17 @@ export function setupUpdaterHandlers() {
       'echo ================================================',
       'echo.',
       'echo Waiting for the app to fully close...',
-      'timeout /t 5 /nobreak > nul',
+      // files stay locked until every app process is gone, so wait for that (up to ~30s)
+      'set /a TRIES=0',
+      ':waitloop',
+      `tasklist /FI "IMAGENAME eq ${exeName}" /NH | find /I "${exeName}" > nul`,
+      'if not errorlevel 1 (',
+      '  set /a TRIES+=1',
+      '  if !TRIES! lss 30 (',
+      '    timeout /t 1 /nobreak > nul',
+      '    goto waitloop',
+      '  )',
+      ')',
       '',
       'echo Extracting update package...',
       `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force"`,
@@ -312,14 +326,20 @@ export function setupUpdaterHandlers() {
       ')',
       '',
       'echo Finding extracted app folder...',
+      // the release zip is flat (exe at the root next to locales\\ and resources\\),
+      // so look for the exe instead of grabbing the first subfolder
       'set "SRC="',
-      `for /d %%i in ("${extractDir}\\*") do (`,
-      '  if not defined SRC set "SRC=%%i"',
-      ')',
-      '',
-      ':: If no subfolder, the zip extracted flat — use extractDir directly',
+      `if exist "${extractDir}\\${exeName}" set "SRC=${extractDir}"`,
       'if not defined SRC (',
-      `  set "SRC=${extractDir}"`,
+      `  for /d %%i in ("${extractDir}\\*") do (`,
+      `    if not defined SRC if exist "%%i\\${exeName}" set "SRC=%%i"`,
+      '  )',
+      ')',
+      'if not defined SRC (',
+      '  echo.',
+      `  echo ERROR: ${exeName} was not found in the update package. Please update manually.`,
+      '  pause',
+      '  exit /b 1',
       ')',
       '',
       `echo Copying new files to: ${appDir}`,

@@ -44,7 +44,10 @@ export async function saveProfile(profile: Partial<ServerProfile> & { id?: strin
 let patchQueue: Promise<unknown> = Promise.resolve()
 export function patchProfile(id: string, patch: (p: ServerProfile) => Partial<ServerProfile>): Promise<ServerProfile | undefined> {
   const job = patchQueue.then(async () => {
-    const current = useAppStore.getState().profiles.find(p => p.id === id)
+    // start from what's on disk, not the copy in memory: the server side (mod scans,
+    // RCON password, lastStarted) and hand edits to profiles.json write there too,
+    // and saving the in-memory copy would quietly undo those
+    const current = (await window.electronAPI.profiles.get(id)) || useAppStore.getState().profiles.find(p => p.id === id)
     if (!current) return undefined
     return saveProfile({ ...current, ...patch(current), updatedAt: new Date().toISOString() })
   })

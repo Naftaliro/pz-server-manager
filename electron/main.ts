@@ -5,6 +5,7 @@ import { setupServerHandlers } from './ipc/serverManager'
 import { setupProfileHandlers } from './ipc/profileManager'
 import { setupFileHandlers } from './ipc/fileManager'
 import { setupModHandlers } from './ipc/modManager'
+import { setupLocalModHandlers } from './ipc/localMods'
 import { setupWorldHandlers } from './ipc/worldManager'
 import { setupUpdaterHandlers } from './ipc/updater'
 import { setupAppSettingsHandlers } from './ipc/appSettings'
@@ -100,6 +101,7 @@ app.whenReady().then(() => {
   setupProfileHandlers()
   setupFileHandlers()
   setupModHandlers()
+  setupLocalModHandlers()
   setupWorldHandlers()
   setupUpdaterHandlers()
 

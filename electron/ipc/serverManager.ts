@@ -48,7 +48,7 @@ let mainWindowRef: BrowserWindow | null = null
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
-function resolveDataPath(worldSavePath?: string): string {
+export function resolveDataPath(worldSavePath?: string): string {
   const raw = worldSavePath || '%USERPROFILE%\\Zomboid'
   return raw.replace(/%USERPROFILE%/gi, process.env.USERPROFILE || process.env.HOME || '')
 }
@@ -185,6 +185,23 @@ function writePatchedStartBat(serverDir: string, serverName: string, memoryMb?: 
   return name
 }
 
+// QuickEdit is on by default in console windows. One click inside the server window
+// puts it in "Select" mode, which blocks every write to the console, so java freezes
+// on its next log line (players get a black screen, then can't reconnect).
+// Windows reads per-title console settings from HKCU\Console\<title> when `start "<title>"`
+// creates the window, so this turns QuickEdit off for the server window only.
+// (Calling SetConsoleMode from a helper inside the bat doesn't stick, powershell restores it on exit.)
+function disableQuickEdit(windowTitle: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(
+      'reg.exe',
+      ['add', `HKCU\\Console\\${windowTitle}`, '/v', 'QuickEdit', '/t', 'REG_DWORD', '/d', '0', '/f'],
+      { timeout: 5000, windowsHide: true },
+      (err) => resolve(!err)
+    )
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Process helpers
 // ---------------------------------------------------------------------------
@@ -229,18 +246,42 @@ function isPidAlive(pid: number): Promise<boolean> {
   })
 }
 
+// The console window java runs in: `start` runs our launcher as `cmd /K`, which
+// would otherwise sit at a prompt after the server is gone. Only returns the parent
+// if it really is our launcher, so we never close some other cmd window.
+function findLauncherWindowPid(javaPid: number): Promise<number | null> {
+  return new Promise((resolve) => {
+    const script = `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${javaPid}"; if ($p) { Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ParentProcessId)" | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress }`
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { timeout: 15000, windowsHide: true },
+      (err, stdout) => {
+        if (err || !stdout || !stdout.trim()) return resolve(null)
+        try {
+          const parent: { ProcessId: number; Name: string; CommandLine: string | null } = JSON.parse(stdout)
+          const ours = /^cmd\.exe$/i.test(parent.Name) && /_pzm_launch_/i.test(parent.CommandLine || '')
+          resolve(ours ? parent.ProcessId : null)
+        } catch { resolve(null) }
+      }
+    )
+  })
+}
+
 function killProcessTree(pid: number): Promise<void> {
   return new Promise((resolve) => {
     exec(`taskkill /PID ${pid} /T /F`, { timeout: 10000, windowsHide: true }, () => resolve())
   })
 }
 
-// Last resort when RCON isn't answering: type into the console window
+// Last resort when RCON isn't answering: type into the console window.
+// ESC first: if the window is stuck in "Select" mode the first key only ends the
+// selection, which would turn "quit" into "uit".
 function sendKeysToWindow(serverName: string, text: string): Promise<void> {
   const escaped = text.replace(/'/g, "''").replace(/[+^%~(){}[\]]/g, '{$&}')
   return new Promise((resolve) => {
     exec(
-      `powershell -NoProfile -Command "& {$wshell = New-Object -ComObject wscript.shell; $wshell.AppActivate('PZ Server - ${serverName}'); Start-Sleep -Milliseconds 200; $wshell.SendKeys('${escaped}{ENTER}')}"`,
+      `powershell -NoProfile -Command "& {$wshell = New-Object -ComObject wscript.shell; $wshell.AppActivate('PZ Server - ${serverName}'); Start-Sleep -Milliseconds 200; $wshell.SendKeys('{ESC}'); Start-Sleep -Milliseconds 100; $wshell.SendKeys('${escaped}{ENTER}')}"`,
       { timeout: 5000, windowsHide: true },
       () => resolve()
     )
@@ -436,7 +477,7 @@ async function checkModUpdates(profileId: string, srv: ServerProcess) {
   if (!profile || profile.mods.length === 0 || srv.status !== 'running' || srv.pendingRestart) return
   const local = installedModTimes(profile.serverInstallPath)
   let remote
-  try { remote = await fetchModDetails(profile.mods.map(m => m.workshopId)) } catch { return }
+  try { remote = await fetchModDetails(profile.mods.map(m => m.workshopId).filter(Boolean)) } catch { return }
   const updated = remote.filter(r => (local.get(r.workshopId) || Infinity) < r.timeUpdated)
   if (updated.length === 0) return
 
@@ -680,7 +721,8 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
 
   // mods
   const contentDir = workshopContentDir(profile.serverInstallPath)
-  const notDownloaded = profile.mods.filter(m => !existsSync(join(contentDir, m.workshopId)))
+  const workshopMods = profile.mods.filter(m => m.workshopId)
+  const notDownloaded = workshopMods.filter(m => !existsSync(join(contentDir, m.workshopId)))
   if (notDownloaded.length > 0) {
     issues.push({
       level: 'warning',
@@ -702,8 +744,21 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
     }
   }
 
+  // local mods (no workshop id) have to be sitting in <data>\mods, nothing downloads them.
+  // <data> has the same mods\<Mod>\42\mod.info layout as a workshop item, so the same scan works
+  const localMods = profile.mods.filter(m => !m.workshopId)
+  if (localMods.length > 0) {
+    const installedLocal = new Set(scanWorkshopItem(resolveDataPath(profile.worldSavePath)).map(i => i.id))
+    for (const m of localMods) {
+      const absent = enabledIds(m).filter(id => !installedLocal.has(id))
+      if (absent.length > 0) {
+        issues.push({ level: 'error', message: `Local mod "${m.name}" isn't in your Zomboid\\mods folder (${absent.join(', ')}).` })
+      }
+    }
+  }
+
   // requirements from the downloaded mod.info files (fresh scan, in case files changed)
-  for (const m of profile.mods) {
+  for (const m of workshopMods) {
     const itemDir = join(contentDir, m.workshopId)
     if (!existsSync(itemDir)) continue
     const infos = scanWorkshopItem(itemDir).filter(i => enabledIds(m).includes(i.id))
@@ -790,6 +845,9 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
       `echo  Managed by PZ Server Manager - use the app to stop it`,
       `echo ================================================`,
       `call ${startBatName} -servername "${serverName}" -adminpassword "${adminPassword}"${cacheArg}`,
+      // close the window after a clean quit (in-game /quit, typed in the window),
+      // but leave it open after a crash so the error can still be read
+      `if not errorlevel 1 exit`,
     ].join('\r\n'))
 
     if (profile.backupsEnabled !== false) {
@@ -811,12 +869,17 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
       try { logOffset = statSync(logPath).size } catch { /* gone already */ }
     }
 
+    const windowTitle = `PZ Server - ${serverName}`
+    if (!(await disableQuickEdit(windowTitle))) {
+      emitConsoleOutput(profileId, `[PZ Manager] ⚠ Couldn't turn off QuickEdit. Clicking inside the server window will freeze it, press Esc if that happens.`)
+    }
+
     // minimized so it stays out of the way but still shows up in the taskbar
     // built as one verbatim string: node escapes quotes inside args as \" and `start`
     // chokes on that, so the server silently never launched
     const proc: ChildProcess = spawn(
       'cmd.exe',
-      ['/c', `start "PZ Server - ${serverName}" /min /D "${serverDir}" "${launcherPath}"`],
+      ['/c', `start "${windowTitle}" /min /D "${serverDir}" "${launcherPath}"`],
       { cwd: serverDir, detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true }
     )
     proc.unref()
@@ -876,6 +939,8 @@ async function stopServer(profileId: string): Promise<{ success: boolean; messag
   }
 
   if (srv.pid) {
+    // look it up now, once java is gone its parent can't be found anymore
+    const windowPid = await findLauncherWindowPid(srv.pid)
     try {
       await rconFor(profileId, 'quit', 4000)
     } catch {
@@ -895,6 +960,8 @@ async function stopServer(profileId: string): Promise<{ success: boolean; messag
       emitConsoleOutput(profileId, `[PZ Manager] Server didn't stop on its own, force-stopping...`)
       await killProcessTree(srv.pid)
     }
+    // stopped on purpose, so nothing in the window is worth reading
+    if (windowPid && (await isPidAlive(windowPid))) await killProcessTree(windowPid)
   }
   cleanup(profileId)
   return { success: true, message: 'Server stopped.' }

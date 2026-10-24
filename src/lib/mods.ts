@@ -11,6 +11,17 @@ export function hasRealModId(mod: ModEntry): boolean {
   return !!mod.modId && mod.modId !== mod.workshopId
 }
 
+// Local mods live in <Zomboid>\mods instead of the workshop, so they have no workshop id
+export function isLocalMod(mod: ModEntry): boolean {
+  return !mod.workshopId
+}
+
+// Stable key for a list entry. Workshop id for workshop mods; local mods all share
+// workshopId '', so they go by their mod id instead
+export function modKey(mod: ModEntry): string {
+  return mod.workshopId || `local:${mod.modId}`
+}
+
 // Set which of the item's mods are on, and keep requires/maps in sync with that
 export function withEnabled(mod: ModEntry, ids: string[]): ModEntry {
   const on = mod.infos?.filter(i => ids.includes(i.id)) || []
@@ -93,7 +104,7 @@ export async function addModsToProfile(profileId: string, items: WorkshopModDeta
 export async function scanMods(profileId: string, workshopIds?: string[]): Promise<void> {
   const profile = useAppStore.getState().profiles.find(p => p.id === profileId)
   if (!profile) return
-  const ids = workshopIds || profile.mods.map(m => m.workshopId)
+  const ids = workshopIds || profile.mods.map(m => m.workshopId).filter(Boolean)
   const result = await window.electronAPI.mods.scanInstalled(profile.serverInstallPath, ids)
   if (!result.success) return
   const found = result.found

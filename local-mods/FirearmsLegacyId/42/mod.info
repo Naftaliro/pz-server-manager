@@ -1,0 +1,5 @@
+name=Firearms B42 - Legacy ID Shim
+id=2256623447/firearmmod
+description=Firearms B42 changed its mod ID from "2256623447/firearmmod" to "firearmmod" in 42.16. Older add-ons like Bandits Firearms still require the old ID and get skipped. This empty mod answers to the old ID and pulls in the real Firearms mod. Contains no files from Firearms.
+require=\firearmmod
+versionMin=42.16.0

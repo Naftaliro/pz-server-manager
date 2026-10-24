@@ -38,12 +38,13 @@ export default function TitleBar() {
         )}
       </div>
 
-      {/* Center: Check for updates button */}
-      <div className="flex-1 flex justify-center no-drag">
+      {/* Center: Check for updates button. Only the button opts out of dragging,
+          the rest of this stretch is what you grab to move the window */}
+      <div className="flex-1 flex justify-center">
         <button
           onClick={handleCheckUpdate}
           disabled={checkingUpdate}
-          className="flex items-center gap-1.5 text-xs text-pz-muted hover:text-pz-text transition-colors px-2 py-1 rounded hover:bg-pz-border disabled:opacity-50"
+          className="no-drag flex items-center gap-1.5 text-xs text-pz-muted hover:text-pz-text transition-colors px-2 py-1 rounded hover:bg-pz-border disabled:opacity-50"
           title="Check for updates"
         >
           <RefreshCw size={11} className={checkingUpdate ? 'animate-spin' : ''} />

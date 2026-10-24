@@ -14,6 +14,8 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             sourcemap: true,
+            // Electron's built-in unpatched fs (no asar magic), provided at runtime
+            rollupOptions: { external: ['original-fs'] },
           },
         },
       },

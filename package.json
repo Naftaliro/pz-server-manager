@@ -82,6 +82,17 @@
       "dist/**/*",
       "dist-electron/**/*",
       "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "local-mods",
+        "to": "local-mods",
+        "filter": [
+          "**/*",
+          "!install.ps1",
+          "!README.md"
+        ]
+      }
     ]
   },
   "allowScripts": {
