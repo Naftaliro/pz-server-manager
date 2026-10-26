@@ -6,6 +6,8 @@ import { join } from 'path'
 import {
   batText, quotedValue, patchStartBat, launcherScript, updateScript,
   serverWindowCommand, updaterWindowCommand, sendKeysScript,
+  firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, FIREWALL_RULE, OLD_FIREWALL_RULE,
+  type FirewallRuleInfo,
 } from './winScripts'
 
 const STOCK_BAT = [
@@ -208,4 +210,63 @@ describe.runIf(process.platform === 'win32')('on Windows', () => {
       try { execFileSync('taskkill', ['/IM', exe, '/F']) } catch { /* not running */ }
     }
   }, 90000)
+})
+
+describe('firewall', () => {
+  const java = 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Project Zomboid Dedicated Server\\jre64\\bin\\java.exe'
+
+  it('replaces the old allow-everything rule with UDP game ports only', () => {
+    const lines = firewallScript([{ program: java, ports: [16262, 16261, 16261, 16265, 16266] }]).split('\r\n')
+    const del = lines.findIndex(l => l.includes(`delete rule name="${OLD_FIREWALL_RULE}"`))
+    const add = lines.findIndex(l => l.includes('add rule'))
+    expect(del).toBeGreaterThan(-1)
+    expect(lines.some(l => l.includes(`delete rule name="${FIREWALL_RULE}"`))).toBe(true)
+    expect(add).toBeGreaterThan(del)
+    expect(lines[add]).toBe(`netsh advfirewall firewall add rule name="${FIREWALL_RULE}" dir=in action=allow program="${java}" protocol=UDP localport=16261,16262,16265,16266 enable=yes profile=any`)
+    // nothing TCP, so RCON (TCP 27015+) stays closed
+    expect(lines.join('\n')).not.toMatch(/protocol=TCP/)
+  })
+
+  it('makes one rule per server install and skips bad ports', () => {
+    const out = firewallScript([
+      { program: 'C:\\A\\java.exe', ports: [16261, 16262] },
+      { program: 'D:\\100% B\\java.exe', ports: [0, 70000] },
+    ])
+    expect(out.match(/add rule/g)).toHaveLength(1)
+    expect(firewallScript([{ program: 'D:\\100% B\\java.exe', ports: [1] }])).toContain('program="D:\\100%% B\\java.exe"')
+  })
+
+  it('remove only deletes our rules', () => {
+    expect(firewallRemoveScript()).not.toMatch(/add rule/)
+    expect(firewallRemoveScript()).toContain(`delete rule name="${OLD_FIREWALL_RULE}"`)
+  })
+
+  const rule = (over: Partial<FirewallRuleInfo> = {}): FirewallRuleInfo => ({
+    name: FIREWALL_RULE, enabled: 'True', direction: 'Inbound', action: 'Allow', protocol: 'UDP',
+    ports: ['16261', '16262'], program: java, ...over,
+  })
+  const needed = [{ program: java, ports: [16261, 16262] }]
+
+  it('is up to date only when every server port is open and the old rule is gone', () => {
+    expect(firewallState(needed, [rule()])).toEqual({ upToDate: true, oldRule: false, anyRule: true })
+    expect(firewallState(needed, [rule({ program: java.toUpperCase() })]).upToDate).toBe(true)
+    expect(firewallState(needed, [rule({ ports: ['16261'] })]).upToDate).toBe(false)
+    expect(firewallState(needed, [rule({ enabled: 'False' })]).upToDate).toBe(false)
+    expect(firewallState(needed, [rule(), rule({ name: OLD_FIREWALL_RULE, protocol: 'TCP', ports: ['Any'] })]))
+      .toEqual({ upToDate: false, oldRule: true, anyRule: true })
+    expect(firewallState(needed, [])).toEqual({ upToDate: false, oldRule: false, anyRule: false })
+  })
+})
+
+describe.runIf(process.platform === 'win32')('firewall on Windows', () => {
+  it('reads the rules without admin and in a shape the app understands', () => {
+    const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', firewallQueryScript()]).toString()
+    const rules = JSON.parse(out) as FirewallRuleInfo[]
+    expect(Array.isArray(rules)).toBe(true)
+    for (const r of rules) {
+      expect([FIREWALL_RULE, OLD_FIREWALL_RULE]).toContain(r.name)
+      for (const k of ['enabled', 'direction', 'action', 'protocol', 'program'] as const) expect(typeof r[k]).toBe('string')
+      expect(Array.isArray(r.ports)).toBe(true)
+    }
+  }, 30000)
 })

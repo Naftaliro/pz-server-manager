@@ -179,3 +179,78 @@ export function sendKeysScript(windowTitle: string, text: string): string {
   // selection, which would turn "quit" into "uit"
   return `$wshell = New-Object -ComObject wscript.shell; $null = $wshell.AppActivate('${title}'); Start-Sleep -Milliseconds 200; $wshell.SendKeys('{ESC}'); Start-Sleep -Milliseconds 100; $wshell.SendKeys('${keys}{ENTER}')`
 }
+
+// ── Windows Firewall ─────────────────────────────────────────────────────────
+
+export const FIREWALL_RULE = 'Knox Launcher - Project Zomboid server'
+// what older versions added: every port, TCP and UDP, which also opened RCON to the network
+export const OLD_FIREWALL_RULE = 'PZ Server Manager - Project Zomboid server'
+
+export interface FirewallEntry {
+  // the server install's java.exe, the rule only covers that program
+  program: string
+  // DefaultPort and UDPPort of every server using this install
+  ports: number[]
+}
+
+function portList(ports: number[]): string {
+  return [...new Set(ports)].filter(p => Number.isInteger(p) && p >= 1 && p <= 65535).sort((a, b) => a - b).join(',')
+}
+
+// netsh exits with an error when there's no rule to delete, that's fine here
+const deleteOurRules = [OLD_FIREWALL_RULE, FIREWALL_RULE].map(name => `netsh advfirewall firewall delete rule name="${name}" > nul`)
+
+// The elevated .cmd for "Allow the server": drop our rules (the old allow-everything one too),
+// then one rule per server install that only opens the UDP ports players connect to.
+// B42 has no separate Steam ports (only DefaultPort, UDPPort and RCONPort exist), and RCON
+// stays closed. profile=any on purpose: lots of home networks are marked Public in Windows
+export function firewallScript(entries: FirewallEntry[]): string {
+  return [
+    '@echo off',
+    UTF8,
+    ...deleteOurRules,
+    ...entries.filter(e => portList(e.ports)).map(e =>
+      `netsh advfirewall firewall add rule name="${FIREWALL_RULE}" dir=in action=allow program="${batText(e.program)}" protocol=UDP localport=${portList(e.ports)} enable=yes profile=any`),
+  ].join('\r\n')
+}
+
+export function firewallRemoveScript(): string {
+  return ['@echo off', ...deleteOurRules].join('\r\n')
+}
+
+// Reading the rules needs no admin. Get-NetFirewallRule's values (True, Inbound, Allow, UDP)
+// are the same in every Windows language, netsh's text output isn't
+export function firewallQueryScript(): string {
+  const names = [FIREWALL_RULE, OLD_FIREWALL_RULE].map(n => `'${n.replace(/'/g, "''")}'`).join(',')
+  return `$r = @(Get-NetFirewallRule -DisplayName ${names} -ErrorAction SilentlyContinue | ForEach-Object { $p = $_ | Get-NetFirewallPortFilter; $a = $_ | Get-NetFirewallApplicationFilter; [pscustomobject]@{ name = $_.DisplayName; enabled = [string]$_.Enabled; direction = [string]$_.Direction; action = [string]$_.Action; protocol = [string]$p.Protocol; ports = @($p.LocalPort | ForEach-Object { [string]$_ }); program = [string]$a.Program } }); ConvertTo-Json -InputObject $r -Compress -Depth 3`
+}
+
+export interface FirewallRuleInfo {
+  name: string
+  enabled: string
+  direction: string
+  action: string
+  protocol: string
+  // "16261", "16262", or "Any" for the old rule
+  ports: string[]
+  program: string
+}
+
+export interface FirewallState {
+  // every server's game ports are open, and nothing else from us is
+  upToDate: boolean
+  // the old allow-everything rule is still there
+  oldRule: boolean
+  // any rule of ours exists (what "Remove" would take away)
+  anyRule: boolean
+}
+
+export function firewallState(needed: FirewallEntry[], rules: FirewallRuleInfo[]): FirewallState {
+  const ours = rules.filter(r => r.name === FIREWALL_RULE)
+  const oldRule = rules.some(r => r.name === OLD_FIREWALL_RULE)
+  const samePath = (a: string, b: string) => win32.normalize(a).toLowerCase() === win32.normalize(b).toLowerCase()
+  const covered = needed.length > 0 && needed.every(e => e.ports.every(port => ours.some(r =>
+    r.enabled === 'True' && r.direction === 'Inbound' && r.action === 'Allow' && r.protocol === 'UDP'
+    && samePath(r.program, e.program) && r.ports.includes(String(port)))))
+  return { upToDate: covered && !oldRule, oldRule, anyRule: ours.length > 0 || oldRule }
+}
