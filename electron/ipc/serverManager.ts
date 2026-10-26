@@ -15,7 +15,7 @@ import { workshopContentDir, scanWorkshopItem, fetchModDetails, PZ_APP_ID } from
 import { formatModIds, orderModIds, buildMapLine, enabledIds, wrongBuildMods, type ModSnapshot } from '../../shared/modCore'
 import { loadSettings } from './appSettings'
 import { ensurePlayitRunning, PLAYIT_INTEGRATION } from './playit'
-import { firewallRuleExists } from './network'
+import { firewallStatus } from './network'
 import { notify, escapeDiscord, DISCORD_COLORS } from './discord'
 import { patchStartBat, launcherScript, serverWindowCommand, sendKeysScript } from './winScripts'
 
@@ -678,8 +678,13 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
     }
   } catch { /* offline or steamcmd busy, don't block starting */ }
 
-  if (!(await firewallRuleExists())) {
-    issues.push({ level: 'warning', message: "Windows Firewall hasn't been told to allow the server yet, so it may block friends.", fix: 'firewall' })
+  const fw = await firewallStatus()
+  if (fw.oldRule) {
+    issues.push({ level: 'warning', message: 'The Windows Firewall rule from an older version opens every port of the server, including the admin console (RCON). Replace it with one that only opens the game ports.', fix: 'firewall' })
+  } else if (!fw.upToDate) {
+    issues.push({ level: 'warning', message: fw.anyRule
+      ? "Windows Firewall doesn't allow this server's ports yet (they changed or it's a new server), so it may block friends."
+      : "Windows Firewall hasn't been told to allow the server yet, so it may block friends.", fix: 'firewall' })
   }
 
   // ports clash with another server in the app?

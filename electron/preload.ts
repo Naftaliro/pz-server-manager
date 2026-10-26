@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkUpnp: (port: number, publicIp: string | null) => ipcRenderer.invoke('network:checkUpnp', port, publicIp),
     firewallStatus: () => ipcRenderer.invoke('network:firewallStatus'),
     addFirewallRule: (serverInstallPath: string) => ipcRenderer.invoke('network:addFirewallRule', serverInstallPath),
+    removeFirewallRule: () => ipcRenderer.invoke('network:removeFirewallRule'),
   },
 
   // App-wide settings

@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { spawn, execFileSync } from 'child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, openSync, readSync, closeSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
   batText, quotedValue, patchStartBat, launcherScript, updateScript,
   serverWindowCommand, updaterWindowCommand, sendKeysScript,
+  firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, FIREWALL_RULE, OLD_FIREWALL_RULE,
+  type FirewallRuleInfo, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller,
 } from './winScripts'
 
 const STOCK_BAT = [
@@ -208,4 +210,108 @@ describe.runIf(process.platform === 'win32')('on Windows', () => {
       try { execFileSync('taskkill', ['/IM', exe, '/F']) } catch { /* not running */ }
     }
   }, 90000)
+})
+
+describe('firewall', () => {
+  const java = 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Project Zomboid Dedicated Server\\jre64\\bin\\java.exe'
+
+  it('replaces the old allow-everything rule with UDP game ports only', () => {
+    const lines = firewallScript([{ program: java, ports: [16262, 16261, 16261, 16265, 16266] }]).split('\r\n')
+    const del = lines.findIndex(l => l.includes(`delete rule name="${OLD_FIREWALL_RULE}"`))
+    const add = lines.findIndex(l => l.includes('add rule'))
+    expect(del).toBeGreaterThan(-1)
+    expect(lines.some(l => l.includes(`delete rule name="${FIREWALL_RULE}"`))).toBe(true)
+    expect(add).toBeGreaterThan(del)
+    expect(lines[add]).toBe(`netsh advfirewall firewall add rule name="${FIREWALL_RULE}" dir=in action=allow program="${java}" protocol=UDP localport=16261,16262,16265,16266 enable=yes profile=any`)
+    // nothing TCP, so RCON (TCP 27015+) stays closed
+    expect(lines.join('\n')).not.toMatch(/protocol=TCP/)
+  })
+
+  it('makes one rule per server install and skips bad ports', () => {
+    const out = firewallScript([
+      { program: 'C:\\A\\java.exe', ports: [16261, 16262] },
+      { program: 'D:\\100% B\\java.exe', ports: [0, 70000] },
+    ])
+    expect(out.match(/add rule/g)).toHaveLength(1)
+    expect(firewallScript([{ program: 'D:\\100% B\\java.exe', ports: [1] }])).toContain('program="D:\\100%% B\\java.exe"')
+  })
+
+  it('remove only deletes our rules', () => {
+    expect(firewallRemoveScript()).not.toMatch(/add rule/)
+    expect(firewallRemoveScript()).toContain(`delete rule name="${OLD_FIREWALL_RULE}"`)
+  })
+
+  const rule = (over: Partial<FirewallRuleInfo> = {}): FirewallRuleInfo => ({
+    name: FIREWALL_RULE, enabled: 'True', direction: 'Inbound', action: 'Allow', protocol: 'UDP',
+    ports: ['16261', '16262'], program: java, ...over,
+  })
+  const needed = [{ program: java, ports: [16261, 16262] }]
+
+  it('is up to date only when every server port is open and the old rule is gone', () => {
+    expect(firewallState(needed, [rule()])).toEqual({ upToDate: true, oldRule: false, anyRule: true })
+    expect(firewallState(needed, [rule({ program: java.toUpperCase() })]).upToDate).toBe(true)
+    expect(firewallState(needed, [rule({ ports: ['16261'] })]).upToDate).toBe(false)
+    expect(firewallState(needed, [rule({ enabled: 'False' })]).upToDate).toBe(false)
+    expect(firewallState(needed, [rule(), rule({ name: OLD_FIREWALL_RULE, protocol: 'TCP', ports: ['Any'] })]))
+      .toEqual({ upToDate: false, oldRule: true, anyRule: true })
+    expect(firewallState(needed, [])).toEqual({ upToDate: false, oldRule: false, anyRule: false })
+  })
+})
+
+describe.runIf(process.platform === 'win32')('firewall on Windows', () => {
+  it('reads the rules without admin and in a shape the app understands', () => {
+    const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', firewallQueryScript()]).toString()
+    const rules = JSON.parse(out) as FirewallRuleInfo[]
+    expect(Array.isArray(rules)).toBe(true)
+    for (const r of rules) {
+      expect([FIREWALL_RULE, OLD_FIREWALL_RULE]).toContain(r.name)
+      for (const k of ['enabled', 'direction', 'action', 'protocol', 'program'] as const) expect(typeof r[k]).toBe('string')
+      expect(Array.isArray(r.ports)).toBe(true)
+    }
+  }, 30000)
+})
+
+describe('installer updates', () => {
+  it('finds the uninstaller electron-builder puts next to the installed exe', () => {
+    expect(uninstallerFor('C:\\Users\\Me\\AppData\\Local\\Programs\\pz-server-manager\\PZ Server Manager.exe'))
+      .toBe('C:\\Users\\Me\\AppData\\Local\\Programs\\pz-server-manager\\Uninstall PZ Server Manager.exe')
+  })
+
+  it('runs the installer silently as an update and restarts the app', () => {
+    expect(INSTALLER_UPDATE_ARGS).toEqual(['/S', '--updated', '--force-run'])
+  })
+
+  const pe = (extra = '') => {
+    const b = Buffer.alloc(0x200 + extra.length)
+    b.write('MZ', 0, 'latin1')
+    b.writeUInt32LE(0x80, 0x3c)
+    b.write('PE\0\0', 0x80, 'latin1')
+    b.write(extra, 0x200, 'latin1')
+    return b
+  }
+
+  it('only takes a Windows program that is an NSIS installer', () => {
+    expect(isNsisInstaller(pe('\xef\xbe\xad\xdeNullsoftInst'))).toBe(true)
+    expect(isNsisInstaller(pe())).toBe(false)
+    expect(isNsisInstaller(Buffer.from('PK\x03\x04NullsoftInst', 'latin1'))).toBe(false)
+    expect(isNsisInstaller(Buffer.from('MZ'))).toBe(false)
+  })
+})
+
+// the real thing, when a build has been made on this PC
+describe.runIf(process.platform === 'win32')('installer updates on Windows', () => {
+  const release = join(__dirname, '..', '..', 'release')
+  const head = (f: string) => { const b = Buffer.alloc(1024 * 1024); const fd = openSync(f, 'r'); const n = readSync(fd, b, 0, b.length, 0); closeSync(fd); return b.subarray(0, n) }
+  const built = existsSync(release) ? readdirSync(release) : []
+  const setup = built.find(f => /-Setup-[\d.]+\.exe$/i.test(f))
+  const zip = built.find(f => /-win\.zip$/i.test(f))
+
+  it.runIf(!!setup)('recognises the real installer', () => {
+    expect(isNsisInstaller(head(join(release, setup!)))).toBe(true)
+  })
+  it.runIf(!!zip)('and not the portable zip or the app exe', () => {
+    expect(isNsisInstaller(head(join(release, zip!)))).toBe(false)
+    const exe = join(release, 'win-unpacked', 'PZ Server Manager.exe')
+    if (existsSync(exe)) expect(isNsisInstaller(head(exe))).toBe(false)
+  })
 })

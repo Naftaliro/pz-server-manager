@@ -12,7 +12,7 @@ export default function AppSettings() {
   const [installed, setInstalled] = useState<boolean | null>(null)
   const [version, setVersion] = useState('')
   const [mode, setMode] = useState<'install' | 'update'>('update')
-  const [firewall, setFirewall] = useState<boolean | null>(null)
+  const [firewall, setFirewall] = useState<Awaited<ReturnType<typeof window.electronAPI.network.firewallStatus>> | null>(null)
   const [fwBusy, setFwBusy] = useState(false)
   const [fwMsg, setFwMsg] = useState('')
   const [serverUpdate, setServerUpdate] = useState<{ checked: boolean; updateAvailable: boolean } | null>(null)
@@ -28,7 +28,8 @@ export default function AppSettings() {
   })
 
   useEffect(() => { refreshInstalled() }, [serverDir])
-  useEffect(() => { window.electronAPI.network.firewallStatus().then(r => setFirewall(r.exists)).catch(() => setFirewall(null)) }, [])
+  const refreshFirewall = () => window.electronAPI.network.firewallStatus().then(setFirewall).catch(() => setFirewall(null))
+  useEffect(() => { void refreshFirewall() }, [])
   useEffect(() => { window.electronAPI.steamcmd.checkUpdate(serverDir).then(setServerUpdate).catch(() => undefined) }, [serverDir, installed])
 
   const allowFirewall = async () => {
@@ -36,7 +37,16 @@ export default function AppSettings() {
     setFwMsg('')
     const r = await window.electronAPI.network.addFirewallRule(serverDir)
     setFwBusy(false)
-    setFirewall(r.success)
+    await refreshFirewall()
+    if (!r.success && r.message) setFwMsg(r.message)
+  }
+
+  const removeFirewall = async () => {
+    setFwBusy(true)
+    setFwMsg('')
+    const r = await window.electronAPI.network.removeFirewallRule()
+    setFwBusy(false)
+    await refreshFirewall()
     if (!r.success && r.message) setFwMsg(r.message)
   }
   useEffect(() => { window.electronAPI.updater.getVersion().then(v => setVersion(v.version)).catch(() => undefined) }, [])
@@ -107,17 +117,39 @@ export default function AppSettings() {
 
         <div className="card p-5 space-y-3">
           <h3 className="section-title flex items-center gap-2"><Shield size={14} /> Windows Firewall</h3>
-          {firewall ? (
-            <p className="text-sm text-pz-green flex items-center gap-2"><CheckCircle size={14} /> The server is allowed through Windows Firewall.</p>
+          {firewall?.upToDate ? (
+            <>
+              <p className="text-sm text-pz-green flex items-center gap-2">
+                <CheckCircle size={14} /> The server is allowed through Windows Firewall
+                {firewall.ports.length > 0 && !firewall.unknown && <span className="text-pz-subtext">(UDP {firewall.ports.join(', ')})</span>}
+              </p>
+              {firewall.anyRule && (
+                <button onClick={removeFirewall} disabled={fwBusy} className="btn-ghost text-xs">
+                  {fwBusy ? <Loader size={12} className="animate-spin" /> : null} Remove the rule (Windows will ask)
+                </button>
+              )}
+            </>
           ) : (
             <>
-              <p className="text-sm text-pz-subtext">Windows blocks new programs from the network until you allow them. Do it once here and friends won't get blocked.</p>
-              <button onClick={allowFirewall} disabled={fwBusy || !installed} className="btn-primary">
-                {fwBusy ? <Loader size={14} className="animate-spin" /> : <Shield size={14} />} Allow the server (Windows will ask)
-              </button>
-              {fwMsg && <p className="text-xs text-pz-yellow">{fwMsg}</p>}
+              <p className="text-sm text-pz-subtext">
+                {firewall?.oldRule
+                  ? 'The rule from an older version opens every port of the server, including the admin console (RCON), to your network. Replace it with one that only opens the game ports.'
+                  : firewall?.anyRule
+                    ? "The rule doesn't cover all your servers' ports yet (they changed, or there's a new server). Update it so friends don't get blocked."
+                    : "Windows blocks new programs from the network until you allow them. Do it once here and friends won't get blocked."}
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={allowFirewall} disabled={fwBusy || !installed} className="btn-primary">
+                  {fwBusy ? <Loader size={14} className="animate-spin" /> : <Shield size={14} />}
+                  {firewall?.oldRule ? ' Replace the rule (Windows will ask)' : firewall?.anyRule ? ' Update the rule (Windows will ask)' : ' Allow the server (Windows will ask)'}
+                </button>
+                {firewall?.anyRule && (
+                  <button onClick={removeFirewall} disabled={fwBusy} className="btn-ghost text-xs">Remove the rule</button>
+                )}
+              </div>
             </>
           )}
+          {fwMsg && <p className="text-xs text-pz-yellow">{fwMsg}</p>}
         </div>
 
         <div className="card p-5 space-y-3">

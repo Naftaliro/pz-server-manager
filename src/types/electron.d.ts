@@ -17,8 +17,10 @@ interface ElectronAPI {
   }
   network: {
     checkUpnp: (port: number, publicIp: string | null) => Promise<UpnpReportInfo>
-    firewallStatus: () => Promise<{ exists: boolean }>
+    // exists = every server's game ports are allowed (same as upToDate)
+    firewallStatus: () => Promise<{ exists: boolean; upToDate: boolean; oldRule: boolean; anyRule: boolean; ports: number[]; unknown: boolean }>
     addFirewallRule: (serverInstallPath: string) => Promise<{ success: boolean; message?: string }>
+    removeFirewallRule: () => Promise<{ success: boolean; message?: string }>
   }
   system: {
     info: () => Promise<{ totalMemMb: number; platform: string }>

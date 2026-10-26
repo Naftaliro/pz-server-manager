@@ -68,7 +68,7 @@ easiest: follow the playit.gg guide in app settings and paste your playit addres
 
 ## building it
 
-needs node 18+.
+needs node 22 (22.12 or newer) or node 24. the test runner skips the odd versions in between.
 
 ```bash
 npm install

@@ -5,6 +5,9 @@ import os from 'os'
 import http from 'http'
 import { join } from 'path'
 import { existsSync, writeFileSync, unlinkSync } from 'fs'
+import { listProfiles } from './profileManager'
+import { loadSettings } from './appSettings'
+import { firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, type FirewallEntry, type FirewallRuleInfo } from './winScripts'
 
 // ── UPnP check ──────────────────────────────────────────────────────────────
 // PZ asks the router to open its ports over UPnP. This asks the router whether that
@@ -131,41 +134,85 @@ export async function checkUpnp(port: number, publicIp: string | null): Promise<
 }
 
 // ── Windows Firewall ─────────────────────────────────────────────────────────
-const RULE_NAME = 'PZ Server Manager - Project Zomboid server'
-
 export function javaPath(serverInstallPath: string): string {
   return join(serverInstallPath, 'jre64', 'bin', 'java.exe')
 }
 
-export function firewallRuleExists(): Promise<boolean> {
+// What the rule has to open: each server install's java.exe with the DefaultPort and
+// UDPPort of every server profile using it. Before any server exists (setup), the
+// install that's being set up with the default ports
+function neededFirewall(serverInstallPath?: string): FirewallEntry[] {
+  const byProgram = new Map<string, FirewallEntry>()
+  const add = (install: string | undefined, ports: number[]) => {
+    if (!install) return
+    const program = javaPath(install)
+    if (!existsSync(program)) return
+    const key = program.toLowerCase()
+    if (!byProgram.has(key)) byProgram.set(key, { program, ports: [] })
+    byProgram.get(key)!.ports.push(...ports)
+  }
+  for (const p of listProfiles()) add(p.serverInstallPath, [p.port, p.udpPort || p.port + 1])
+  const fallback = serverInstallPath || loadSettings().serverInstallPath
+  if (fallback && !byProgram.has(javaPath(fallback).toLowerCase())) add(fallback, [16261, 16262])
+  return [...byProgram.values()]
+}
+
+function readFirewallRules(): Promise<FirewallRuleInfo[] | null> {
   return new Promise((resolve) => {
-    execFile('netsh', ['advfirewall', 'firewall', 'show', 'rule', `name=${RULE_NAME}`], { windowsHide: true, timeout: 8000 }, (err, stdout) => {
-      resolve(!err && /Rule Name/i.test(stdout))
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', firewallQueryScript()], { windowsHide: true, timeout: 20000 }, (err, stdout) => {
+      if (err) return resolve(null)
+      try { resolve(JSON.parse(stdout)) } catch { resolve(null) }
     })
   })
 }
 
-// Adds inbound allow rules for the server's java.exe. Needs admin, so Windows shows one "Allow" prompt.
-// The netsh commands go in a small .cmd file so there's no quoting soup between powershell and cmd.
-export function addFirewallRule(serverInstallPath: string): Promise<{ success: boolean; message?: string }> {
-  const java = javaPath(serverInstallPath)
-  if (!existsSync(java)) return Promise.resolve({ success: false, message: "The server isn't installed yet." })
-  const script = join(app.getPath('temp'), 'pzm-firewall.cmd')
-  writeFileSync(script, ['@echo off', ...['UDP', 'TCP'].map(proto =>
-    `netsh advfirewall firewall add rule name="${RULE_NAME}" dir=in action=allow program="${java}" protocol=${proto} enable=yes profile=any`
-  )].join('\r\n'))
-  const ps = `try { Start-Process -FilePath cmd.exe -ArgumentList '/c','"${script.replace(/'/g, "''")}"' -Verb RunAs -Wait -WindowStyle Hidden; exit 0 } catch { exit 5 }`
+export async function firewallStatus(serverInstallPath?: string) {
+  const needed = neededFirewall(serverInstallPath)
+  const rules = await readFirewallRules()
+  // couldn't ask Windows: don't nag about the firewall over that
+  if (!rules) return { exists: true, upToDate: true, oldRule: false, anyRule: false, ports: [] as number[], unknown: true }
+  const state = firewallState(needed, rules)
+  return { exists: state.upToDate, ...state, ports: [...new Set(needed.flatMap(e => e.ports))].sort((a, b) => a - b), unknown: false }
+}
+
+// true when every server's game ports are allowed through (the pre-start check and diagnostics)
+export async function firewallRuleExists(): Promise<boolean> {
+  return (await firewallStatus()).exists
+}
+
+// Runs a .cmd as admin, so Windows shows one "Allow" prompt. The netsh commands go in a
+// small file so there's no quoting soup between powershell and cmd.
+function runElevated(script: string): Promise<Error | null> {
+  const path = join(app.getPath('temp'), 'pzm-firewall.cmd')
+  writeFileSync(path, script)
+  const ps = `try { Start-Process -FilePath cmd.exe -ArgumentList '/c','"${path.replace(/'/g, "''")}"' -Verb RunAs -Wait -WindowStyle Hidden; exit 0 } catch { exit 5 }`
   return new Promise((resolve) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 120000 }, async (err) => {
-      try { unlinkSync(script) } catch { /* already gone */ }
-      if (await firewallRuleExists()) resolve({ success: true })
-      else resolve({ success: false, message: err ? 'You said no to the permission prompt.' : "Windows didn't add the rule." })
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 120000 }, (err) => {
+      try { unlinkSync(path) } catch { /* already gone */ }
+      resolve(err)
     })
   })
+}
+
+// Allows the server's game ports (UDP only) for every server install, replacing the
+// older rule that opened every port including RCON. One admin prompt.
+export async function addFirewallRule(serverInstallPath: string): Promise<{ success: boolean; message?: string }> {
+  if (!existsSync(javaPath(serverInstallPath))) return { success: false, message: "The server isn't installed yet." }
+  const err = await runElevated(firewallScript(neededFirewall(serverInstallPath)))
+  if ((await firewallStatus(serverInstallPath)).upToDate) return { success: true }
+  return { success: false, message: err ? 'You said no to the permission prompt.' : "Windows didn't add the rule." }
+}
+
+// Takes our rules back out (the old one too). One admin prompt.
+export async function removeFirewallRule(): Promise<{ success: boolean; message?: string }> {
+  const err = await runElevated(firewallRemoveScript())
+  if (!(await firewallStatus()).anyRule) return { success: true }
+  return { success: false, message: err ? 'You said no to the permission prompt.' : "Windows didn't remove the rule." }
 }
 
 export function setupNetworkHandlers() {
   ipcMain.handle('network:checkUpnp', async (_event, port: number, publicIp: string | null) => checkUpnp(port, publicIp))
-  ipcMain.handle('network:firewallStatus', async () => ({ exists: await firewallRuleExists() }))
+  ipcMain.handle('network:firewallStatus', async () => firewallStatus())
   ipcMain.handle('network:addFirewallRule', async (_event, serverInstallPath: string) => addFirewallRule(serverInstallPath))
+  ipcMain.handle('network:removeFirewallRule', async () => removeFirewallRule())
 }
