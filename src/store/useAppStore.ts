@@ -127,6 +127,10 @@ interface AppState {
   setLoadingMessage: (msg: string) => void
 }
 
+// console lines waiting for the next batched update (see appendConsoleLog)
+let pendingLogs: Record<string, string[]> = {}
+let flushTimer: ReturnType<typeof setTimeout> | null = null
+
 export const useAppStore = create<AppState>((set) => ({
   settings: null,
   setSettings: (settings) => set({ settings }),
@@ -167,15 +171,30 @@ export const useAppStore = create<AppState>((set) => ({
   })),
 
   consoleLogs: {},
-  appendConsoleLog: (profileId, line) => set((state) => {
-    const existing = state.consoleLogs[profileId] || []
-    const newLogs = [...existing, line]
-    const trimmed = newLogs.length > 3000 ? newLogs.slice(-3000) : newLogs
-    return { consoleLogs: { ...state.consoleLogs, [profileId]: trimmed } }
-  }),
-  clearConsoleLogs: (profileId) => set((state) => ({
-    consoleLogs: { ...state.consoleLogs, [profileId]: [] }
-  })),
+  // a starting server prints thousands of lines in a few seconds; adding them one at a
+  // time redrew the whole console for each line and froze the window, so lines are
+  // collected and added a few times a second
+  appendConsoleLog: (profileId, line) => {
+    ;(pendingLogs[profileId] ||= []).push(line)
+    if (flushTimer) return
+    flushTimer = setTimeout(() => {
+      flushTimer = null
+      const batch = pendingLogs
+      pendingLogs = {}
+      set((state) => {
+        const consoleLogs = { ...state.consoleLogs }
+        for (const [id, lines] of Object.entries(batch)) {
+          const all = [...(consoleLogs[id] || []), ...lines]
+          consoleLogs[id] = all.length > 3000 ? all.slice(-3000) : all
+        }
+        return { consoleLogs }
+      })
+    }, 200)
+  },
+  clearConsoleLogs: (profileId) => {
+    delete pendingLogs[profileId]
+    set((state) => ({ consoleLogs: { ...state.consoleLogs, [profileId]: [] } }))
+  },
 
   modDownloads: {},
   setModDownload: (workshopId, st) => set((state) => ({

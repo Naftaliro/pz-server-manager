@@ -32,6 +32,10 @@ export default function ConsolePanel({ profile }: { profile: ServerProfile }) {
   const status = serverStatuses[profile.id] || 'stopped'
   const logs = consoleLogs[profile.id] || []
   const canSend = status === 'running'
+  // drawing all 3000 lines at once froze the window for a moment, so only the newest
+  // 500 are drawn unless asked
+  const [showAll, setShowAll] = useState(false)
+  const hidden = showAll ? 0 : Math.max(0, logs.length - 500)
 
   useEffect(() => {
     if (autoScroll && consoleRef.current) consoleRef.current.scrollTop = consoleRef.current.scrollHeight
@@ -103,9 +107,16 @@ export default function ConsolePanel({ profile }: { profile: ServerProfile }) {
             </p>
           </div>
         ) : (
-          logs.map((line, i) => (
-            <div key={i} className={`leading-relaxed whitespace-pre-wrap break-all ${lineColor(line)}`}>{line || ' '}</div>
-          ))
+          <>
+            {hidden > 0 && (
+              <button onClick={() => setShowAll(true)} className="text-xs text-pz-muted hover:text-pz-text underline mb-2">
+                Show {hidden} earlier lines
+              </button>
+            )}
+            {logs.slice(hidden).map((line, i) => (
+              <div key={hidden + i} className={`leading-relaxed whitespace-pre-wrap break-all ${lineColor(line)}`}>{line || ' '}</div>
+            ))}
+          </>
         )}
       </div>
 

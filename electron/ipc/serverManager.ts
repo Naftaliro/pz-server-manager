@@ -187,7 +187,7 @@ function disableQuickEdit(windowTitle: string): Promise<boolean> {
 // Returns every java process that has a -servername, keyed by that name.
 function findServerPids(): Promise<Map<string, number>> {
   return new Promise((resolve) => {
-    const script = `Get-CimInstance Win32_Process -Filter "Name LIKE 'java%.exe'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`
+    const script = `Get-CimInstance Win32_Process -Filter "Name LIKE 'java%.exe'" | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress`
     execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
@@ -197,10 +197,18 @@ function findServerPids(): Promise<Map<string, number>> {
         if (err || !stdout || !stdout.trim()) return resolve(result)
         try {
           const parsed = JSON.parse(stdout)
-          const procs: Array<{ ProcessId: number; CommandLine: string | null }> = Array.isArray(parsed) ? parsed : [parsed]
+          const procs: Array<{ ProcessId: number; CommandLine: string | null; CreationDate?: string }> = Array.isArray(parsed) ? parsed : [parsed]
+          // with two copies of one server running, the first one started is the one that
+          // got the ports, so lowest creation time wins
+          const created = new Map<string, number>()
           for (const p of procs) {
             const match = (p.CommandLine || '').match(/-servername\s+"?([^"\s]+)"?/i)
-            if (match) result.set(match[1], p.ProcessId)
+            if (!match) continue
+            const at = Number(String(p.CreationDate || '').match(/\d+/)?.[0] || Infinity)
+            if (!result.has(match[1]) || at < (created.get(match[1]) ?? Infinity)) {
+              result.set(match[1], p.ProcessId)
+              created.set(match[1], at)
+            }
           }
         } catch { /* bad json, treat as none */ }
         resolve(result)
@@ -214,13 +222,17 @@ async function findServerPid(serverName: string): Promise<number | null> {
   return (await findServerPids()).get(serverName) ?? null
 }
 
+// Asks Windows directly instead of running tasklist: tasklist can take more than a few
+// seconds on a busy PC, and a slow answer used to count as "the server died", which
+// set off an auto-restart and a second copy of a server that was still loading
 function isPidAlive(pid: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    exec(`tasklist /FI "PID eq ${pid}" /NH`, { timeout: 5000, windowsHide: true }, (err, stdout) => {
-      if (err) return resolve(false)
-      resolve(stdout.includes(String(pid)))
-    })
-  })
+  try {
+    process.kill(pid, 0)
+    return Promise.resolve(true)
+  } catch (e) {
+    // EPERM = it exists, we just can't signal it
+    return Promise.resolve((e as NodeJS.ErrnoException).code === 'EPERM')
+  }
 }
 
 // The console window java runs in: `start` runs our launcher as `cmd /K`, which
@@ -432,6 +444,7 @@ function handleCrash(profileId: string) {
   setTimeout(() => { if (!runningServers.has(profileId)) void startAfterRestart(profileId) }, 10000)
 }
 
+
 // ---------------------------------------------------------------------------
 // Mod updates: when a mod updates on the Workshop, players with the new version
 // can't join until the server restarts. Check every 15 minutes while running.
@@ -613,23 +626,28 @@ async function reattachRunning() {
   const pids = await findServerPids()
   if (pids.size === 0) return
   for (const profile of listProfiles()) {
-    const serverName = getServerName(profile)
-    const pid = pids.get(serverName)
+    const pid = pids.get(getServerName(profile))
     if (!pid || runningServers.has(profile.id)) continue
-    const dataPath = resolveDataPath(profile.worldSavePath)
-    const logPath = join(dataPath, 'server-console.txt')
-    const srv: ServerProcess = {
-      pid, status: 'starting', serverName, serverDir: profile.serverInstallPath,
-      logPath, logOffset: 0, watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
-      reattached: true,
-    }
-    runningServers.set(profile.id, srv)
-    emitStatusChange(profile.id, 'starting')
-    emitConsoleOutput(profile.id, `[Knox] Found this server already running (PID ${pid}), reconnected.`)
-    attach(profile.id, srv, pid)
-    // replays the existing log, which flips it to running if it already finished loading
-    tailLog(profile.id, srv)
+    reattachProfile(profile, pid)
   }
+}
+
+// Pick a server that's already running back up instead of starting another copy
+function reattachProfile(profile: ServerProfile, pid: number) {
+  const serverName = getServerName(profile)
+  const dataPath = resolveDataPath(profile.worldSavePath)
+  const logPath = join(dataPath, 'server-console.txt')
+  const srv: ServerProcess = {
+    pid, status: 'starting', serverName, serverDir: profile.serverInstallPath,
+    logPath, logOffset: 0, watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
+    reattached: true,
+  }
+  runningServers.set(profile.id, srv)
+  emitStatusChange(profile.id, 'starting')
+  emitConsoleOutput(profile.id, `[Knox] Found this server already running (PID ${pid}), reconnected.`)
+  attach(profile.id, srv, pid)
+  // replays the existing log, which flips it to running if it already finished loading
+  tailLog(profile.id, srv)
 }
 
 // ---------------------------------------------------------------------------
@@ -781,6 +799,15 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
 
     let profile = getProfile(profileId)
     if (!profile) return { success: false, message: 'Profile not found' }
+
+    // the app lost track of it (closed and reopened, a check went wrong) but it's still
+    // up: reconnect. A second copy would fight it for the port, wipe its log and
+    // rewrite its config while it runs
+    const alreadyUp = await findServerPid(getServerName(profile))
+    if (alreadyUp) {
+      reattachProfile(profile, alreadyUp)
+      return { success: true, message: 'This server was already running, so the app reconnected to it.' }
+    }
 
     const serverDir = profile.serverInstallPath
     if (!existsSync(join(serverDir, 'StartServer64.bat'))) {
