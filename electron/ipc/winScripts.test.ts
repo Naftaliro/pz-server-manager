@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { spawn, execFileSync } from 'child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, copyFileSync, openSync, readSync, closeSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
   batText, quotedValue, patchStartBat, launcherScript, updateScript,
   serverWindowCommand, updaterWindowCommand, sendKeysScript,
   firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, FIREWALL_RULE, OLD_FIREWALL_RULE,
-  type FirewallRuleInfo,
+  type FirewallRuleInfo, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller,
 } from './winScripts'
 
 const STOCK_BAT = [
@@ -269,4 +269,49 @@ describe.runIf(process.platform === 'win32')('firewall on Windows', () => {
       expect(Array.isArray(r.ports)).toBe(true)
     }
   }, 30000)
+})
+
+describe('installer updates', () => {
+  it('finds the uninstaller electron-builder puts next to the installed exe', () => {
+    expect(uninstallerFor('C:\\Users\\Me\\AppData\\Local\\Programs\\pz-server-manager\\PZ Server Manager.exe'))
+      .toBe('C:\\Users\\Me\\AppData\\Local\\Programs\\pz-server-manager\\Uninstall PZ Server Manager.exe')
+  })
+
+  it('runs the installer silently as an update and restarts the app', () => {
+    expect(INSTALLER_UPDATE_ARGS).toEqual(['/S', '--updated', '--force-run'])
+  })
+
+  const pe = (extra = '') => {
+    const b = Buffer.alloc(0x200 + extra.length)
+    b.write('MZ', 0, 'latin1')
+    b.writeUInt32LE(0x80, 0x3c)
+    b.write('PE\0\0', 0x80, 'latin1')
+    b.write(extra, 0x200, 'latin1')
+    return b
+  }
+
+  it('only takes a Windows program that is an NSIS installer', () => {
+    expect(isNsisInstaller(pe('\xef\xbe\xad\xdeNullsoftInst'))).toBe(true)
+    expect(isNsisInstaller(pe())).toBe(false)
+    expect(isNsisInstaller(Buffer.from('PK\x03\x04NullsoftInst', 'latin1'))).toBe(false)
+    expect(isNsisInstaller(Buffer.from('MZ'))).toBe(false)
+  })
+})
+
+// the real thing, when a build has been made on this PC
+describe.runIf(process.platform === 'win32')('installer updates on Windows', () => {
+  const release = join(__dirname, '..', '..', 'release')
+  const head = (f: string) => { const b = Buffer.alloc(1024 * 1024); const fd = openSync(f, 'r'); const n = readSync(fd, b, 0, b.length, 0); closeSync(fd); return b.subarray(0, n) }
+  const built = existsSync(release) ? readdirSync(release) : []
+  const setup = built.find(f => /-Setup-[\d.]+\.exe$/i.test(f))
+  const zip = built.find(f => /-win\.zip$/i.test(f))
+
+  it.runIf(!!setup)('recognises the real installer', () => {
+    expect(isNsisInstaller(head(join(release, setup!)))).toBe(true)
+  })
+  it.runIf(!!zip)('and not the portable zip or the app exe', () => {
+    expect(isNsisInstaller(head(join(release, zip!)))).toBe(false)
+    const exe = join(release, 'win-unpacked', 'PZ Server Manager.exe')
+    if (existsSync(exe)) expect(isNsisInstaller(head(exe))).toBe(false)
+  })
 })

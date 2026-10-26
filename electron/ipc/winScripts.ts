@@ -254,3 +254,28 @@ export function firewallState(needed: FirewallEntry[], rules: FirewallRuleInfo[]
     && samePath(r.program, e.program) && r.ports.includes(String(port)))))
   return { upToDate: covered && !oldRule, oldRule, anyRule: ours.length > 0 || oldRule }
 }
+
+// ── Installer updates ────────────────────────────────────────────────────────
+
+// The installed (NSIS) copy has electron-builder's uninstaller next to the exe, named after
+// the exe ("Uninstall ${productFilename}.exe", and productFilename comes from executableName,
+// so here "Uninstall PZ Server Manager.exe"). The portable zip doesn't have one
+export function uninstallerFor(appExe: string): string {
+  const name = win32.basename(appExe).replace(/\.exe$/i, '')
+  return win32.join(win32.dirname(appExe), `Uninstall ${name}.exe`)
+}
+
+// electron-builder's NSIS switches: silent, an update (waits for the app to close and skips
+// its pages), and start the app again when it's done. It installs over the same folder
+export const INSTALLER_UPDATE_ARGS = ['/S', '--updated', '--force-run']
+
+// The first bytes of a download: a Windows program (MZ and PE headers) that is an NSIS
+// installer. Its "NullsoftInst" header comes right after the small setup program, about
+// 100 KB in, so the first 1 MB is plenty
+export function isNsisInstaller(head: Uint8Array): boolean {
+  const buf = Buffer.from(head.buffer, head.byteOffset, head.byteLength)
+  if (buf.length < 0x40 || buf[0] !== 0x4d || buf[1] !== 0x5a) return false
+  const pe = buf.readUInt32LE(0x3c)
+  if (pe + 4 > buf.length || buf.toString('latin1', pe, pe + 4) !== 'PE\0\0') return false
+  return buf.indexOf('NullsoftInst', 0, 'latin1') !== -1
+}

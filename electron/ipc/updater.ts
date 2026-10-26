@@ -7,11 +7,18 @@ import fs from 'fs'
 import originalFs from 'original-fs'
 import path from 'path'
 import { spawn } from 'child_process'
-import { updateScript, updaterWindowCommand } from './winScripts'
+import { updateScript, updaterWindowCommand, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller } from './winScripts'
 
 const GITHUB_OWNER = 'Naftaliro'
 const GITHUB_REPO = 'pz-server-manager'
 const RELEASE_ZIP_URL = new RegExp(`^https://github\\.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/[^/]+/[^/\\\\]+\\.zip$`, 'i')
+const RELEASE_EXE_URL = new RegExp(`^https://github\\.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/[^/]+/[^/\\\\]+\\.exe$`, 'i')
+
+// Installed with the setup exe (so Windows "Apps & features" knows the version) or the
+// portable zip. Updates go the same way they came in
+function isInstalledCopy(): boolean {
+  return app.isPackaged && fs.existsSync(uninstallerFor(app.getPath('exe')))
+}
 
 // Read the version fresh each time from the app — never cache at module load
 function getCurrentVersion(): string {
@@ -148,7 +155,10 @@ function downloadFile(
 
       res.on('end', () => {
         file.end()
-        file.on('finish', resolve)
+        // a dropped connection can still end "normally" with only part of the file
+        file.on('finish', () => (total > 0 && received !== total
+          ? reject(new Error(`the download stopped early (${received} of ${total} bytes)`))
+          : resolve()))
         file.on('error', reject)
       })
 
@@ -185,6 +195,72 @@ function cleanTempDir(tempDir: string): void {
   }
 }
 
+// ── Installed copy: run the new setup exe ─────────────────────────────────────
+//
+// Copying the zip over an installed copy worked, but Windows "Apps & features" kept
+// showing the old version. The setup exe updates it properly:
+//   1. Same checks as the zip: only this repo's release downloads, a plain file name
+//   2. Download to %LOCALAPPDATA%\pz-manager-update\ (all of it, see downloadFile)
+//   3. Check it's a Windows program and an NSIS installer before running anything
+//   4. Run it silently as an update (it waits for the app to close, installs over the
+//      same folder and starts the app again), then quit
+async function installWithSetup(downloadUrl: string, assetName: string): Promise<{ success: boolean; message?: string }> {
+  if (!RELEASE_EXE_URL.test(downloadUrl) || !/^[\w. -]+\.exe$/i.test(assetName)) {
+    return { success: false, message: "That download isn't one of this app's releases. Please update manually from the GitHub releases page." }
+  }
+  // the portable copy has no installer, it updates with the zip
+  if (!isInstalledCopy()) {
+    return { success: false, message: "This copy wasn't installed with the setup, so it can't update with it. Please update manually from the GitHub releases page." }
+  }
+
+  const localAppData = process.env.LOCALAPPDATA || app.getPath('temp')
+  const tempDir = path.join(localAppData, 'pz-manager-update')
+  const setupPath = path.join(tempDir, assetName)
+  cleanTempDir(tempDir)
+  try {
+    fs.mkdirSync(tempDir, { recursive: true })
+  } catch (err) {
+    return { success: false, message: `Failed to create temp directory: ${(err as Error).message}` }
+  }
+
+  safeSend('updater:progress', { stage: 'Downloading update...', pct: 0 })
+  try {
+    await downloadFile(downloadUrl, setupPath, (pct) => safeSend('updater:progress', { stage: 'Downloading update...', pct }))
+  } catch (err) {
+    cleanTempDir(tempDir)
+    return { success: false, message: `Download failed: ${(err as Error).message}` }
+  }
+
+  safeSend('updater:progress', { stage: 'Verifying download...', pct: 100 })
+  try {
+    const head = Buffer.alloc(1024 * 1024)
+    const fd = fs.openSync(setupPath, 'r')
+    const n = fs.readSync(fd, head, 0, head.length, 0)
+    fs.closeSync(fd)
+    if (!isNsisInstaller(head.subarray(0, n))) {
+      cleanTempDir(tempDir)
+      return { success: false, message: "The downloaded installer isn't valid. The release file may be missing or broken." }
+    }
+  } catch (err) {
+    cleanTempDir(tempDir)
+    return { success: false, message: `Failed to verify download: ${(err as Error).message}` }
+  }
+
+  try {
+    // straight to the exe, no cmd in between, so nothing in the path gets parsed
+    spawn(setupPath, INSTALLER_UPDATE_ARGS, { detached: true, stdio: 'ignore', windowsHide: false }).unref()
+  } catch (err) {
+    cleanTempDir(tempDir)
+    return { success: false, message: `Failed to start the installer: ${(err as Error).message}` }
+  }
+
+  // the installer waits for the app to close (and closes it if it doesn't)
+  setTimeout(() => {
+    try { app.quit() } catch { /* ignore */ }
+  }, 1500)
+  return { success: true }
+}
+
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 export function setupUpdaterHandlers() {
@@ -203,11 +279,14 @@ export function setupUpdaterHandlers() {
       const latestVersion = release.tag_name.replace(/^v/, '')
       const isNewer = compareVersions(latestVersion, currentVersion) > 0
 
-      // Prefer a win zip asset; fall back to any zip
-      const asset =
+      // the installed copy updates with the new setup exe, the portable one with the zip
+      // (prefer a win zip; any zip if a release only has that)
+      const zip =
         release.assets.find(a => /win.*\.zip$/i.test(a.name)) ||
         release.assets.find(a => a.name.endsWith('.zip')) ||
         null
+      const setup = release.assets.find(a => /-Setup-[\d.]+\.exe$/i.test(a.name)) || null
+      const asset = (isInstalledCopy() && setup) || zip
 
       const info: UpdateInfo = {
         available: isNewer,
@@ -230,7 +309,7 @@ export function setupUpdaterHandlers() {
 
   // ── Download and install update ──────────────────────────────────────────────
   //
-  // Strategy:
+  // Strategy (the portable copy; an installed copy gets the setup exe, see installWithSetup):
   //   1. Clean any leftover temp dir from a previous attempt
   //   2. Download the zip to %LOCALAPPDATA%\pz-manager-update\
   //   3. Verify the zip magic bytes
@@ -245,6 +324,7 @@ export function setupUpdaterHandlers() {
     if (!downloadUrl || !assetName) {
       return { success: false, message: 'No download URL provided. Please update manually from the GitHub releases page.' }
     }
+    if (/\.exe$/i.test(assetName)) return installWithSetup(downloadUrl, assetName)
     // only ever install a zip from this repo's own releases (what updater:check hands out)
     if (!RELEASE_ZIP_URL.test(downloadUrl) || !/^[\w. -]+\.zip$/i.test(assetName)) {
       return { success: false, message: "That download isn't one of this app's releases. Please update manually from the GitHub releases page." }
