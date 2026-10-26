@@ -57,9 +57,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'NOTES'
+          Knox Launcher is a Windows app for hosting Project Zomboid servers and joining friends' servers with the same mods. The [README](https://github.com/${{ github.repository }}#readme) covers everything it does.
+
           Download `Knox-Launcher-Setup-*.exe` to install, or the `-win.zip` for the portable version.
 
-          Built by GitHub Actions from this tag. [Code signing policy](https://github.com/${{ github.repository }}/blob/main/CODE_SIGNING_POLICY.md)
+          Built by GitHub Actions from this tag. Free code signing provided by SignPath.io, certificate by SignPath Foundation. See the [Code signing policy](https://github.com/${{ github.repository }}/blob/main/CODE_SIGNING_POLICY.md).
           NOTES
           gh release create "${{ github.ref_name }}" dist/* \
             --repo "${{ github.repository }}" \
