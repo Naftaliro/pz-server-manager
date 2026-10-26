@@ -131,7 +131,8 @@ export function setupDiagnosticsHandlers() {
   ipcMain.on('diagnostics:reportError', (_event, where: string, message: string) => recordAppError(where, message))
   ipcMain.handle('diagnostics:copy', async () => {
     const text = await buildDiagnostics()
-    clipboard.writeText(text)
+    // returns a promise since Electron 44, a failed copy would otherwise go unnoticed
+    await clipboard.writeText(text)
     return text
   })
 }

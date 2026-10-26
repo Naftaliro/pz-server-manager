@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { setupSteamCmdHandlers } from './ipc/steamcmd'
 import { setupServerHandlers } from './ipc/serverManager'
 import { setupProfileHandlers } from './ipc/profileManager'
@@ -20,6 +21,19 @@ import { setupDiscordHandlers } from './ipc/discord'
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null
+
+// the packaged app's one page, the only thing its window may load
+const appPage = pathToFileURL(join(__dirname, '../dist/index.html')).href
+
+// same file, ignoring #hash and ?query (Windows paths aren't case sensitive)
+function samePage(a: string, b: string): boolean {
+  try {
+    const strip = (u: string) => { const x = new URL(u); return `${x.protocol}//${x.host}${decodeURIComponent(x.pathname)}`.toLowerCase() }
+    return strip(a) === strip(b)
+  } catch {
+    return false
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -52,6 +66,8 @@ function createWindow() {
   // otherwise replace the app with that page, and the page would keep the app's preload.
   mainWindow.webContents.on('will-navigate', (e, url) => {
     if (devServerUrl && url.startsWith(devServerUrl)) return
+    // its own page is fine: that's a reload (the Reload button on the crash screen)
+    if (!devServerUrl && samePage(url, appPage)) return
     e.preventDefault()
     if (/^https?:\/\//.test(url)) shell.openExternal(url)
   })
