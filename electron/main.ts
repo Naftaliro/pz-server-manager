@@ -48,6 +48,18 @@ function createWindow() {
     mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }
 
+  // The window only ever shows the app. A file dropped on it or a stray link would
+  // otherwise replace the app with that page, and the page would keep the app's preload.
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    if (devServerUrl && url.startsWith(devServerUrl)) return
+    e.preventDefault()
+    if (/^https?:\/\//.test(url)) shell.openExternal(url)
+  })
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })

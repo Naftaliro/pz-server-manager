@@ -7,9 +7,11 @@ import fs from 'fs'
 import originalFs from 'original-fs'
 import path from 'path'
 import { spawn } from 'child_process'
+import { updateScript, updaterWindowCommand } from './winScripts'
 
 const GITHUB_OWNER = 'Naftaliro'
 const GITHUB_REPO = 'pz-server-manager'
+const RELEASE_ZIP_URL = new RegExp(`^https://github\\.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/[^/]+/[^/\\\\]+\\.zip$`, 'i')
 
 // Read the version fresh each time from the app — never cache at module load
 function getCurrentVersion(): string {
@@ -243,6 +245,10 @@ export function setupUpdaterHandlers() {
     if (!downloadUrl || !assetName) {
       return { success: false, message: 'No download URL provided. Please update manually from the GitHub releases page.' }
     }
+    // only ever install a zip from this repo's own releases (what updater:check hands out)
+    if (!RELEASE_ZIP_URL.test(downloadUrl) || !/^[\w. -]+\.zip$/i.test(assetName)) {
+      return { success: false, message: "That download isn't one of this app's releases. Please update manually from the GitHub releases page." }
+    }
 
     // Use %LOCALAPPDATA% — more reliable than %TEMP% on Windows for persisting across sessions
     const localAppData = process.env.LOCALAPPDATA || app.getPath('temp')
@@ -290,75 +296,7 @@ export function setupUpdaterHandlers() {
     }
 
     // ── Step 4: Write the updater batch script ───────────────────────────────────
-    const appExe = app.getPath('exe')
-    const appDir = path.dirname(appExe)
-    const exeName = path.basename(appExe)
-
-    // Use short 8.3-safe variable names inside the batch to avoid quoting issues
-    const batchScript = [
-      '@echo off',
-      'setlocal enabledelayedexpansion',
-      'title Knox Launcher - Updating...',
-      'echo ================================================',
-      'echo  Knox Launcher Auto-Updater',
-      'echo ================================================',
-      'echo.',
-      'echo Waiting for the app to fully close...',
-      // files stay locked until every app process is gone, so wait for that (up to ~30s)
-      'set /a TRIES=0',
-      ':waitloop',
-      `tasklist /FI "IMAGENAME eq ${exeName}" /NH | find /I "${exeName}" > nul`,
-      'if not errorlevel 1 (',
-      '  set /a TRIES+=1',
-      '  if !TRIES! lss 30 (',
-      '    timeout /t 1 /nobreak > nul',
-      '    goto waitloop',
-      '  )',
-      ')',
-      '',
-      'echo Extracting update package...',
-      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force"`,
-      'if %errorlevel% neq 0 (',
-      '  echo.',
-      '  echo ERROR: Extraction failed. Please update manually.',
-      '  pause',
-      '  exit /b 1',
-      ')',
-      '',
-      'echo Finding extracted app folder...',
-      // the release zip is flat (exe at the root next to locales\\ and resources\\),
-      // so look for the exe instead of grabbing the first subfolder
-      'set "SRC="',
-      `if exist "${extractDir}\\${exeName}" set "SRC=${extractDir}"`,
-      'if not defined SRC (',
-      `  for /d %%i in ("${extractDir}\\*") do (`,
-      `    if not defined SRC if exist "%%i\\${exeName}" set "SRC=%%i"`,
-      '  )',
-      ')',
-      'if not defined SRC (',
-      '  echo.',
-      `  echo ERROR: ${exeName} was not found in the update package. Please update manually.`,
-      '  pause',
-      '  exit /b 1',
-      ')',
-      '',
-      `echo Copying new files to: ${appDir}`,
-      `robocopy "!SRC!" "${appDir}" /E /IS /IT /IM /NP /NJH /NJS 2>nul`,
-      ':: robocopy exit codes 0-7 are success (8+ are errors)',
-      'if %errorlevel% geq 8 (',
-      '  echo Robocopy reported errors, trying xcopy fallback...',
-      `  xcopy /E /Y /I "!SRC!\\*" "${appDir}\\" > nul`,
-      ')',
-      '',
-      'echo.',
-      'echo Update complete! Relaunching Knox Launcher...',
-      'timeout /t 2 /nobreak > nul',
-      `start "" "${appExe}"`,
-      '',
-      ':: Clean up this batch file',
-      'del "%~f0"',
-      'exit /b 0',
-    ].join('\r\n')
+    const batchScript = updateScript({ zipPath, extractDir, appExe: app.getPath('exe') })
 
     const batchPath = path.join(tempDir, 'pz-update.bat')
 
@@ -373,11 +311,13 @@ export function setupUpdaterHandlers() {
     // Use /c (not /k) so the terminal closes automatically after the update completes.
     // The batch itself pauses on error so the user can read it, but exits cleanly on success.
     try {
-      spawn('cmd.exe', ['/c', 'start', 'PZ Updater', '/wait', 'cmd.exe', '/c', batchPath], {
+      const launch = updaterWindowCommand(batchPath)
+      spawn('cmd.exe', [launch.args], {
+        env: { ...process.env, ...launch.env },
         detached: true,
         stdio: 'ignore',
-        shell: false,
         windowsHide: false,
+        windowsVerbatimArguments: true,
       }).unref()
     } catch (err) {
       cleanTempDir(tempDir)

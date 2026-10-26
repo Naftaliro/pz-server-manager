@@ -64,6 +64,7 @@ easiest: follow the playit.gg guide in app settings and paste your playit addres
 - world saves: `%USERPROFILE%\Zomboid\Saves\Multiplayer\[ServerName]\`
 - server log: `%USERPROFILE%\Zomboid\server-console.txt`
 - the app's own stuff: `%APPDATA%\pz-server-manager\` (`profiles.json`, `settings.json`)
+- one Windows setting: QuickEdit is turned off for the server's console window only (`HKCU\Console\PZ Server - [ServerName]`), because clicking inside that window would freeze the server
 
 ## building it
 

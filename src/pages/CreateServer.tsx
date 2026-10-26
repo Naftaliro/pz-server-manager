@@ -6,10 +6,9 @@ import type { PresetKey } from '../lib/presets'
 import { DEV_PRESETS } from '../lib/devPresets'
 import { saveProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
 import { downloadAndScan } from '../lib/mods'
+import { suggestPassword } from '../../shared/serverPack'
 
 type Step = 0 | 1 | 2
-
-const randomPassword = () => Math.random().toString(36).slice(2, 10)
 
 // Three questions and you have a server. Everything else gets sensible defaults
 // and can be changed later in Settings.
@@ -67,7 +66,7 @@ export default function CreateServer() {
         port,
         udpPort: port + 1,
         memory,
-        adminPassword: randomPassword(),
+        adminPassword: suggestPassword(),
         serverPassword: password,
         maxPlayers,
         mods: devPreset ? devPreset.mods : [],

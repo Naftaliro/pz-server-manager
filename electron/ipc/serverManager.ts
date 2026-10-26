@@ -17,6 +17,7 @@ import { loadSettings } from './appSettings'
 import { ensurePlayitRunning, PLAYIT_INTEGRATION } from './playit'
 import { firewallRuleExists } from './network'
 import { notify, escapeDiscord, DISCORD_COLORS } from './discord'
+import { patchStartBat, launcherScript, serverWindowCommand, sendKeysScript } from './winScripts'
 
 // 'starting' = java is up but still loading the world/mods, 'running' = friends can join
 type Status = 'starting' | 'running' | 'stopping' | 'stopped'
@@ -141,24 +142,13 @@ function writeProfileSandbox(serverName: string, dataPath: string, profile: Serv
 }
 
 // ---------------------------------------------------------------------------
-// Make a copy of StartServer64.bat we can tweak every launch:
-//  - the stock bat only forwards %1 %2, so -adminpassword / -cachedir got dropped
-//  - swap in the profile's memory for -Xms / -Xmx (stock B42 bat hardcodes 16g, which fails on smaller PCs)
+// Make a copy of StartServer64.bat we can tweak every launch (see patchStartBat).
 // Regenerated on every start so Steam updates to the real bat still apply.
 // ---------------------------------------------------------------------------
 function writePatchedStartBat(serverDir: string, serverName: string, memoryMb?: number): string {
   const original = readFileSync(join(serverDir, 'StartServer64.bat'), 'utf-8')
-  let patched = original
-    .replace(/%1 %2(?: %3)?(?: %4)?(?: %5)?(?: %6)?/g, '%*')
-    // the stock bat ends in PAUSE, which leaves a "press any key" window behind after every stop
-    .replace(/^\s*PAUSE\s*$/gim, '')
-  if (memoryMb && memoryMb >= 1024) {
-    patched = patched
-      .replace(/-Xms\d+[mMgG]?/g, `-Xms${memoryMb}m`)
-      .replace(/-Xmx\d+[mMgG]?/g, `-Xmx${memoryMb}m`)
-  }
   const name = `_pzm_StartServer64_${serverName}.bat`
-  writeFileSync(join(serverDir, name), patched)
+  writeFileSync(join(serverDir, name), patchStartBat(original, memoryMb))
   return name
 }
 
@@ -264,13 +254,11 @@ function killProcessTree(pid: number): Promise<void> {
 }
 
 // Last resort when RCON isn't answering: type into the console window.
-// ESC first: if the window is stuck in "Select" mode the first key only ends the
-// selection, which would turn "quit" into "uit".
 function sendKeysToWindow(serverName: string, text: string): Promise<void> {
-  const escaped = text.replace(/'/g, "''").replace(/[+^%~(){}[\]]/g, '{$&}')
   return new Promise((resolve) => {
-    exec(
-      `powershell -NoProfile -Command "& {$wshell = New-Object -ComObject wscript.shell; $wshell.AppActivate('PZ Server - ${serverName}'); Start-Sleep -Milliseconds 200; $wshell.SendKeys('{ESC}'); Start-Sleep -Milliseconds 100; $wshell.SendKeys('${escaped}{ENTER}')}"`,
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-Command', sendKeysScript(`PZ Server - ${serverName}`, text)],
       { timeout: 5000, windowsHide: true },
       () => resolve()
     )
@@ -824,6 +812,13 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
     const serverName = getServerName(profile)
     const adminPassword = profile.adminPassword || 'admin'
     const dataPath = resolveDataPath(profile.worldSavePath)
+    // both go inside "..." in the launcher, where a quote would end them early
+    if (/["\r\n]/.test(adminPassword)) {
+      return { success: false, message: 'The admin password can\'t have a " in it. Change it in the server settings and start again.' }
+    }
+    if (/["\r\n]/.test(dataPath)) {
+      return { success: false, message: 'The world save folder can\'t have a " in it. Change it in the server settings and start again.' }
+    }
     const launchMode = profile.launchMode || 'managed'
     emitConsoleOutput(profileId, `[Knox] Launch mode: ${launchMode}`)
     emitConsoleOutput(profileId, `[Knox] Data path: ${dataPath}`)
@@ -857,23 +852,11 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
     }
 
     // -cachedir points PZ at a custom data folder so it reads OUR named config files
-    const cacheArg = dataPath !== resolveDataPath() ? ` -cachedir="${dataPath}"` : ''
     const launcherPath = join(serverDir, `_pzm_launch_${serverName}.bat`)
-    writeFileSync(launcherPath, [
-      `@echo off`,
-      `title PZ Server - ${serverName}`,
-      `cd /d "${serverDir}"`,
-      `echo ================================================`,
-      `echo  Project Zomboid Server: ${serverName}`,
-      `echo  Managed by Knox Launcher - use the app to stop it`,
-      `echo ================================================`,
-      // .\ on purpose: with NoDefaultCurrentDirectoryInExePath set (some dev tools set it)
-      // cmd won't look in the current folder and says the bat "is not recognized"
-      `call ".\\${startBatName}" -servername "${serverName}" -adminpassword "${adminPassword}"${cacheArg}`,
-      // close the window after a clean quit (in-game /quit, typed in the window),
-      // but leave it open after a crash so the error can still be read
-      `if not errorlevel 1 exit`,
-    ].join('\r\n'))
+    writeFileSync(launcherPath, launcherScript({
+      serverName, serverDir, startBat: startBatName, adminPassword,
+      cacheDir: dataPath !== resolveDataPath() ? dataPath : undefined,
+    }))
 
     if (profile.backupsEnabled !== false) {
       try {
@@ -902,10 +885,11 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
     // minimized so it stays out of the way but still shows up in the taskbar
     // built as one verbatim string: node escapes quotes inside args as \" and `start`
     // chokes on that, so the server silently never launched
+    const launch = serverWindowCommand(windowTitle, serverDir, launcherPath)
     const proc: ChildProcess = spawn(
       'cmd.exe',
-      ['/c', `start "${windowTitle}" /min /D "${serverDir}" "${launcherPath}"`],
-      { cwd: serverDir, detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true }
+      [launch.args],
+      { cwd: serverDir, env: { ...process.env, ...launch.env }, detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true }
     )
     proc.unref()
 
