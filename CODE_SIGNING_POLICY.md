@@ -6,7 +6,7 @@ Free code signing provided by [SignPath.io](https://about.signpath.io/), certifi
 
 Only Knox Launcher's own Windows files are signed: the installer (`Knox-Launcher-Setup-x.x.x.exe`) and the app executable, including the copy inside the portable zip. They are built by [GitHub Actions](.github/workflows/build.yml) from the source code in this repository, and every signing request is approved by hand.
 
-Programs the app downloads for you are not part of the release and are not signed by this project: SteamCMD and the Project Zomboid dedicated server (from Valve), Steam Workshop mods, and playit.gg (installed through winget only if you ask for it).
+Programs the app downloads for you are not part of the release and are not signed by this project: SteamCMD and the Project Zomboid dedicated server (from Valve) and Steam Workshop mods. playit.gg is optional, and you install it yourself from playit.gg if you want to use it.
 
 ## Team roles
 
