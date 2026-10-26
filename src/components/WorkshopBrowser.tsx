@@ -262,8 +262,13 @@ export default function WorkshopBrowser({ addedIds, buildVersion, onAdd, searchR
     setAdding(true)
     try {
       if (item.collection) {
-        await onAdd(item.collection)
-        showToast(`Added ${item.collection.filter(m => !addedIds.includes(m.workshopId)).length} mods from the collection`)
+        // the full pack: collections inside it plus the mods each one requires
+        const pack = await window.electronAPI.mods.resolvePack([item.id], true)
+        const mods = pack.success && pack.details.length ? pack.details : item.collection
+        const fresh = mods.filter(m => !addedIds.includes(m.workshopId))
+        await onAdd(mods)
+        const deps = pack.success ? Object.keys(pack.addedDeps).filter(id => fresh.some(m => m.workshopId === id)).length : 0
+        showToast(`Added ${fresh.length} mods from the collection${deps ? ` (${deps} of them required by others)` : ''}`)
       } else if (item.details) {
         const deps = item.required.filter(r => !skipRequired.includes(r.workshopId))
         await onAdd([...deps, item.details])

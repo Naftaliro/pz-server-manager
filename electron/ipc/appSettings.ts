@@ -13,6 +13,14 @@ export interface AppSettings {
   steamManaged: boolean
   // "Works with playit.gg" turned on
   playitEnabled: boolean
+  // optional, the user's own key from steamcommunity.com/dev/apikey. Lets modpack
+  // installs find the mods each mod requires (Steam only shares that with a key)
+  steamApiKey?: string
+  // Play mode: where the game is if Steam's list doesn't say, and the player's Zomboid folder
+  gameDir?: string
+  clientDataDir?: string
+  // what the first-run screen picked: hosting servers, or just playing on friends' servers
+  role?: 'host' | 'player'
 }
 
 const DEFAULTS: AppSettings = {

@@ -24,7 +24,7 @@ export function isWebhookUrl(url: string): boolean {
 export function postToWebhook(url: string, text: string, color: number): Promise<{ success: boolean; message?: string }> {
   if (!isWebhookUrl(url)) return Promise.resolve({ success: false, message: "That doesn't look like a Discord webhook link." })
   const body = JSON.stringify({
-    username: 'PZ Server Manager',
+    username: 'Knox Launcher',
     embeds: [{ description: text.slice(0, 4000), color }],
     // never ping @everyone or anyone else from a player name
     allowed_mentions: { parse: [] },

@@ -13,7 +13,7 @@ const QUICK_COMMANDS = [
 
 function lineColor(line: string): string {
   if (line.startsWith('> ')) return 'text-pz-blue'
-  if (line.startsWith('[PZ Manager]')) return 'text-pz-green'
+  if (line.startsWith('[Knox]')) return 'text-pz-green'
   if (/\bERROR\b|Exception|\[ERR\]/.test(line)) return 'text-pz-red'
   if (/\bWARN/.test(line)) return 'text-pz-yellow'
   if (/SERVER STARTED/i.test(line)) return 'text-pz-teal'

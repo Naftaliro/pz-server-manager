@@ -11,6 +11,7 @@ import AppSettings from './pages/AppSettings'
 import ServerEditor from './pages/ServerEditor'
 import SandboxEditor from './pages/SandboxEditor'
 import RawFileEditor from './pages/RawFileEditor'
+import Play from './pages/Play'
 import LoadingOverlay from './components/LoadingOverlay'
 import UpdateBanner from './components/UpdateBanner'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -32,13 +33,14 @@ export default function App() {
         const candidates = [s.serverInstallPath, ...list.map(p => p.serverInstallPath)].filter(Boolean)
         for (const dir of candidates) {
           if (await window.electronAPI.steamcmd.checkInstalled(dir)) {
-            s = await window.electronAPI.settings.set({ setupComplete: true, serverInstallPath: dir })
+            s = await window.electronAPI.settings.set({ setupComplete: true, serverInstallPath: dir, role: 'host' })
             break
           }
         }
       }
       setSettings(s)
-      setActiveView(s.setupComplete ? 'home' : 'setup')
+      // players who only join friends' servers land on Play, hosts on their servers
+      setActiveView(!s.setupComplete ? 'setup' : s.role === 'player' ? 'play' : 'home')
       setReady(true)
     })()
 
@@ -71,6 +73,7 @@ export default function App() {
       case 'editor': return <ServerEditor />
       case 'sandbox': return <SandboxEditor />
       case 'raweditor': return <RawFileEditor />
+      case 'play': return <Play />
       default: return <Home />
     }
   }

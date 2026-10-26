@@ -1,12 +1,27 @@
-# pz server manager
+# knox launcher
 
-a windows app for hosting project zomboid (b42) servers for you and your friends. no ini files, no command lines, mods just work.
+*(used to be called pz server manager)*
+
+a windows app for playing project zomboid (b42) with your friends. host a server, or join a friend's with exactly their mods and fixes. no ini files, no command lines, mods just work.
+
+**joining a friend's server**
+
+- pick "play on a friend's server" the first time it opens, no server download needed
+- the host sends you a server pack (a small `.pzpack` file, discord works). open it under **play**
+- it checks your mods against theirs, installs the host's fix mods with one click, then **play on this server** starts the game and joins
+- pick your username in the app. the game makes your account the first time you join with a new name, the app tells you exactly what to type
+- finds the game through steam on any drive, or **find it** checks the usual steam folders
+
+**hosting**
 
 - setup wizard downloads the game server for you (or uses the one already in your steam library)
 - make a server in 3 steps: name, difficulty, mods
 - the real steam workshop right inside the app. hit **+ add** on any mod, required mods get added too, whole collections work
 - mods download straight away and the app reads the actual mod ids out of the files (no more guessing ids from the description)
-- warns you when a mod needs another mod you don't have, sorts load order, adds map mods to the map list for you
+- warns you when a mod needs another mod you don't have, adds map mods to the map list for you
+- load order: drag to reorder, or **sort automatically** using what each mod says it needs (`require`, `loadModAfter`, `loadModBefore`). warns about mods that clash or are made for the other build
+- **modpacks**: paste a workshop collection link to add everything in it, or check how your list compares
+- **share with players** saves a server pack for your friends
 - checks everything before starting (ports, memory, missing mods) and tells you how to fix it
 - knows when the server is actually ready, shows who's online, console with commands over rcon
 - "invite your friends" box with a copy-paste invite message
@@ -21,7 +36,7 @@ a windows app for hosting project zomboid (b42) servers for you and your friends
 
 ## install
 
-grab `PZ-Server-Manager-Setup-x.x.x.exe` from [releases](https://github.com/Naftaliro/pz-server-manager/releases/latest) and run it. it installs, puts a shortcut on your desktop and opens. prefer portable? grab the zip instead and run `PZ Server Manager.exe` from the extracted folder.
+grab `Knox-Launcher-Setup-x.x.x.exe` from [releases](https://github.com/Naftaliro/pz-server-manager/releases/latest) and run it. it installs, puts a shortcut on your desktop and opens. prefer portable? grab the zip instead and run `PZ Server Manager.exe` from the extracted folder.
 
 windows might say it "protected your pc" because the app isn't signed. click **more info → run anyway**.
 

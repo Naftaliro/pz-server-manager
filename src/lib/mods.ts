@@ -1,10 +1,9 @@
 import { useAppStore } from '../store/useAppStore'
 import type { ModEntry, ModFileEntry, ServerProfile } from '../store/useAppStore'
 import { patchProfile } from './profile'
+import { enabledIds, orderModIds, wrongBuildMods, isListSorted, type OrderProblem } from '../../shared/modCore'
 
-export function enabledIds(mod: ModEntry): string[] {
-  return (mod.modId || '').split(';').map(s => s.trim().replace(/^\\+/, '')).filter(Boolean)
-}
+export { enabledIds }
 
 // Placeholder = we haven't read the real id from the files yet
 export function hasRealModId(mod: ModEntry): boolean {
@@ -46,6 +45,26 @@ export function applyInfos(mod: ModEntry, infos: ModFileEntry[]): ModEntry {
 
 export function needsChoice(mod: ModEntry): boolean {
   return (mod.infos?.length || 0) > 1 && !hasRealModId(mod)
+}
+
+// Everything else about the list worth a warning: order loops, mods that clash,
+// mods with no files for this server's build, and whether the list breaks load rules
+export function listProblems(profile: ServerProfile): {
+  order: OrderProblem[]
+  wrongBuild: ReturnType<typeof wrongBuildMods>
+  unsorted: boolean
+} {
+  return {
+    order: orderModIds(profile.mods).problems,
+    wrongBuild: wrongBuildMods(profile.mods, profile.buildVersion === 'b41' ? 'b41' : 'b42'),
+    unsorted: !isListSorted(profile.mods),
+  }
+}
+
+// Number for the Mods tab badge
+export function modWarningCount(profile: ServerProfile): number {
+  const p = listProblems(profile)
+  return missingRequirements(profile).length + profile.mods.filter(needsChoice).length + p.order.length + p.wrongBuild.length
 }
 
 // Mod ids that something in the list requires but nothing in the list provides

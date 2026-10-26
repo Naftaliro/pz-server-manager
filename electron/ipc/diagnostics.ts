@@ -68,7 +68,7 @@ export async function buildDiagnostics(): Promise<string> {
   const lines: string[] = []
   const section = (title: string) => lines.push('', `## ${title}`)
 
-  lines.push('# PZ Server Manager diagnostics', `generated ${time(Date.now())} UTC`)
+  lines.push('# Knox Launcher diagnostics', `generated ${time(Date.now())} UTC`)
 
   section('App')
   lines.push(

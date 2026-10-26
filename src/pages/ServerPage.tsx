@@ -6,7 +6,7 @@ import OverviewPanel from '../components/OverviewPanel'
 import ModsPanel from '../components/ModsPanel'
 import SettingsPanel from '../components/SettingsPanel'
 import ConsolePanel from '../components/ConsolePanel'
-import { missingRequirements, needsChoice } from '../lib/mods'
+import { modWarningCount } from '../lib/mods'
 
 export default function ServerPage() {
   const { profiles, activeProfileId, serverStatuses, serverTab, setServerTab, problems } = useAppStore()
@@ -14,7 +14,7 @@ export default function ServerPage() {
   if (!profile) return null
 
   const status = serverStatuses[profile.id] || 'stopped'
-  const modWarnings = missingRequirements(profile).length + profile.mods.filter(needsChoice).length
+  const modWarnings = modWarningCount(profile)
 
   const tabs: Array<{ id: ServerTab; label: string; icon: React.ReactNode; badge?: number }> = [
     { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={14} />, badge: problems[profile.id]?.length || undefined },

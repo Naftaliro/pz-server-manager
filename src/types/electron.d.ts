@@ -134,6 +134,18 @@ interface ElectronAPI {
       mods: WorkshopMod[]
       message?: string
     }>
+    // collection / mod links -> every mod to download, nested collections + required items included
+    resolvePack: (ids: string[], withDeps?: boolean) => Promise<{
+      success: boolean
+      mods: string[]
+      addedDeps: Record<string, string[]>
+      collections: string[]
+      unchecked: string[]
+      // false when there was no Steam API key to ask with
+      depsChecked: boolean
+      details: WorkshopMod[]
+      message?: string
+    }>
     scanInstalled: (serverInstallPath: string, workshopIds: string[]) => Promise<{
       success: boolean
       found: Record<string, ModInfo[]>
@@ -145,6 +157,26 @@ interface ElectronAPI {
       installed: string[]
       missing: string[]
       message?: string
+    }>
+  }
+  workshop: {
+    prepare: (profileId: string, modId: string) => Promise<{ success: boolean; message?: string; itemDir?: string; folder?: string; title?: string; workshopId?: string | null }>
+    status: (profileId: string, modId: string) => Promise<{ success: boolean; message?: string; prepared?: boolean; workshopId?: string | null; itemDir?: string }>
+    useWorkshopCopy: (profileId: string, modId: string, workshopId: string) => Promise<{ success: boolean; message?: string; visibleToSteamApi?: boolean }>
+    openFolder: (dir: string) => Promise<{ success: boolean; message?: string }>
+  }
+  client: {
+    state: () => Promise<{ success: boolean; message?: string; gameFound?: boolean; gameDir?: string; dataDir?: string; workshopDownloaded?: string[] }>
+    searchDrives: () => Promise<{ success: boolean; message?: string; found?: string[] }>
+    useGameDir: (dir: string) => Promise<{ success: boolean; message?: string; gameDir?: string }>
+    listServers: () => Promise<{ success: boolean; message?: string; gameDir?: string; servers?: PlayServerInfo[] }>
+    openPack: () => Promise<{ success: boolean; message?: string; cancelled?: boolean; saved?: { id: string } }>
+    removeServer: (id: string) => Promise<{ success: boolean; message?: string }>
+    setAccount: (id: string, account: { username: string; password: string }) => Promise<{ success: boolean; message?: string }>
+    installFixes: (id: string) => Promise<{ success: boolean; message?: string; installed?: string[]; backedUp?: string[] }>
+    launch: (id?: string, join?: boolean) => Promise<{ success: boolean; message?: string }>
+    exportPack: (profileId: string, opts: { address?: string; includePassword?: boolean }) => Promise<{
+      success: boolean; message?: string; cancelled?: boolean; path?: string; fixMods?: number; workshopItems?: number
     }>
   }
   world: {
@@ -167,11 +199,15 @@ interface ModDownloadEvent {
   message?: string
 }
 
-interface ModInfo {
+type ModInfo = import('../../shared/modCore').ModInfo
+
+// a host's server pack the player opened, plus how their PC compares to it
+interface PlayServerInfo {
   id: string
-  name: string
-  requires: string[]
-  maps: string[]
+  addedAt: string
+  pack: import('../../shared/serverPack').ServerPack
+  check: import('../../shared/serverPack').PackCheck
+  account?: { username: string; password: string }
 }
 
 interface PreflightIssue {
@@ -220,6 +256,7 @@ declare global {
     electronAPI: ElectronAPI
   }
   type WorkshopModDetails = WorkshopMod
+  type PlayServer = PlayServerInfo
   type ModFileInfo = ModInfo
   type ModDownloadProgress = ModDownloadEvent
   type ServerPreflightIssue = PreflightIssue

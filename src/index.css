@@ -51,6 +51,11 @@
     @apply inline-flex items-center gap-2 px-4 py-2 rounded-md font-medium text-sm transition-all duration-150 cursor-pointer select-none;
   }
 
+  /* disabled buttons looked exactly like working ones */
+  .btn:disabled {
+    @apply opacity-40 cursor-not-allowed active:scale-100 hover:opacity-40;
+  }
+
   /* Primary — Mauve/purple accent */
   .btn-primary {
     @apply btn bg-pz-green text-pz-darker hover:opacity-90 active:scale-95;

@@ -110,7 +110,7 @@ export async function checkServerUpdate(installDir: string): Promise<{ checked: 
 // Lots of people already have "Project Zomboid Dedicated Server" in their Steam library.
 // No point downloading 7 GB again.
 
-function steamPath(): Promise<string | null> {
+export function steamPath(): Promise<string | null> {
   return new Promise((resolve) => {
     execFile('reg', ['query', 'HKCU\\Software\\Valve\\Steam', '/v', 'SteamPath'], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
       if (err) return resolve(null)
@@ -120,15 +120,20 @@ function steamPath(): Promise<string | null> {
   })
 }
 
-export async function findSteamInstalledServer(): Promise<string | null> {
+// Every Steam library folder (they can be on any drive), from Steam's own list
+export async function steamLibraries(): Promise<string[]> {
   const steam = await steamPath()
-  if (!steam) return null
+  if (!steam) return []
   const libs = new Set<string>([steam])
   try {
     const vdf = readFileSync(join(steam, 'steamapps', 'libraryfolders.vdf'), 'utf-8')
     for (const m of vdf.matchAll(/"path"\s+"([^"]+)"/gi)) libs.add(m[1].replace(/\\\\/g, '\\'))
   } catch { /* only the main library then */ }
-  for (const lib of libs) {
+  return [...libs]
+}
+
+export async function findSteamInstalledServer(): Promise<string | null> {
+  for (const lib of await steamLibraries()) {
     const dir = join(lib, 'steamapps', 'common', 'Project Zomboid Dedicated Server')
     if (isServerInstalled(dir)) return dir
   }

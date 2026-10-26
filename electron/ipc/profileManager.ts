@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { v4 as uuidv4 } from 'uuid'
 import { randomBytes } from 'crypto'
 import { loadSettings } from './appSettings'
+import type { ModInfo, ModSnapshot } from '../../shared/modCore'
 
 export interface ModEntry {
   workshopId: string
@@ -12,7 +13,7 @@ export interface ModEntry {
   description?: string
   thumbnailUrl?: string
   // filled in from the downloaded files (mod.info). modId holds the enabled ones, ;-separated
-  infos?: Array<{ id: string; name: string; requires: string[]; maps: string[] }>
+  infos?: ModInfo[]
   requires?: string[]
   maps?: string[]
   fileSize?: number
@@ -53,6 +54,10 @@ export interface ServerProfile {
   createdAt: string
   updatedAt: string
   lastStarted?: string
+  // what the server loaded last time it started, to show what changed since
+  lastStartedMods?: ModSnapshot
+  // order of mod map folders in Map= (first one wins where maps overlap)
+  mapOrder?: string[]
 }
 
 const DEFAULT_INI_SETTINGS = {

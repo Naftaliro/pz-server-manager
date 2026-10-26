@@ -1,22 +1,36 @@
-import { Home, Plus, Settings } from 'lucide-react'
+import { Home, Plus, Settings, Gamepad2 } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 
 export default function Sidebar() {
-  const { activeView, setActiveView, activeProfileId, setActiveProfileId, openServer, profiles, serverStatuses, players } = useAppStore()
+  const { activeView, setActiveView, activeProfileId, setActiveProfileId, openServer, profiles, serverStatuses, players, settings } = useAppStore()
   const inServer = ['server', 'editor', 'sandbox', 'raweditor'].includes(activeView)
+  // players only see the server list once they've made a server
+  const isPlayer = settings?.role === 'player'
+  const showServers = !isPlayer || profiles.length > 0
 
   return (
     <div className="w-56 bg-pz-darker border-r border-pz-border flex flex-col flex-shrink-0 overflow-hidden">
-      <div className="p-3 border-b border-pz-border">
+      <div className="p-3 border-b border-pz-border space-y-0.5">
+        <NavItem
+          icon={<Gamepad2 size={16} />}
+          label="Play"
+          active={activeView === 'play'}
+          onClick={() => { setActiveProfileId(null); setActiveView('play') }}
+        />
         <NavItem
           icon={<Home size={16} />}
-          label="Home"
+          label={isPlayer ? 'Host a server' : 'Home'}
           active={activeView === 'home'}
-          onClick={() => { setActiveProfileId(null); setActiveView('home') }}
+          onClick={() => {
+            setActiveProfileId(null)
+            // a player who never set up server files goes through the server setup first
+            if (isPlayer && profiles.length === 0) setActiveView('setup')
+            else setActiveView('home')
+          }}
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className={`flex-1 overflow-y-auto p-3 ${showServers ? '' : 'hidden'}`}>
         <div className="flex items-center justify-between mb-2 px-1">
           <span className="text-xs font-semibold text-pz-muted uppercase tracking-wider">Servers</span>
           <button
@@ -59,6 +73,7 @@ export default function Sidebar() {
           })}
         </div>
       </div>
+      {!showServers && <div className="flex-1" />}
 
       <div className="p-3 border-t border-pz-border">
         <NavItem

@@ -4,6 +4,7 @@ import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile, BuildVersion, LaunchMode } from '../store/useAppStore'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { getServerName, formatModIds, dataPath as profileDataPath } from '../lib/profile'
+import { orderModIds } from '../../shared/modCore'
 
 const DEFAULT_PROFILE: Omit<ServerProfile, 'id' | 'createdAt' | 'updatedAt'> = {
   name: '',
@@ -98,7 +99,7 @@ export default function ServerEditor() {
         DefaultPort: form.port,
         MaxPlayers: form.maxPlayers,
         Password: form.serverPassword,
-        Mods: formatModIds(form.mods.map(m => m.modId), form.buildVersion),
+        Mods: formatModIds(orderModIds(form.mods).order, form.buildVersion),
         // local mods have no workshop id
         WorkshopItems: form.mods.map(m => m.workshopId).filter(Boolean).join(';'),
       }
@@ -181,7 +182,7 @@ export default function ServerEditor() {
         DefaultPort: form.port,
         MaxPlayers: form.maxPlayers,
         Password: form.serverPassword,
-        Mods: formatModIds(form.mods.map(m => m.modId), form.buildVersion),
+        Mods: formatModIds(orderModIds(form.mods).order, form.buildVersion),
         WorkshopItems: form.mods.map(m => m.workshopId).filter(Boolean).join(';'),
       }
       const lines = Object.entries(iniSettings).map(([k, v]) => `${k}=${v}`)

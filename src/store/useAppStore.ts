@@ -1,11 +1,8 @@
 import { create } from 'zustand'
 
-export interface ModFileEntry {
-  id: string
-  name: string
-  requires: string[]
-  maps: string[]
-}
+import type { ModInfo, ModSnapshot } from '../../shared/modCore'
+
+export type ModFileEntry = ModInfo
 
 export interface ModEntry {
   workshopId: string
@@ -56,6 +53,8 @@ export interface ServerProfile {
   createdAt: string
   updatedAt: string
   lastStarted?: string
+  lastStartedMods?: ModSnapshot
+  mapOrder?: string[]
 }
 
 export interface AppSettings {
@@ -66,12 +65,16 @@ export interface AppSettings {
   advancedMode: boolean
   steamManaged: boolean
   playitEnabled: boolean
+  steamApiKey?: string
+  gameDir?: string
+  clientDataDir?: string
+  role?: 'host' | 'player'
 }
 
 // 'starting' = loading world/mods, 'running' = players can join
 export type ServerStatus = 'stopped' | 'starting' | 'running' | 'stopping'
 
-export type View = 'setup' | 'home' | 'create' | 'server' | 'editor' | 'sandbox' | 'raweditor' | 'appsettings'
+export type View = 'setup' | 'home' | 'create' | 'server' | 'editor' | 'sandbox' | 'raweditor' | 'appsettings' | 'play'
 export type ServerTab = 'overview' | 'mods' | 'settings' | 'console'
 
 export interface ModDownloadState {

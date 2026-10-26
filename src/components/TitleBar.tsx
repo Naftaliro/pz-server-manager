@@ -32,7 +32,7 @@ export default function TitleBar() {
         <div className="w-5 h-5 text-pz-green">
           <Server size={18} />
         </div>
-        <span className="text-sm font-semibold text-pz-text">PZ Server Manager</span>
+        <span className="text-sm font-semibold text-pz-text">Knox Launcher</span>
         {version && (
           <span className="text-xs text-pz-muted ml-1">v{version}</span>
         )}

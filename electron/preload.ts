@@ -148,7 +148,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDetails: (workshopIds: string[]) => ipcRenderer.invoke('mods:getDetails', workshopIds),
     getCollection: (workshopId: string) => ipcRenderer.invoke('mods:getCollection', workshopId),
     scanInstalled: (serverInstallPath: string, workshopIds: string[]) => ipcRenderer.invoke('mods:scanInstalled', serverInstallPath, workshopIds),
+    resolvePack: (ids: string[], withDeps?: boolean) => ipcRenderer.invoke('mods:resolvePack', ids, withDeps),
     installLocal: (modIds: string[], worldSavePath?: string) => ipcRenderer.invoke('localMods:install', modIds, worldSavePath),
+  },
+
+  // Fix mods on the Workshop (host side)
+  workshop: {
+    prepare: (profileId: string, modId: string) => ipcRenderer.invoke('workshop:prepare', profileId, modId),
+    status: (profileId: string, modId: string) => ipcRenderer.invoke('workshop:status', profileId, modId),
+    useWorkshopCopy: (profileId: string, modId: string, workshopId: string) => ipcRenderer.invoke('workshop:useWorkshopCopy', profileId, modId, workshopId),
+    openFolder: (dir: string) => ipcRenderer.invoke('workshop:openFolder', dir),
+  },
+
+  // Play mode (the player's side) + server packs
+  client: {
+    state: () => ipcRenderer.invoke('client:state'),
+    searchDrives: () => ipcRenderer.invoke('client:searchDrives'),
+    useGameDir: (dir: string) => ipcRenderer.invoke('client:useGameDir', dir),
+    listServers: () => ipcRenderer.invoke('client:listServers'),
+    openPack: () => ipcRenderer.invoke('client:openPack'),
+    removeServer: (id: string) => ipcRenderer.invoke('client:removeServer', id),
+    setAccount: (id: string, account: { username: string; password: string }) => ipcRenderer.invoke('client:setAccount', id, account),
+    installFixes: (id: string) => ipcRenderer.invoke('client:installFixes', id),
+    launch: (id?: string, join?: boolean) => ipcRenderer.invoke('client:launch', id, join),
+    exportPack: (profileId: string, opts: { address?: string; includePassword?: boolean }) => ipcRenderer.invoke('client:exportPack', profileId, opts),
   },
 
   // World management

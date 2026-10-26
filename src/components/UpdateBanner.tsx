@@ -151,7 +151,7 @@ export default function UpdateBanner() {
     return (
       <div className="flex items-center gap-2 px-4 py-1.5 bg-pz-green/10 border-b border-pz-green/20 text-xs text-pz-green">
         <CheckCircle size={12} />
-        <span>PZ Server Manager is up to date</span>
+        <span>Knox Launcher is up to date</span>
         <button onClick={() => setState('idle')} className="ml-auto btn-ghost p-0.5">
           <X size={11} />
         </button>

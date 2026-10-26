@@ -21,5 +21,5 @@ Run it again any time to update. It only replaces the folders listed above.
 
 ## Server hosts
 
-PZ Server Manager installs these automatically when a server is created from a developer
+Knox Launcher installs these automatically when a server is created from a developer
 preset that uses them. Otherwise, run the same command on the server PC.

@@ -54,8 +54,14 @@ export default function Setup() {
   }
 
   const finish = async () => {
-    setSettings(await window.electronAPI.settings.set({ setupComplete: true }))
+    setSettings(await window.electronAPI.settings.set({ setupComplete: true, role: 'host' }))
     setActiveView('home')
+  }
+
+  // friends who only join someone else's server don't need any of the server setup
+  const justPlay = async () => {
+    setSettings(await window.electronAPI.settings.set({ setupComplete: true, role: 'player' }))
+    setActiveView('play')
   }
 
   return (
@@ -67,21 +73,24 @@ export default function Setup() {
               <Server size={38} className="text-pz-green" />
             </div>
             <div>
-              <h1 className="text-2xl font-semibold text-pz-text">Welcome to PZ Server Manager</h1>
+              <h1 className="text-2xl font-semibold text-pz-text">Welcome to Knox Launcher</h1>
               <p className="text-pz-subtext mt-2">
-                Host your own Project Zomboid server for you and your friends, with mods, without touching a single config file.
+                Play Project Zomboid with friends, with mods, without touching a single config file. What do you want to do?
               </p>
             </div>
-            <div className="card p-4 text-left space-y-2 text-sm text-pz-subtext">
-              <p className="text-pz-text font-medium">Here's how it goes:</p>
-              <p>1. Get the game server (free, about 7 GB, only once)</p>
-              <p>2. Create a server and pick a difficulty</p>
-              <p>3. Add mods from the Workshop if you want</p>
-              <p>4. Hit Start and send your friends the invite</p>
+            <div className="grid grid-cols-2 gap-3 text-left">
+              <button onClick={justPlay} className="card p-4 space-y-2 text-left hover:border-pz-green transition-colors">
+                <Gamepad2 size={22} className="text-pz-green" />
+                <p className="text-pz-text font-medium">Play on a friend's server</p>
+                <p className="text-xs text-pz-subtext">Get the same mods and fixes they use, then join. Nothing to install.</p>
+              </button>
+              <button onClick={() => { setStep('install'); checkExisting() }} className="card p-4 space-y-2 text-left hover:border-pz-green transition-colors">
+                <Server size={22} className="text-pz-green" />
+                <p className="text-pz-text font-medium">Host my own server</p>
+                <p className="text-xs text-pz-subtext">Get the server (free, about 7 GB, once), pick mods, hit Start, invite friends.</p>
+              </button>
             </div>
-            <button onClick={() => { setStep('install'); checkExisting() }} className="btn-primary px-8 py-3 mx-auto">
-              Get started <ArrowRight size={16} />
-            </button>
+            <p className="text-xs text-pz-muted">You can do the other one later too.</p>
           </div>
         )}
 

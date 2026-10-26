@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, HardDrive, Wrench, RefreshCw, Info, ExternalLink, CheckCircle, AlertCircle, Globe, Shield, Loader } from 'lucide-react'
+import { FolderOpen, HardDrive, Wrench, RefreshCw, Info, ExternalLink, CheckCircle, AlertCircle, Globe, Shield, Loader, KeyRound } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { BuildVersion } from '../store/useAppStore'
 import InstallRunner from '../components/InstallRunner'
@@ -16,6 +16,8 @@ export default function AppSettings() {
   const [fwBusy, setFwBusy] = useState(false)
   const [fwMsg, setFwMsg] = useState('')
   const [serverUpdate, setServerUpdate] = useState<{ checked: boolean; updateAvailable: boolean } | null>(null)
+  const [apiKey, setApiKey] = useState(settings?.steamApiKey || '')
+  useEffect(() => { setApiKey(settings?.steamApiKey || '') }, [settings?.steamApiKey])
 
   const serverDir = settings?.serverInstallPath || 'C:\\PZServer'
   const advanced = !!settings?.advancedMode
@@ -119,6 +121,33 @@ export default function AppSettings() {
         </div>
 
         <div className="card p-5 space-y-3">
+          <h3 className="section-title flex items-center gap-2"><KeyRound size={14} /> Steam Web API key (optional)</h3>
+          <p className="text-sm text-pz-subtext">
+            With your own key, installing a modpack also finds the mods each mod needs, even ones the pack forgot.
+            Without one, the Mods tab still points out anything missing once the files are downloaded.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              onBlur={() => { if (apiKey.trim() !== (settings?.steamApiKey || '')) update({ steamApiKey: apiKey.trim() }) }}
+              className="input font-mono"
+              placeholder="Paste your key here"
+            />
+            <button
+              onClick={() => window.electronAPI.shell.openExternal('https://steamcommunity.com/dev/apikey')}
+              className="btn-outline flex-shrink-0 text-xs"
+            >
+              <ExternalLink size={12} /> Get a free key
+            </button>
+          </div>
+          <p className="text-xs text-pz-muted">
+            On Steam's page, any domain name works (for example "localhost"). The key stays on this PC and is only sent to Steam.
+          </p>
+        </div>
+
+        <div className="card p-5 space-y-3">
           <h3 className="section-title flex items-center gap-2"><Wrench size={14} /> Advanced mode</h3>
           <button onClick={() => update({ advancedMode: !advanced })} className="w-full flex items-center gap-3 text-left">
             <div className={`w-10 h-5 rounded-full relative transition-colors flex-shrink-0 ${advanced ? 'bg-pz-green' : 'bg-pz-border'}`}>
@@ -168,7 +197,7 @@ export default function AppSettings() {
 
         <div className="card p-5 space-y-3">
           <h3 className="section-title flex items-center gap-2"><Info size={14} /> About</h3>
-          <p className="text-sm text-pz-subtext">PZ Server Manager {version && `v${version}`}</p>
+          <p className="text-sm text-pz-subtext">Knox Launcher {version && `v${version}`}</p>
           <p className="text-xs text-pz-muted">Something not working? Copy the diagnostics and paste them into your report. Passwords, IPs and Steam IDs are left out.</p>
           <div className="flex gap-2 flex-wrap">
             <button onClick={() => triggerManualUpdateCheck?.()} className="btn-outline text-xs"><RefreshCw size={12} /> Check for app updates</button>

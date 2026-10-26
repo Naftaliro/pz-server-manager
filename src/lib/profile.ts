@@ -21,15 +21,8 @@ export function formatBytes(bytes?: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
-// B42 wants Mods=\ModA;\ModB, B41 wants Mods=ModA;ModB (same as the backend's)
-export function formatModIds(modIds: string[], buildVersion?: string): string {
-  return modIds
-    .flatMap(id => (id || '').split(';'))
-    .map(id => id.trim().replace(/^\\+/, ''))
-    .filter(Boolean)
-    .map(id => (buildVersion === 'b41' ? id : `\\${id}`))
-    .join(';')
-}
+// B42 wants Mods=\ModA;\ModB, B41 wants Mods=ModA;ModB (shared with the backend)
+export { formatModIds } from '../../shared/modCore'
 
 // Save a profile and refresh the store, returns the saved copy
 export async function saveProfile(profile: Partial<ServerProfile> & { id?: string }): Promise<ServerProfile> {
