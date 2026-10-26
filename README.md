@@ -40,6 +40,8 @@ grab `Knox-Launcher-Setup-x.x.x.exe` from [releases](https://github.com/Naftalir
 
 windows might say it "protected your pc" because the app isn't signed. click **more info → run anyway**.
 
+releases are built by [github actions](.github/workflows/build.yml) straight from this repo. see the [Code signing policy](CODE_SIGNING_POLICY.md).
+
 ## first time
 
 1. the setup screen downloads the game server (~7 GB, one time)
@@ -74,3 +76,11 @@ npm run build:win  # windows build, ends up in release/
 ```
 
 made with electron, react, typescript, tailwind, zustand and vite. catppuccin mocha forever.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Who can commit and approve releases, what gets signed and the privacy policy are in [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
+
+## license
+
+[MIT](LICENSE)
