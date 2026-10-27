@@ -1,7 +1,7 @@
 name: build
 
-# Every release is built here from the public source, so the signed files can be traced
-# back to a commit (SignPath origin verification). Pushing a v* tag makes a draft release.
+# Every release is built and signed here from the public source, so the signed files can be
+# traced back to a commit. Pushing a v* tag makes a draft release.
 
 on:
   push:
@@ -16,6 +16,10 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # Only tag builds and manual runs are signed. Everything else, pull requests included,
+      # builds unsigned and never gets the Azure secrets.
+      SIGN: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -28,9 +32,39 @@ jobs:
       - run: npm test
 
       - name: Build installer and zip
+        if: env.SIGN != 'true'
         run: npm run build:win -- --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      # The signing options are added here instead of package.json, so local builds and
+      # pull requests still build without Azure.
+      - name: Build and sign installer and zip
+        if: env.SIGN == 'true'
+        shell: bash
+        run: |
+          npm pkg set "build.win.azureSignOptions.publisherName=Mitchell Berg" \
+            build.win.azureSignOptions.endpoint=https://cus.codesigning.azure.net \
+            build.win.azureSignOptions.codeSigningAccountName=knoxlauncher \
+            build.win.azureSignOptions.certificateProfileName=knoxlauncher
+          npm run build:win -- --publish never
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      # The certificates only last 3 days, so every signature needs a timestamp to stay valid.
+      - name: Check signatures
+        if: env.SIGN == 'true'
+        run: |
+          foreach ($f in Get-ChildItem release/*.exe, release/win-unpacked/*.exe) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
+            $signer = $sig.SignerCertificate.Subject
+            "$($f.Name): $($sig.Status), $signer, timestamped: $($null -ne $sig.TimeStamperCertificate)"
+            if ($sig.Status -ne 'Valid' -or $signer -notmatch '(^|, )CN=Mitchell Berg(,|$)' -or $null -eq $sig.TimeStamperCertificate) {
+              throw "$($f.Name) isn't signed and timestamped by Mitchell Berg"
+            }
+          }
 
       - uses: actions/upload-artifact@v6
         with:
@@ -61,7 +95,7 @@ jobs:
 
           Download `Knox-Launcher-Setup-*.exe` to install, or the `-win.zip` for the portable version.
 
-          Built by GitHub Actions from this tag. Free code signing provided by SignPath.io, certificate by SignPath Foundation. See the [Code signing policy](https://github.com/${{ github.repository }}/blob/main/CODE_SIGNING_POLICY.md).
+          Built by GitHub Actions from this tag and signed with Microsoft Artifact Signing. See the [Code signing policy](https://github.com/${{ github.repository }}/blob/main/CODE_SIGNING_POLICY.md).
           NOTES
           gh release create "${{ github.ref_name }}" dist/* \
             --repo "${{ github.repository }}" \
