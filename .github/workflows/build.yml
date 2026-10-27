@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           npm pkg set "build.win.azureSignOptions.publisherName=Mitchell Berg" \
-            build.win.azureSignOptions.endpoint=https://cus.codesigning.azure.net \
+            build.win.azureSignOptions.endpoint=https://eus.codesigning.azure.net \
             build.win.azureSignOptions.codeSigningAccountName=knoxlauncher \
             build.win.azureSignOptions.certificateProfileName=knoxlauncher
           npm run build:win -- --publish never
