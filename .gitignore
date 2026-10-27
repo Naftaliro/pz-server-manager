@@ -28,3 +28,6 @@ Thumbs.db
 # Temp
 *.tmp
 *.temp
+
+# typescript build cache
+*.tsbuildinfo
