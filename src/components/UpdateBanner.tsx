@@ -26,7 +26,6 @@ export default function UpdateBanner() {
   const [errorMsg, setErrorMsg] = useState('')
   const [dismissed, setDismissed] = useState(false)
   const [showNotes, setShowNotes] = useState(false)
-  const [manualCheck, setManualCheck] = useState(false)
 
   useEffect(() => {
     // Check for updates on startup after a short delay
@@ -43,7 +42,6 @@ export default function UpdateBanner() {
     // Expose manual trigger for TitleBar button
     triggerManualUpdateCheck = () => {
       setDismissed(false)
-      setManualCheck(true)
       checkForUpdates(true)
     }
 
@@ -256,7 +254,7 @@ export default function UpdateBanner() {
           </span>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
-              onClick={() => { setManualCheck(true); checkForUpdates(true) }}
+              onClick={() => checkForUpdates(true)}
               className="btn-ghost text-xs py-1 px-2"
               title="Try again"
             >

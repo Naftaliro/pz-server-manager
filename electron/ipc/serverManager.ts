@@ -647,6 +647,11 @@ interface PreflightIssue {
   fix?: 'install-server' | 'download-mods' | 'open-mods' | 'open-settings' | 'update-server' | 'firewall'
 }
 
+// The answer if it comes within ms, otherwise null (the work itself keeps going)
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([work, new Promise<null>(resolve => setTimeout(() => resolve(null), ms))])
+}
+
 function udpPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const sock = dgram.createSocket('udp4')
@@ -660,14 +665,22 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
   if (!profile) return [{ level: 'error', message: 'This server profile no longer exists.' }]
   const issues: PreflightIssue[] = []
 
+  // the slow checks (SteamCMD, PowerShell, a socket) don't depend on each other, so they all
+  // start now and get read below in the usual order. The update check asks SteamCMD, which
+  // takes a few seconds the first time: it gets 2.5s, then finishes in the background and
+  // its answer is cached for next time
+  const updateCheck = withTimeout(checkServerUpdate(profile.serverInstallPath), 2500)
+  const firewallCheck = firewallStatus()
+  const portCheck = runningServers.has(profile.id) ? Promise.resolve(true) : udpPortFree(profile.port)
+
   if (!isServerInstalled(profile.serverInstallPath)) {
     issues.push({ level: 'error', message: `The game server isn't installed at ${profile.serverInstallPath}.`, fix: 'install-server' })
   }
 
   // out of date = nobody on the current game version can join
   try {
-    const upd = await checkServerUpdate(profile.serverInstallPath)
-    if (upd.updateAvailable) {
+    const upd = await updateCheck
+    if (upd?.updateAvailable) {
       issues.push({
         level: 'warning',
         message: upd.steamManaged
@@ -678,7 +691,7 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
     }
   } catch { /* offline or steamcmd busy, don't block starting */ }
 
-  const fw = await firewallStatus()
+  const fw = await firewallCheck
   if (fw.oldRule) {
     issues.push({ level: 'warning', message: 'The Windows Firewall rule from an older version opens every port of the server, including the admin console (RCON). Replace it with one that only opens the game ports.', fix: 'firewall' })
   } else if (!fw.upToDate) {
@@ -695,7 +708,7 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
       issues.push({ level: 'error', message: `"${other.name}" is already running on port ${other.port}. Stop it first or change this server's port.`, fix: 'open-settings' })
     }
   }
-  if (!runningServers.has(profile.id) && !(await udpPortFree(profile.port))) {
+  if (!(await portCheck)) {
     issues.push({ level: 'error', message: `Port ${profile.port} is being used by something else (maybe a server that's still shutting down).` })
   }
 
@@ -736,7 +749,7 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
   // <data> has the same mods\<Mod>\42\mod.info layout as a workshop item, so the same scan works
   const localMods = profile.mods.filter(m => !m.workshopId)
   if (localMods.length > 0) {
-    const installedLocal = new Set(scanWorkshopItem(resolveDataPath(profile.worldSavePath)).map(i => i.id))
+    const installedLocal = new Set((await scanWorkshopItem(resolveDataPath(profile.worldSavePath))).map(i => i.id))
     for (const m of localMods) {
       const absent = enabledIds(m).filter(id => !installedLocal.has(id))
       if (absent.length > 0) {
@@ -746,11 +759,14 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
   }
 
   // requirements from the downloaded mod.info files (fresh scan, in case files changed)
-  const fresh = new Map<string, ReturnType<typeof scanWorkshopItem>>()
-  for (const m of workshopMods) {
+  const fresh = new Map<string, Awaited<ReturnType<typeof scanWorkshopItem>>>()
+  // every mod's files at once, then checked in list order
+  await Promise.all(workshopMods.map(async (m) => {
     const itemDir = join(contentDir, m.workshopId)
-    if (!existsSync(itemDir)) continue
-    fresh.set(m.workshopId, scanWorkshopItem(itemDir))
+    if (existsSync(itemDir)) fresh.set(m.workshopId, await scanWorkshopItem(itemDir))
+  }))
+  for (const m of workshopMods) {
+    if (!fresh.has(m.workshopId)) continue
     const infos = fresh.get(m.workshopId)!.filter(i => enabledIds(m).includes(i.id))
     for (const info of infos) {
       for (const dep of info.requires) {

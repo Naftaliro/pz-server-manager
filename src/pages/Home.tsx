@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Plus, Server, Users, Package, ChevronRight } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile } from '../store/useAppStore'

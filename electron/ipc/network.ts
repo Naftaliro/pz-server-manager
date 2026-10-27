@@ -166,9 +166,19 @@ function readFirewallRules(): Promise<FirewallRuleInfo[] | null> {
   })
 }
 
+// Asking Windows starts PowerShell, which takes about a second, and the rules only change
+// when the app adds or removes them. So the answer is kept for a minute (and calls that
+// come in at the same time share one PowerShell). What the servers need is worked out
+// fresh every time, so a changed port still shows up right away
+let rulesCache: { at: number; rules: Promise<FirewallRuleInfo[] | null> } | null = null
+function cachedFirewallRules(): Promise<FirewallRuleInfo[] | null> {
+  if (!rulesCache || Date.now() - rulesCache.at > 60_000) rulesCache = { at: Date.now(), rules: readFirewallRules() }
+  return rulesCache.rules
+}
+
 export async function firewallStatus(serverInstallPath?: string) {
   const needed = neededFirewall(serverInstallPath)
-  const rules = await readFirewallRules()
+  const rules = await cachedFirewallRules()
   // couldn't ask Windows: don't nag about the firewall over that
   if (!rules) return { exists: true, upToDate: true, oldRule: false, anyRule: false, ports: [] as number[], unknown: true }
   const state = firewallState(needed, rules)
@@ -199,6 +209,7 @@ function runElevated(script: string): Promise<Error | null> {
 export async function addFirewallRule(serverInstallPath: string): Promise<{ success: boolean; message?: string }> {
   if (!existsSync(javaPath(serverInstallPath))) return { success: false, message: "The server isn't installed yet." }
   const err = await runElevated(firewallScript(neededFirewall(serverInstallPath)))
+  rulesCache = null
   if ((await firewallStatus(serverInstallPath)).upToDate) return { success: true }
   return { success: false, message: err ? 'You said no to the permission prompt.' : "Windows didn't add the rule." }
 }
@@ -206,6 +217,7 @@ export async function addFirewallRule(serverInstallPath: string): Promise<{ succ
 // Takes our rules back out (the old one too). One admin prompt.
 export async function removeFirewallRule(): Promise<{ success: boolean; message?: string }> {
   const err = await runElevated(firewallRemoveScript())
+  rulesCache = null
   if (!(await firewallStatus()).anyRule) return { success: true }
   return { success: false, message: err ? 'You said no to the permission prompt.' : "Windows didn't remove the rule." }
 }

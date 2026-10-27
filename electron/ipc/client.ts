@@ -101,14 +101,14 @@ export async function clientState(): Promise<ClientState & { gameDir?: string; d
 
 // ── Host side: build a pack from a server profile ─────────────────────────────
 
-export function buildPack(profileId: string, opts: { address?: string; includePassword?: boolean }): ServerPack {
+export async function buildPack(profileId: string, opts: { address?: string; includePassword?: boolean }): Promise<ServerPack> {
   const profile = getProfile(profileId)
   if (!profile) throw new Error('That server profile no longer exists.')
   // a playit address comes with its own port, which isn't the server's port
   const joinAt = parseJoinAddress(opts.address, profile.port)
   if (joinAt.error) throw new Error(joinAt.error)
   const dataMods = join(resolveDataPath(profile.worldSavePath), 'mods')
-  const folders = scanModFolders(dataMods)
+  const folders = await scanModFolders(dataMods)
 
   const localMods: PackLocalMod[] = []
   for (const m of profile.mods.filter(m => !m.workshopId)) {
@@ -285,7 +285,7 @@ export function setupClientHandlers(mainWindow: BrowserWindow | null) {
 
   // host side
   ipcMain.handle('client:exportPack', wrap(async (profileId: string, opts: { address?: string; includePassword?: boolean }) => {
-    const pack = buildPack(profileId, opts)
+    const pack = await buildPack(profileId, opts)
     const res = await dialog.showSaveDialog(mainWindow!, {
       title: 'Save server pack',
       defaultPath: `${pack.server.name.replace(/[^\w-]+/g, '_')}.pzpack`,

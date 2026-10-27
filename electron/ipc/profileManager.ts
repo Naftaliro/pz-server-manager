@@ -1,8 +1,7 @@
 import { ipcMain, app } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
-import { v4 as uuidv4 } from 'uuid'
-import { randomBytes } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 import { loadSettings } from './appSettings'
 import type { ModInfo, ModSnapshot } from '../../shared/modCore'
 
@@ -385,7 +384,7 @@ export function setupProfileHandlers() {
       const settings = loadSettings()
       const newProfile: ServerProfile = {
         ...profile,
-        id: uuidv4(),
+        id: randomUUID(),
         serverName: profile.serverName || uniqueServerName(profile.name, profiles),
         buildVersion: profile.buildVersion || settings.buildVersion || 'b42',
         serverInstallPath: profile.serverInstallPath || settings.serverInstallPath,
@@ -440,7 +439,7 @@ export function setupProfileHandlers() {
     const now = new Date().toISOString()
     const duplicate: ServerProfile = {
       ...JSON.parse(JSON.stringify(original)),
-      id: uuidv4(),
+      id: randomUUID(),
       name: `${original.name} (Copy)`,
       serverName: uniqueServerName(`${getServerName(original)}_copy`, profiles),
       port: original.port + 2,

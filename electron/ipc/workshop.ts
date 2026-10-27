@@ -24,13 +24,13 @@ function readWorkshopTitle(txtPath: string): string | null {
   try { return readFileSync(txtPath, 'utf-8').match(/^\s*title\s*=\s*(.+?)\s*$/m)?.[1] || null } catch { return null }
 }
 
-function findLocalMod(profileId: string, modId: string) {
+async function findLocalMod(profileId: string, modId: string) {
   const profile = getProfile(profileId)
   if (!profile) throw new Error('That server profile no longer exists.')
   const entry = profile.mods.find(m => !m.workshopId && enabledIds(m).includes(modId))
   if (!entry) throw new Error(`"${modId}" isn't a local mod on this server.`)
   const modsDir = join(resolveDataPath(profile.worldSavePath), 'mods')
-  const hit = scanModFolders(modsDir).find(f => f.info.id === modId)
+  const hit = (await scanModFolders(modsDir)).find(f => f.info.id === modId)
   if (!hit) throw new Error(`The files for "${entry.name}" aren't in ${modsDir}.`)
   return { profile, entry, folder: hit.folder, info: hit.info, modDir: join(modsDir, hit.folder) }
 }
@@ -38,10 +38,10 @@ function findLocalMod(profileId: string, modId: string) {
 // Lay out Zomboid\Workshop\<folder> the way the game's uploader wants it. Running it
 // again refreshes the mod files but leaves workshop.txt alone, so the Workshop id and
 // any edits made to the title or description stay
-export function prepareUpload(profileId: string, modId: string) {
+export async function prepareUpload(profileId: string, modId: string) {
   const reason = cantUploadReason(modId)
   if (reason) throw new Error(reason)
-  const { profile, entry, folder, info, modDir } = findLocalMod(profileId, modId)
+  const { profile, entry, folder, info, modDir } = await findLocalMod(profileId, modId)
   const itemDir = join(workshopRoot(), folder)
   const contents = join(itemDir, 'Contents', 'mods', folder)
   rmSync(contents, { recursive: true, force: true })
@@ -72,8 +72,8 @@ export function prepareUpload(profileId: string, modId: string) {
 }
 
 // After the upload the game writes id=<number> into workshop.txt
-export function uploadStatus(profileId: string, modId: string) {
-  const { folder } = findLocalMod(profileId, modId)
+export async function uploadStatus(profileId: string, modId: string) {
+  const { folder } = await findLocalMod(profileId, modId)
   const txtPath = join(workshopRoot(), folder, 'workshop.txt')
   if (!existsSync(txtPath)) return { prepared: false, workshopId: null }
   return { prepared: true, workshopId: readWorkshopId(readFileSync(txtPath, 'utf-8')), itemDir: join(workshopRoot(), folder) }
@@ -82,7 +82,7 @@ export function uploadStatus(profileId: string, modId: string) {
 // Put the Workshop item in place of the local copy in the server's mod list.
 // Same mod id, so load order and requirements don't change
 export async function useWorkshopCopy(profileId: string, modId: string, workshopId: string) {
-  const { profile, entry, folder } = findLocalMod(profileId, modId)
+  const { profile, entry, folder } = await findLocalMod(profileId, modId)
   // the game writes an id even when the upload fails (it tried to update an item that
   // isn't yours), so don't trust it blindly
   const reason = cantUploadReason(modId)

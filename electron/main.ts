@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import { pathToFileURL } from 'url'
-import { setupSteamCmdHandlers } from './ipc/steamcmd'
+import { setupSteamCmdHandlers, checkServerUpdate, isServerInstalled } from './ipc/steamcmd'
 import { setupServerHandlers } from './ipc/serverManager'
 import { setupProfileHandlers } from './ipc/profileManager'
 import { setupFileHandlers } from './ipc/fileManager'
@@ -11,9 +12,9 @@ import { setupClientHandlers } from './ipc/client'
 import { setupWorkshopHandlers } from './ipc/workshop'
 import { setupWorldHandlers } from './ipc/worldManager'
 import { setupUpdaterHandlers } from './ipc/updater'
-import { setupAppSettingsHandlers } from './ipc/appSettings'
+import { setupAppSettingsHandlers, loadSettings, steamcmdExe } from './ipc/appSettings'
 import { setupPlayitHandlers } from './ipc/playit'
-import { setupNetworkHandlers } from './ipc/network'
+import { setupNetworkHandlers, firewallStatus } from './ipc/network'
 import { setupDiagnosticsHandlers } from './ipc/diagnostics'
 import { setupDiscordHandlers } from './ipc/discord'
 
@@ -136,6 +137,17 @@ app.whenReady().then(() => {
   setupWorkshopHandlers()
   setupWorldHandlers()
   setupUpdaterHandlers()
+
+  // Get the slow answers the pre-start check needs (is the server out of date: SteamCMD, a
+  // few seconds; the firewall rules: PowerShell, about one) while the host looks around,
+  // so pressing Start doesn't wait on them. Hosts only, and only if SteamCMD is already
+  // there (the check would download it otherwise)
+  setTimeout(() => {
+    const s = loadSettings()
+    if (!s.setupComplete || s.role === 'player' || !isServerInstalled(s.serverInstallPath)) return
+    void firewallStatus().catch(() => undefined)
+    if (existsSync(steamcmdExe(s))) void checkServerUpdate(s.serverInstallPath).catch(() => undefined)
+  }, 4000)
 
   // Window control IPC
   ipcMain.on('window:minimize', () => mainWindow?.minimize())

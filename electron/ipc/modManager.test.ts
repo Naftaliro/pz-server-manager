@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { scanWorkshopItem } from './modManager'
@@ -20,63 +20,77 @@ function info(mod: string, sub: string, text: string) {
 const folder = (...parts: string[]) => mkdirSync(join(dir, 'mods', ...parts), { recursive: true })
 
 describe('scanWorkshopItem', () => {
-  it('reads a B41 mod at the top of the mod folder', () => {
+  it('reads a B41 mod at the top of the mod folder', async () => {
     info('Old', '', 'id=OldMod\nname=Old one\nrequire=Lib')
-    expect(scanWorkshopItem(dir)).toEqual([
+    expect((await scanWorkshopItem(dir))).toEqual([
       { id: 'OldMod', name: 'Old one', requires: ['Lib'], maps: [], loadAfter: [], loadBefore: [], incompatible: [], builds: ['b41'] },
     ])
   })
 
-  it('reads a B42 mod from its 42 folder', () => {
+  it('reads a B42 mod from its 42 folder', async () => {
     info('New', '42', 'id=NewMod\nloadModAfter=\\Base')
     folder('New', 'common')
-    const [m] = scanWorkshopItem(dir)
+    const [m] = (await scanWorkshopItem(dir))
     expect(m.id).toBe('NewMod')
     expect(m.loadAfter).toEqual(['Base'])
     expect(m.builds).toEqual(['b42'])
   })
 
-  it('counts mod.info in common plus media-only 42.x folders as B42', () => {
+  it('counts mod.info in common plus media-only 42.x folders as B42', async () => {
     info('Lib', 'common', 'id=tsarslib')
     folder('Lib', '42.13', 'media')
-    expect(scanWorkshopItem(dir)[0].builds).toEqual(['b42'])
+    expect((await scanWorkshopItem(dir))[0].builds).toEqual(['b42'])
   })
 
-  it('counts a mod with only common/mod.info as B42', () => {
+  it('counts a mod with only common/mod.info as B42', async () => {
     info('Brief', 'common', 'id=SurvivorBriefing')
-    expect(scanWorkshopItem(dir)[0].builds).toEqual(['b42'])
+    expect((await scanWorkshopItem(dir))[0].builds).toEqual(['b42'])
   })
 
-  it('prefers the 42 folder over common and the B41 copy', () => {
+  it('prefers the 42 folder over common and the B41 copy', async () => {
     info('Both', '', 'id=Both\nrequire=OldLib')
     info('Both', 'common', 'id=Both\nrequire=CommonLib')
     info('Both', '42', 'id=Both\nrequire=NewLib')
-    const [m] = scanWorkshopItem(dir)
+    const [m] = (await scanWorkshopItem(dir))
     expect(m.requires).toEqual(['NewLib'])
     expect(m.builds).toEqual(['b41', 'b42'])
   })
 
-  it('uses the newest version folder when ids differ between them (Firearms does this)', () => {
+  it('uses the newest version folder when ids differ between them (Firearms does this)', async () => {
     info('Firearms', '', 'id=firearmmod')
     info('Firearms', '42.9', 'id=2256623447/firearmmod')
     info('Firearms', '42.10', 'id=firearmmod\nrequire=New')
     info('Firearms', '42.13', 'id=2256623447/firearmmod')
     info('Firearms', '42.16', 'id=firearmmod\nrequire=Newest')
-    const [m] = scanWorkshopItem(dir)
+    const [m] = (await scanWorkshopItem(dir))
     expect(m.id).toBe('firearmmod')
     expect(m.requires).toEqual(['Newest'])
   })
 
-  it('finds maps in any of the folders', () => {
-    info('Map', '42', 'id=MapMod')
-    folder('Map', 'common', 'media', 'maps', 'Raven Creek')
-    expect(scanWorkshopItem(dir)[0].maps).toEqual(['Raven Creek'])
+  it.runIf(process.platform === 'win32')('follows a linked mod folder like a real one', async () => {
+    const real = mkdtempSync(join(tmpdir(), 'pzm-linked-'))
+    try {
+      mkdirSync(join(real, '42'), { recursive: true })
+      writeFileSync(join(real, '42', 'mod.info'), 'id=Linked')
+      mkdirSync(join(dir, 'mods'), { recursive: true })
+      // a junction needs no admin, same as people linking a mod they're working on
+      symlinkSync(real, join(dir, 'mods', 'Linked'), 'junction')
+      expect((await scanWorkshopItem(dir)).map(m => m.id)).toEqual(['Linked'])
+    } finally {
+      rmSync(real, { recursive: true, force: true })
+    }
   })
 
-  it('handles several mods in one item and skips folders without an id', () => {
+  it('finds maps in any of the folders', async () => {
+    info('Map', '42', 'id=MapMod')
+    folder('Map', 'common', 'media', 'maps', 'Raven Creek')
+    expect((await scanWorkshopItem(dir))[0].maps).toEqual(['Raven Creek'])
+  })
+
+  it('handles several mods in one item and skips folders without an id', async () => {
     info('A', '42', 'id=A')
     info('B', '42', 'id=B')
     info('Broken', '42', 'name=no id here')
-    expect(scanWorkshopItem(dir).map(m => m.id).sort()).toEqual(['A', 'B'])
+    expect((await scanWorkshopItem(dir)).map(m => m.id).sort()).toEqual(['A', 'B'])
   })
 })

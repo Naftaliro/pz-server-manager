@@ -140,11 +140,6 @@ export async function getPlayitState(): Promise<PlayitState> {
   return { ...running, phase: 'unknown' }
 }
 
-// The tunnel that forwards to this port, if there is one (destination looks like 127.0.0.1:16261)
-export function tunnelForPort(state: PlayitState, port: number): PlayitTunnel | undefined {
-  return state.tunnels.find(t => !t.disabled && new RegExp(`:${port}$`).test(t.destination.trim()))
-}
-
 function run(exe: string, args: string[], timeoutMs = 20000): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
     execFile(exe, args, { windowsHide: true, timeout: timeoutMs }, (err, stdout, stderr) => {

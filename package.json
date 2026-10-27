@@ -21,27 +21,19 @@
     "@types/node": "^24.9.0",
     "@types/react": "^18.2.48",
     "@types/react-dom": "^18.2.18",
-    "@types/uuid": "^9.0.7",
     "@vitejs/plugin-react": "^6.1.2",
     "autoprefixer": "^10.4.17",
-    "concurrently": "^8.2.2",
     "electron": "^44.9.3",
     "electron-builder": "^26.18.1",
+    "lucide-react": "^0.316.0",
     "postcss": "^8.4.33",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.3.3",
     "vite": "^8.3.5",
     "vite-plugin-electron": "^1.1.2",
-    "vite-plugin-electron-renderer": "^1.0.0",
-    "vitest": "^5.0.5"
-  },
-  "dependencies": {
-    "axios": "^1.20.0",
-    "lucide-react": "^0.316.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-router-dom": "^6.21.3",
-    "uuid": "^9.0.1",
+    "vitest": "^5.0.5",
     "zustand": "^4.5.0"
   },
   "build": {
@@ -96,7 +88,10 @@
         ]
       }
     ],
-    "executableName": "PZ Server Manager"
+    "executableName": "PZ Server Manager",
+    "electronLanguages": [
+      "en-US"
+    ]
   },
   "allowScripts": {
     "electron-winstaller": false

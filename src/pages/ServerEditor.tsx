@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Save, FolderOpen, ArrowLeft, Settings2, Package, Sliders, Trash2, AlertTriangle, RotateCcw, CheckCircle, XCircle, Loader, Download, Upload, FileCode2, Search, X } from 'lucide-react'
+import { Save, FolderOpen, ArrowLeft, Package, Sliders, Trash2, AlertTriangle, RotateCcw, CheckCircle, XCircle, Loader, Download, Upload, FileCode2, Search, X } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile, BuildVersion, LaunchMode } from '../store/useAppStore'
 import ConfirmDialog from '../components/ConfirmDialog'
