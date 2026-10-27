@@ -1,9 +1,10 @@
 import { ipcMain } from 'electron'
 import { join, dirname } from 'path'
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { spawn, execFile } from 'child_process'
 import https from 'https'
 import fs from 'fs'
+import { folderSize } from './folderSize'
 import { loadSettings, steamcmdExe } from './appSettings'
 import { PZ_APP_ID } from './modManager'
 
@@ -222,18 +223,6 @@ export interface ModDownloadEvent {
   message?: string
 }
 
-function dirSize(p: string): number {
-  let total = 0
-  try {
-    for (const entry of readdirSync(p, { withFileTypes: true })) {
-      const full = join(p, entry.name)
-      if (entry.isDirectory()) total += dirSize(full)
-      else { try { total += statSync(full).size } catch { /* skip */ } }
-    }
-  } catch { /* missing dir */ }
-  return total
-}
-
 export function downloadMods(
   workshopIds: string[],
   send: (e: ModDownloadEvent) => void
@@ -257,11 +246,21 @@ export function downloadMods(
 
     // steamcmd prints nothing while a big item downloads, so watch the folder sizes instead
     const downloadsDir = join(installDir, 'steamapps', 'workshop', 'downloads', PZ_APP_ID)
-    const poll = setInterval(() => {
-      for (const id of pending) {
-        if (done.has(id)) continue
-        const bytes = dirSize(join(downloadsDir, id))
-        if (bytes > 0) send({ workshopId: id, state: 'downloading', bytes })
+    // measured outside the app (big mods are thousands of files), one round at a time
+    let measuring = false
+    const poll = setInterval(async () => {
+      if (measuring) return
+      measuring = true
+      try {
+        for (const id of pending) {
+          if (done.has(id)) continue
+          const dir = join(downloadsDir, id)
+          if (!existsSync(dir)) continue
+          const bytes = await folderSize(dir)
+          if (bytes > 0) send({ workshopId: id, state: 'downloading', bytes })
+        }
+      } finally {
+        measuring = false
       }
     }, 2000)
 

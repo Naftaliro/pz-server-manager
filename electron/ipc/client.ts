@@ -2,6 +2,7 @@ import { ipcMain, app, dialog, shell, BrowserWindow } from 'electron'
 import { join, dirname } from 'path'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync, renameSync } from 'fs'
+import { readdir, readFile, stat } from 'fs/promises'
 import { steamLibraries } from './steamcmd'
 import { scanModFolders, PZ_APP_ID } from './modManager'
 import { getProfile } from './profileManager'
@@ -77,21 +78,33 @@ function listFiles(dir: string, base = dir): string[] {
   return out
 }
 
-function folderFingerprint(dir: string): string {
-  return modFingerprint(listFiles(dir).map(path => ({ path, sha256: sha256(readFileSync(join(dir, path))) })))
+async function listFilesAsync(dir: string, base = dir): Promise<string[]> {
+  const out: string[] = []
+  for (const e of await readdir(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) out.push(...await listFilesAsync(p, base))
+    else if (e.name !== '.gitkeep') out.push(p.slice(base.length + 1).replace(/\\/g, '/'))
+  }
+  return out
 }
 
-export async function clientState(): Promise<ClientState & { gameDir?: string; dataDir: string }> {
+async function folderFingerprint(dir: string): Promise<string> {
+  const files = await listFilesAsync(dir)
+  return modFingerprint(await Promise.all(files.map(async path => ({ path, sha256: sha256(await readFile(join(dir, path))) }))))
+}
+
+// folders: the fix mods the player's server packs care about. Only those get read and
+// hashed: lots of players keep gigabytes of their own mods in Zomboid\mods, and hashing
+// all of that (without stopping the rest of the app) on every visit to Play was the slow part
+export async function clientState(folders: string[] = []): Promise<ClientState & { gameDir?: string; dataDir: string }> {
   const game = await findGame()
   const dataDir = clientDataDir()
   const modsDir = join(dataDir, 'mods')
   const localMods: Record<string, string> = {}
-  if (existsSync(modsDir)) {
-    for (const name of readdirSync(modsDir)) {
-      const p = join(modsDir, name)
-      try { if (statSync(p).isDirectory()) localMods[name.toLowerCase()] = folderFingerprint(p) } catch { /* unreadable, skip */ }
-    }
-  }
+  await Promise.all([...new Set(folders.map(f => f.toLowerCase()))].map(async name => {
+    const p = join(modsDir, name)
+    try { if ((await stat(p)).isDirectory()) localMods[name] = await folderFingerprint(p) } catch { /* not there or unreadable */ }
+  }))
   let workshopDownloaded: string[] = []
   if (game) {
     try { workshopDownloaded = readdirSync(workshopDir(game.library)).filter(n => /^\d+$/.test(n)) } catch { /* nothing downloaded */ }
@@ -190,7 +203,7 @@ export async function installFixes(id: string): Promise<{ installed: string[]; b
   const errors = validatePack(saved.pack)
   if (errors.length) throw new Error(errors.join(' '))
 
-  const state = await clientState()
+  const state = await clientState(saved.pack.localMods.map(m => m.folder))
   const check = checkPack(saved.pack, state)
   const modsDir = join(state.dataDir, 'mods')
   const backupRoot = join(state.dataDir, 'pzm-mod-backups')
@@ -245,8 +258,9 @@ export function setupClientHandlers(mainWindow: BrowserWindow | null) {
   }))
 
   ipcMain.handle('client:listServers', wrap(async () => {
-    const state = await clientState()
-    return { servers: loadSaved().map(s => ({ ...s, check: checkPack(s.pack, state) })), gameDir: state.gameDir }
+    const saved = loadSaved()
+    const state = await clientState(saved.flatMap(s => s.pack.localMods.map(m => m.folder)))
+    return { servers: saved.map(s => ({ ...s, check: checkPack(s.pack, state) })), gameDir: state.gameDir }
   }))
 
   ipcMain.handle('client:openPack', wrap(async () => {

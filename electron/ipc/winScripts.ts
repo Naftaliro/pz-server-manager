@@ -279,3 +279,23 @@ export function isNsisInstaller(head: Uint8Array): boolean {
   if (pe + 4 > buf.length || buf.toString('latin1', pe, pe + 4) !== 'PE\0\0') return false
   return buf.indexOf('NullsoftInst', 0, 'latin1') !== -1
 }
+
+// ── Folder sizes ─────────────────────────────────────────────────────────────
+
+// A world save is tens of thousands of small chunk files (VAN: 87,719) and every backup is
+// another copy. Statting them one by one took 40 s and froze the app. robocopy in list mode
+// (/L, copies nothing) gets every size from the folder listing itself: 1.6 s for that world,
+// in its own process. /BYTES = plain numbers, /NFL /NDL /NJH = only the totals at the end
+export function folderSizeArgs(dir: string): string[] {
+  return [dir, 'NUL', '/L', '/S', '/NFL', '/NDL', '/NJH', '/NP', '/BYTES', '/R:0', '/W:0']
+}
+
+// The totals table is Dirs, Files, Bytes, Times. Its labels are in the PC's language
+// ("Octets" in French) but the rows always come in that order, so take the third row
+// that's all numbers. null if it isn't there (robocopy failed)
+export function parseFolderSize(output: string): number | null {
+  const rows = output.split(/\r?\n/)
+    .map(l => l.match(/:\s+(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s*$/))
+    .filter((m): m is RegExpMatchArray => !!m)
+  return rows.length >= 3 ? Number(rows[2][1]) : null
+}

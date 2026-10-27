@@ -16,6 +16,7 @@ import { formatModIds, orderModIds, buildMapLine, enabledIds, wrongBuildMods, ty
 import { loadSettings } from './appSettings'
 import { ensurePlayitRunning, PLAYIT_INTEGRATION } from './playit'
 import { firewallStatus } from './network'
+import { folderSize } from './folderSize'
 import { notify, escapeDiscord, DISCORD_COLORS } from './discord'
 import { patchStartBat, launcherScript, serverWindowCommand, sendKeysScript } from './winScripts'
 
@@ -566,21 +567,6 @@ function listBackupNames(profile: ServerProfile): string[] {
   }
 }
 
-function dirSizeMb(p: string): number {
-  let total = 0
-  const walk = (d: string) => {
-    try {
-      for (const e of readdirSync(d, { withFileTypes: true })) {
-        const f = join(d, e.name)
-        if (e.isDirectory()) walk(f)
-        else { try { total += statSync(f).size } catch { /* skip */ } }
-      }
-    } catch { /* skip */ }
-  }
-  walk(p)
-  return Math.round(total / 1024 / 1024 * 10) / 10
-}
-
 async function restoreBackup(profileId: string, name: string): Promise<{ success: boolean; message: string }> {
   const profile = getProfile(profileId)
   if (!profile) return { success: false, message: 'Profile not found' }
@@ -1111,7 +1097,11 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
   ipcMain.handle('server:listBackups', async (_event, profileId: string) => {
     const profile = getProfile(profileId)
     if (!profile) return []
-    return listBackupNames(profile).map(name => ({ name, sizeMb: dirSizeMb(join(backupRoot(profile), name)) }))
+    // a finished backup never changes, so each one is measured once (outside the app, they're
+    // a full copy of the world each) and remembered for good
+    return Promise.all(listBackupNames(profile).map(async name => ({
+      name, sizeMb: Math.round((await folderSize(join(backupRoot(profile), name), Infinity)) / 1024 / 1024 * 10) / 10,
+    })))
   })
 
   ipcMain.handle('server:backupNow', async (_event, profileId: string) => {

@@ -7,7 +7,7 @@ import {
   batText, quotedValue, patchStartBat, launcherScript, updateScript,
   serverWindowCommand, updaterWindowCommand, sendKeysScript,
   firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, FIREWALL_RULE, OLD_FIREWALL_RULE,
-  type FirewallRuleInfo, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller,
+  type FirewallRuleInfo, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller, folderSizeArgs, parseFolderSize,
 } from './winScripts'
 
 const STOCK_BAT = [
@@ -314,4 +314,48 @@ describe.runIf(process.platform === 'win32')('installer updates on Windows', () 
     const exe = join(release, 'win-unpacked', 'PZ Server Manager.exe')
     if (existsSync(exe)) expect(isNsisInstaller(head(exe))).toBe(false)
   })
+})
+
+describe('folder sizes', () => {
+  // what robocopy prints with /NFL /NDL /NJH, once in English and once in French
+  const english = [
+    '------------------------------------------------------------------------------',
+    '',
+    '               Total    Copied   Skipped  Mismatch    FAILED    Extras',
+    '    Dirs :         5         5         0         0         0         0',
+    '   Files :     87719     87719         0         0         0         0',
+    '   Bytes : 226865399 226865399         0         0         0         0',
+    '   Times :   0:00:00   0:00:00                       0:00:00   0:00:00',
+    '   Ended : Monday, October 26, 2026 7:40:01 PM',
+  ].join('\r\n')
+  const french = english.replace('Dirs :', 'Rép. :').replace('Files :', 'Fichiers :').replace('Bytes :', 'Octets :')
+
+  it('reads the byte total in any language', () => {
+    expect(parseFolderSize(english)).toBe(226865399)
+    expect(parseFolderSize(french)).toBe(226865399)
+  })
+  it('gives up on output it does not recognise', () => {
+    expect(parseFolderSize('ERROR 2 (0x00000002) Accessing Source Directory C:\\nope\\')).toBeNull()
+    expect(parseFolderSize('')).toBeNull()
+  })
+  it('lists only, never copies', () => {
+    const args = folderSizeArgs('C:\\Users\\Me\\Zomboid\\Saves\\Multiplayer\\VAN')
+    expect(args.slice(0, 3)).toEqual(['C:\\Users\\Me\\Zomboid\\Saves\\Multiplayer\\VAN', 'NUL', '/L'])
+    expect(args).toContain('/BYTES')
+  })
+})
+
+describe.runIf(process.platform === 'win32')('folder sizes on Windows', () => {
+  it('measures a real folder with robocopy', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pzm-size-'))
+    mkdirSync(join(dir, 'map', 'deep'), { recursive: true })
+    writeFileSync(join(dir, 'a.bin'), Buffer.alloc(1000))
+    writeFileSync(join(dir, 'map', 'deep', 'b.bin'), Buffer.alloc(2345))
+    let out = ''
+    try { out = execFileSync('robocopy', folderSizeArgs(dir)).toString() } catch (e) {
+      // robocopy exits with 1 when it would have copied files, that's success
+      out = String((e as { stdout?: Buffer }).stdout || '')
+    }
+    expect(parseFolderSize(out)).toBe(3345)
+  }, 30000)
 })

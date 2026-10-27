@@ -1,6 +1,8 @@
 import { ipcMain } from 'electron'
 import { join } from 'path'
-import { existsSync, rmSync, statSync, readdirSync } from 'fs'
+import { existsSync } from 'fs'
+import { rm } from 'fs/promises'
+import { folderSize, forgetFolderSize } from './folderSize'
 
 function getServerDataPath(dataPath: string): string {
   return dataPath.replace('%USERPROFILE%', process.env.USERPROFILE || process.env.HOME || '')
@@ -8,29 +10,6 @@ function getServerDataPath(dataPath: string): string {
 
 function getWorldSavePath(serverName: string, dataPath: string): string {
   return join(getServerDataPath(dataPath), 'Saves', 'Multiplayer', serverName)
-}
-
-function getDirSize(dirPath: string): number {
-  if (!existsSync(dirPath)) return 0
-  let size = 0
-  try {
-    const items = readdirSync(dirPath, { withFileTypes: true })
-    for (const item of items) {
-      const fullPath = join(dirPath, item.name)
-      if (item.isDirectory()) {
-        size += getDirSize(fullPath)
-      } else {
-        try {
-          size += statSync(fullPath).size
-        } catch {
-          // ignore
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return size
 }
 
 export function setupWorldHandlers() {
@@ -41,7 +20,8 @@ export function setupWorldHandlers() {
         return { success: true, exists: false, sizeBytes: 0, sizeMb: 0 }
       }
 
-      const sizeBytes = getDirSize(worldPath)
+      // tens of thousands of chunk files: measured outside the app, remembered for 5 minutes
+      const sizeBytes = await folderSize(worldPath, 5 * 60 * 1000)
       const sizeMb = Math.round(sizeBytes / (1024 * 1024) * 10) / 10
 
       return { success: true, exists: true, sizeBytes, sizeMb, path: worldPath }
@@ -59,8 +39,9 @@ export function setupWorldHandlers() {
         return { success: true, message: 'No world data found to wipe' }
       }
 
-      // Delete the world save directory recursively
-      rmSync(worldPath, { recursive: true, force: true })
+      // Delete the world save directory recursively (without freezing the app on ~90,000 files)
+      await rm(worldPath, { recursive: true, force: true })
+      forgetFolderSize(worldPath)
 
       // Also reset the ResetID in the .ini to force a fresh world
       const serverDir = join(getServerDataPath(dataPath), 'Server')
