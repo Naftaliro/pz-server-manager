@@ -287,9 +287,12 @@ export const RELEASE_SIGNER = 'Mitchell Berg'
 
 // Windows' own check of a file's signature, no admin needed. Status is Valid, NotSigned,
 // HashMismatch, NotTrusted and so on, the same in every Windows language. Signatures stay
-// Valid after the 3-day certificate runs out because the build timestamps them
+// Valid after the 3-day certificate runs out because the build timestamps them.
+// The module comes from Windows PowerShell's own folder: started from PowerShell 7 it inherits
+// a module path where 7's copy comes first and won't load. Any error stops the script, so a
+// check that couldn't run never looks like an unsigned file
 export function signatureQueryScript(file: string): string {
-  return `$s = Get-AuthenticodeSignature -LiteralPath '${file.replace(/'/g, "''")}'; $n = ''; if ($s.SignerCertificate) { $n = $s.SignerCertificate.GetNameInfo('SimpleName', $false) }; ConvertTo-Json -Compress -InputObject ([pscustomobject]@{ status = [string]$s.Status; signer = [string]$n })`
+  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security'); $s = Get-AuthenticodeSignature -LiteralPath '${file.replace(/'/g, "''")}'; $n = ''; if ($s.SignerCertificate) { $n = $s.SignerCertificate.GetNameInfo('SimpleName', $false) }; ConvertTo-Json -Compress -InputObject ([pscustomobject]@{ status = [string]$s.Status; signer = [string]$n })`
 }
 
 export interface SignatureInfo {
