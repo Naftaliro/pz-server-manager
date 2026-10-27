@@ -6,8 +6,11 @@ import fs from 'fs'
 // resources/app.asar, which the patched fs treats as a folder and fails to delete
 import originalFs from 'original-fs'
 import path from 'path'
-import { spawn } from 'child_process'
-import { updateScript, updaterWindowCommand, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller } from './winScripts'
+import { spawn, execFile } from 'child_process'
+import {
+  updateScript, updaterWindowCommand, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller,
+  RELEASE_SIGNER, signatureQueryScript, signedByUs, type SignatureInfo,
+} from './winScripts'
 
 const GITHUB_OWNER = 'Naftaliro'
 const GITHUB_REPO = 'pz-server-manager'
@@ -195,6 +198,16 @@ function cleanTempDir(tempDir: string): void {
   }
 }
 
+// What Windows says about a file's signature, null if PowerShell couldn't tell
+function readSignature(file: string): Promise<SignatureInfo | null> {
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', signatureQueryScript(file)], { windowsHide: true, timeout: 60000 }, (err, stdout) => {
+      if (err) return resolve(null)
+      try { resolve(JSON.parse(stdout)) } catch { resolve(null) }
+    })
+  })
+}
+
 // ── Installed copy: run the new setup exe ─────────────────────────────────────
 //
 // Copying the zip over an installed copy worked, but Windows "Apps & features" kept
@@ -202,7 +215,9 @@ function cleanTempDir(tempDir: string): void {
 //   1. Same checks as the zip: only this repo's release downloads, a plain file name
 //   2. Download to %LOCALAPPDATA%\pz-manager-update\ (all of it, see downloadFile)
 //   3. Check it's a Windows program and an NSIS installer before running anything
-//   4. Run it silently as an update (it waits for the app to close, installs over the
+//   4. Check Windows says it's validly signed by RELEASE_SIGNER. The signature covers the
+//      whole installer, app files included, and only the release build can make one
+//   5. Run it silently as an update (it waits for the app to close, installs over the
 //      same folder and starts the app again), then quit
 async function installWithSetup(downloadUrl: string, assetName: string): Promise<{ success: boolean; message?: string }> {
   if (!RELEASE_EXE_URL.test(downloadUrl) || !/^[\w. -]+\.exe$/i.test(assetName)) {
@@ -244,6 +259,18 @@ async function installWithSetup(downloadUrl: string, assetName: string): Promise
   } catch (err) {
     cleanTempDir(tempDir)
     return { success: false, message: `Failed to verify download: ${(err as Error).message}` }
+  }
+
+  safeSend('updater:progress', { stage: 'Checking the signature...', pct: 100 })
+  const sig = await readSignature(setupPath)
+  if (!sig || !signedByUs(sig)) {
+    cleanTempDir(tempDir)
+    return {
+      success: false,
+      message: sig
+        ? `The downloaded installer isn't signed by ${RELEASE_SIGNER}, so it wasn't run. Please update manually from the GitHub releases page.`
+        : "Couldn't check the downloaded installer's signature. Please update manually from the GitHub releases page.",
+    }
   }
 
   try {
@@ -312,7 +339,8 @@ export function setupUpdaterHandlers() {
   // Strategy (the portable copy; an installed copy gets the setup exe, see installWithSetup):
   //   1. Clean any leftover temp dir from a previous attempt
   //   2. Download the zip to %LOCALAPPDATA%\pz-manager-update\
-  //   3. Verify the zip magic bytes
+  //   3. Verify the zip magic bytes. No signature check: only the exe in the zip is
+  //      signed, the app's own files (resources\app.asar) can't be
   //   4. Write a .bat that: waits for the app to exit, extracts via PowerShell,
   //      robocopy new files over the install dir (userData is never touched),
   //      then relaunches the exe

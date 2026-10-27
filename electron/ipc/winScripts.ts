@@ -280,6 +280,28 @@ export function isNsisInstaller(head: Uint8Array): boolean {
   return buf.indexOf('NullsoftInst', 0, 'latin1') !== -1
 }
 
+// The name on the certificate releases are signed with (Microsoft Artifact Signing, see
+// CODE_SIGNING_POLICY.md). Only the name is checked: the certificate also has the city and
+// state, and those change if the publisher moves
+export const RELEASE_SIGNER = 'Mitchell Berg'
+
+// Windows' own check of a file's signature, no admin needed. Status is Valid, NotSigned,
+// HashMismatch, NotTrusted and so on, the same in every Windows language. Signatures stay
+// Valid after the 3-day certificate runs out because the build timestamps them
+export function signatureQueryScript(file: string): string {
+  return `$s = Get-AuthenticodeSignature -LiteralPath '${file.replace(/'/g, "''")}'; $n = ''; if ($s.SignerCertificate) { $n = $s.SignerCertificate.GetNameInfo('SimpleName', $false) }; ConvertTo-Json -Compress -InputObject ([pscustomobject]@{ status = [string]$s.Status; signer = [string]$n })`
+}
+
+export interface SignatureInfo {
+  status: string
+  // the certificate's name (CN), '' when the file isn't signed
+  signer: string
+}
+
+export function signedByUs(sig: SignatureInfo): boolean {
+  return sig.status === 'Valid' && sig.signer === RELEASE_SIGNER
+}
+
 // ── Folder sizes ─────────────────────────────────────────────────────────────
 
 // A world save is tens of thousands of small chunk files (VAN: 87,719) and every backup is

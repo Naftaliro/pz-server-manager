@@ -38,9 +38,9 @@ a windows app for playing project zomboid (b42) with your friends. host a server
 
 grab `Knox-Launcher-Setup-x.x.x.exe` from [releases](https://github.com/Naftaliro/pz-server-manager/releases/latest) and run it. it installs, puts a shortcut on your desktop and opens. prefer portable? grab the zip instead and run `PZ Server Manager.exe` from the extracted folder.
 
-windows might say it "protected your pc" because the app isn't signed. click **more info → run anyway**.
+the app is signed, so windows shows the publisher as **Mitchell Berg**. for a while after a new release windows might still say it "protected your pc", because it wants to see enough downloads first. click **more info**, check the publisher says Mitchell Berg, then **run anyway**.
 
-releases are built by [github actions](.github/workflows/build.yml) straight from this repo. see the [Code signing policy](CODE_SIGNING_POLICY.md).
+releases are built and signed by [github actions](.github/workflows/build.yml) straight from this repo, and the installed app only installs updates that are signed the same way. see the [Code signing policy](CODE_SIGNING_POLICY.md).
 
 ## first time
 
@@ -80,7 +80,7 @@ made with electron, react, typescript, tailwind, zustand and vite. catppuccin mo
 
 ## Code signing policy
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/). Who can commit and approve releases, what gets signed and the privacy policy are in [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
+Releases are signed with [Microsoft Artifact Signing](https://learn.microsoft.com/azure/artifact-signing/overview), certificate issued to Mitchell Berg. Who can commit and approve releases, what gets signed and the privacy policy are in [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
 
 ## license
 

@@ -1,10 +1,10 @@
 # Code signing policy
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+Releases are signed with [Microsoft Artifact Signing](https://learn.microsoft.com/azure/artifact-signing/overview). The certificate is issued to Mitchell Berg ([Naftaliro](https://github.com/Naftaliro)) after Microsoft checked the developer's ID, and Windows shows that name as the publisher. The certificate's private key never leaves Microsoft's service: the build can only ask it to sign.
 
 ## What gets signed
 
-Only Knox Launcher's own Windows files are signed: the installer (`Knox-Launcher-Setup-x.x.x.exe`) and the app executable, including the copy inside the portable zip. They are built by [GitHub Actions](.github/workflows/build.yml) from the source code in this repository, and every signing request is approved by hand.
+Only Knox Launcher's own Windows files are signed: the installer (`Knox-Launcher-Setup-x.x.x.exe`), the app executable (including the copy inside the portable zip), the uninstaller, and the small elevation helper the installer includes. They are built and signed by [GitHub Actions](.github/workflows/build.yml) from the source code in this repository, only when an approver pushes a release tag or starts a build by hand. Pull requests and other builds are never signed. The build checks that the installer and the app are signed and timestamped before anything is uploaded, and the installed app checks an update's signature before it runs the installer.
 
 Programs the app downloads for you are not part of the release and are not signed by this project: SteamCMD and the Project Zomboid dedicated server (from Valve) and Steam Workshop mods. playit.gg is optional, and you install it yourself from playit.gg if you want to use it.
 
@@ -15,7 +15,7 @@ Programs the app downloads for you are not part of the release and are not signe
 | Committers and reviewers | [Naftaliro](https://github.com/Naftaliro) |
 | Approvers | [Naftaliro](https://github.com/Naftaliro) |
 
-Pull requests from anyone else are reviewed by a committer before they are merged. All team members use multi-factor authentication for GitHub and SignPath.
+Pull requests from anyone else are reviewed by a committer before they are merged, and only approvers can push the release tags that get signed. All team members use multi-factor authentication for GitHub and Microsoft Azure.
 
 ## Privacy policy
 

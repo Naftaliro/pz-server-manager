@@ -8,6 +8,7 @@ import {
   serverWindowCommand, updaterWindowCommand, sendKeysScript,
   firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, FIREWALL_RULE, OLD_FIREWALL_RULE,
   type FirewallRuleInfo, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller, folderSizeArgs, parseFolderSize,
+  RELEASE_SIGNER, signatureQueryScript, signedByUs, type SignatureInfo,
 } from './winScripts'
 
 const STOCK_BAT = [
@@ -296,6 +297,38 @@ describe('installer updates', () => {
     expect(isNsisInstaller(Buffer.from('PK\x03\x04NullsoftInst', 'latin1'))).toBe(false)
     expect(isNsisInstaller(Buffer.from('MZ'))).toBe(false)
   })
+
+  it('only runs an installer Windows says is validly signed by the release signer', () => {
+    expect(signedByUs({ status: 'Valid', signer: RELEASE_SIGNER })).toBe(true)
+    expect(signedByUs({ status: 'Valid', signer: 'Someone Else' })).toBe(false)
+    expect(signedByUs({ status: 'HashMismatch', signer: RELEASE_SIGNER })).toBe(false)
+    expect(signedByUs({ status: 'NotTrusted', signer: RELEASE_SIGNER })).toBe(false)
+    expect(signedByUs({ status: 'NotSigned', signer: '' })).toBe(false)
+  })
+
+  it("escapes ' in the path for powershell", () => {
+    expect(signatureQueryScript("C:\\Users\\O'Brien\\setup.exe")).toContain("-LiteralPath 'C:\\Users\\O''Brien\\setup.exe'")
+  })
+})
+
+describe.runIf(process.platform === 'win32')('signatures on Windows', () => {
+  const signature = (file: string) =>
+    JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', signatureQueryScript(file)]).toString()) as SignatureInfo
+
+  it("reads a signed program's name, and someone else's doesn't pass", () => {
+    // node.exe, signed by the OpenJS Foundation
+    const sig = signature(process.execPath)
+    expect(sig.status).toBe('Valid')
+    expect(sig.signer).not.toBe('')
+    expect(signedByUs(sig)).toBe(false)
+  }, 30000)
+
+  it('reads an unsigned file in a folder with awkward characters', () => {
+    const dir = mkdtempSync(join(tmpdir(), "pzm sig it's ü-"))
+    const file = join(dir, 'unsigned.ps1')
+    writeFileSync(file, 'Write-Output 1\r\n')
+    expect(signature(file)).toEqual({ status: 'NotSigned', signer: '' })
+  }, 30000)
 })
 
 // the real thing, when a build has been made on this PC
