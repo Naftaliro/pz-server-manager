@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Package, Trash2, ChevronUp, ChevronDown, ExternalLink, Download, RefreshCw, AlertTriangle,
-  CheckCircle, Loader, Search, Pencil, Upload, Copy, FileText, Map as MapIcon, Info, GripVertical, ArrowDownUp, Users,
+  CheckCircle, Loader, Search, Pencil, Upload, Copy, FileText, Map as MapIcon, Info, GripVertical, ArrowDownUp, Users, History,
 } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ModEntry, ServerProfile } from '../store/useAppStore'
 import WorkshopBrowser from './WorkshopBrowser'
 import ModPackPanel from './ModPackPanel'
 import WorkshopPublish from './WorkshopPublish'
+import ConfirmDialog from './ConfirmDialog'
 import {
   addModsToProfile, downloadAndScan, scanMods, enabledIds, withEnabled, needsChoice, hasRealModId,
   missingRequirements, disabledRequirements, isLocalMod, modKey, listProblems,
@@ -39,6 +40,26 @@ export default function ModsPanel({ profile }: { profile: ServerProfile }) {
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [dragOver, setDragOver] = useState<number | null>(null)
   const nameOf = (id: string) => profile.mods.find(m => enabledIds(m).includes(id))?.name || id
+
+  // saved copies (App settings → Mod backups), by workshop id
+  const [backups, setBackups] = useState<Record<string, { savedAt: string }>>({})
+  const [useCopyOf, setUseCopyOf] = useState<ModEntry | null>(null)
+  const [copyMsg, setCopyMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  useEffect(() => {
+    window.electronAPI.modBackups.status().then(r => setBackups(r.items || {})).catch(() => undefined)
+  }, [profile.id])
+
+  // swap the Workshop mod for the saved copy, as a local mod in Zomboid\mods
+  const switchToCopy = async (mod: ModEntry) => {
+    setUseCopyOf(null)
+    const r = await window.electronAPI.modBackups.use(mod.workshopId, profile.worldSavePath)
+    if (!r.success || !r.infos) { setCopyMsg({ tone: 'error', text: r.message || "Couldn't use the saved copy." }); return }
+    const ids = r.infos.map(i => i.id)
+    const keep = enabledIds(mod).filter(id => ids.includes(id))
+    const local = withEnabled({ ...mod, workshopId: '', name: `${mod.name} (saved copy)`, infos: r.infos }, keep.length ? keep : ids.length === 1 ? ids : [])
+    await setMods(mods => mods.map(m => (modKey(m) === modKey(mod) ? local : m)))
+    setCopyMsg({ tone: 'ok', text: `"${mod.name}" now runs from your copy saved ${new Date(r.savedAt!).toLocaleDateString()}. Friends get it from your server pack now, so make a new one (Import / Export).` })
+  }
   const notDownloaded = profile.mods.filter(m => !isLocalMod(m) && !m.infos && modDownloads[m.workshopId]?.state !== 'done')
   const busy = profile.mods.some(m => ['queued', 'downloading'].includes(modDownloads[m.workshopId]?.state || ''))
 
@@ -191,6 +212,12 @@ export default function ModsPanel({ profile }: { profile: ServerProfile }) {
                 </Banner>
               )}
 
+              {copyMsg && (
+                <Banner tone={copyMsg.tone === 'ok' ? 'info' : 'error'}>
+                  <span className="flex-1">{copyMsg.text}</span>
+                </Banner>
+              )}
+
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="text-xs text-pz-muted flex-1">
                   Mods load top to bottom, drag them to reorder. Mods that others depend on are moved up automatically when the server starts.
@@ -242,6 +269,8 @@ export default function ModsPanel({ profile }: { profile: ServerProfile }) {
                     onToggleId={id => toggleId(modKey(mod), id)}
                     onRetry={() => downloadAndScan(profile.id, [mod.workshopId])}
                     onSetId={v => setManualId(modKey(mod), v)}
+                    backupDate={!isLocalMod(mod) && backups[mod.workshopId] ? backups[mod.workshopId].savedAt : undefined}
+                    onUseBackup={() => setUseCopyOf(mod)}
                   />
                 </div>
               ))}
@@ -277,6 +306,15 @@ export default function ModsPanel({ profile }: { profile: ServerProfile }) {
 
       {sub === 'pack' && <ModPackPanel profile={profile} onDone={() => setSub('list')} />}
       {sub === 'import' && <ImportExport profile={profile} />}
+
+      <ConfirmDialog
+        isOpen={!!useCopyOf}
+        title={`Use your saved copy of "${useCopyOf?.name}"?`}
+        message={`The server stops getting this mod from the Workshop and uses the copy you saved ${useCopyOf && backups[useCopyOf.workshopId] ? new Date(backups[useCopyOf.workshopId].savedAt).toLocaleDateString() : ''} instead, so it won't update anymore. Friends need it too: they get it from your server pack (fine for small mods, a pack can't hold more than 50 MB).`}
+        confirmLabel="Use my copy"
+        onConfirm={() => useCopyOf && switchToCopy(useCopyOf)}
+        onCancel={() => setUseCopyOf(null)}
+      />
     </div>
   )
 }
@@ -310,9 +348,12 @@ interface RowProps {
   onToggleId: (id: string) => void
   onRetry: () => void
   onSetId: (value: string) => void
+  // there's a saved copy of this Workshop mod (from when)
+  backupDate?: string
+  onUseBackup: () => void
 }
 
-function ModRow({ profileId, mod, index, total, advanced, wrongBuild, download, onMove, onRemove, onToggleId, onRetry, onSetId }: RowProps) {
+function ModRow({ profileId, mod, index, total, advanced, wrongBuild, download, onMove, onRemove, onToggleId, onRetry, onSetId, backupDate, onUseBackup }: RowProps) {
   const [editing, setEditing] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [idDraft, setIdDraft] = useState(mod.modId)
@@ -377,6 +418,15 @@ function ModRow({ profileId, mod, index, total, advanced, wrongBuild, download, 
               className="btn-ghost p-1.5" title="Open on Steam"
             >
               <ExternalLink size={12} />
+            </button>
+          )}
+          {backupDate && (
+            <button
+              onClick={onUseBackup}
+              className={`btn-ghost text-xs py-1 px-2 ${state === 'failed' ? 'text-pz-yellow' : ''}`}
+              title={`Use the copy saved ${new Date(backupDate).toLocaleDateString()} instead of the Workshop (for a mod that was taken down, or an update that broke something)`}
+            >
+              <History size={12} /> {state === 'failed' ? 'Use saved copy' : ''}
             </button>
           )}
           {isLocalMod(mod) && (

@@ -8,6 +8,7 @@ import { setupProfileHandlers } from './ipc/profileManager'
 import { setupFileHandlers } from './ipc/fileManager'
 import { setupModHandlers } from './ipc/modManager'
 import { setupLocalModHandlers } from './ipc/localMods'
+import { setupModBackupHandlers } from './ipc/modBackups'
 import { setupClientHandlers } from './ipc/client'
 import { setupWorkshopHandlers } from './ipc/workshop'
 import { setupWorldHandlers } from './ipc/worldManager'
@@ -133,6 +134,7 @@ app.whenReady().then(() => {
   setupFileHandlers()
   setupModHandlers()
   setupLocalModHandlers()
+  setupModBackupHandlers()
   setupClientHandlers(mainWindow)
   setupWorkshopHandlers()
   setupWorldHandlers()

@@ -7,6 +7,7 @@ import fs from 'fs'
 import { folderSize } from './folderSize'
 import { loadSettings, steamcmdExe } from './appSettings'
 import { PZ_APP_ID } from './modManager'
+import { backupAfterDownload } from './modBackups'
 
 const STEAMCMD_URL = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 const PZ_SERVER_APP_ID = '380870'
@@ -52,7 +53,9 @@ export function setupSteamCmdHandlers() {
   ipcMain.handle('steamcmd:downloadMods', async (event, { workshopIds, channel }) => {
     const sender = event.sender
     const send = (payload: ModDownloadEvent) => { if (!sender.isDestroyed()) sender.send(channel, payload) }
-    return downloadMods(workshopIds, send)
+    const result = await downloadMods(workshopIds, send)
+    backupAfterDownload(result.done)
+    return result
   })
 }
 

@@ -70,6 +70,8 @@ export interface AppSettings {
   gameDir?: string
   clientDataDir?: string
   role?: 'host' | 'player'
+  modBackups?: boolean
+  modBackupDir?: string
 }
 
 // 'starting' = loading world/mods, 'running' = players can join

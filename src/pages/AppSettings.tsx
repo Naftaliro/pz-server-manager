@@ -6,6 +6,7 @@ import InstallRunner from '../components/InstallRunner'
 import PlayitSetup from '../components/PlayitSetup'
 import { triggerManualUpdateCheck } from '../components/UpdateBanner'
 import CopyDiagnosticsButton from '../components/CopyDiagnosticsButton'
+import ModBackupsCard from '../components/ModBackupsCard'
 
 export default function AppSettings() {
   const { settings, setSettings, profiles } = useAppStore()
@@ -178,6 +179,8 @@ export default function AppSettings() {
             On Steam's page, any domain name works (for example "localhost"). The key stays on this PC and is only sent to Steam.
           </p>
         </div>
+
+        <ModBackupsCard />
 
         <div className="card p-5 space-y-3">
           <h3 className="section-title flex items-center gap-2"><Wrench size={14} /> Advanced mode</h3>

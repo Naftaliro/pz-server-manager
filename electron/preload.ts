@@ -162,6 +162,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Play mode (the player's side) + server packs
+  modBackups: {
+    status: (withSize?: boolean) => ipcRenderer.invoke('modBackups:status', withSize),
+    configure: (patch: { enabled?: boolean; dir?: string }) => ipcRenderer.invoke('modBackups:configure', patch),
+    backupNow: (items: Array<{ workshopId: string; name?: string }>) => ipcRenderer.invoke('modBackups:backupNow', items),
+    use: (workshopId: string, worldSavePath?: string) => ipcRenderer.invoke('modBackups:use', workshopId, worldSavePath),
+  },
+
   client: {
     state: () => ipcRenderer.invoke('client:state'),
     searchDrives: () => ipcRenderer.invoke('client:searchDrives'),

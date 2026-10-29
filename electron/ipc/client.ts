@@ -158,6 +158,11 @@ export async function buildPack(profileId: string, opts: { address?: string; inc
         return { path, sha256: sha256(buf), data: buf.toString('base64') }
       })
       localMods.push({ id, name: m.name, folder: hit.folder, files })
+      // base64 is a third bigger, and the pack has to stay under PACK_MAX_BYTES to open
+      const total = localMods.reduce((n, l) => n + l.files.reduce((s, f) => s + f.data.length, 0), 0)
+      if (total > PACK_MAX_BYTES * 0.9) {
+        throw new Error(`The fix mods are too big for a server pack (${Math.round(total / 1024 / 1024)} MB, the limit is ${PACK_MAX_BYTES / 1024 / 1024} MB). "${m.name}" is probably a whole mod: put it on the Workshop instead (Mods tab → Put on Workshop).`)
+      }
     }
   }
 

@@ -178,6 +178,18 @@ interface ElectronAPI {
     useWorkshopCopy: (profileId: string, modId: string, workshopId: string) => Promise<{ success: boolean; message?: string; visibleToSteamApi?: boolean }>
     openFolder: (dir: string) => Promise<{ success: boolean; message?: string }>
   }
+  modBackups: {
+    status: (withSize?: boolean) => Promise<{
+      success: boolean; message?: string; enabled?: boolean; dir?: string; sizeBytes?: number
+      // workshop id -> newest saved copy
+      items?: Record<string, { name?: string; savedAt: string; versions: number }>
+    }>
+    configure: (patch: { enabled?: boolean; dir?: string }) => Promise<{ success: boolean; message?: string }>
+    backupNow: (items: Array<{ workshopId: string; name?: string }>) => Promise<{ success: boolean; message?: string; saved?: number; same?: number; missing?: number }>
+    use: (workshopId: string, worldSavePath?: string) => Promise<{
+      success: boolean; message?: string; folders?: string[]; infos?: import('../../shared/modCore').ModInfo[]; savedAt?: string
+    }>
+  }
   client: {
     state: () => Promise<{ success: boolean; message?: string; gameFound?: boolean; gameDir?: string; dataDir?: string; workshopDownloaded?: string[] }>
     searchDrives: () => Promise<{ success: boolean; message?: string; found?: string[] }>

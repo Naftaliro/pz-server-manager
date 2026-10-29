@@ -21,6 +21,9 @@ export interface AppSettings {
   clientDataDir?: string
   // what the first-run screen picked: hosting servers, or just playing on friends' servers
   role?: 'host' | 'player'
+  // keep a copy of every Workshop mod after it downloads (modBackups.ts), and where
+  modBackups?: boolean
+  modBackupDir?: string
 }
 
 const DEFAULTS: AppSettings = {
