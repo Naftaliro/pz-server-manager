@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, Lock, Users, Skull, Package, Play, Loader, Wrench } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Lock, Users, Skull, Package, Play, Loader, Wrench, FileUp } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import { PRESETS, loadPresets } from '../lib/presets'
 import type { PresetKey } from '../lib/presets'
@@ -53,6 +53,61 @@ export default function CreateServer() {
     let port = 27015
     while (used.has(port)) port++
     return port
+  }
+
+  // Host a copy of someone's server from their server pack: same mods, fix mods and settings
+  const [packError, setPackError] = useState('')
+  const copyPack = async () => {
+    setPackError('')
+    const r = await window.electronAPI.client.openPackForHost()
+    if (!r.success) { setPackError(r.message || "Couldn't open that pack."); return }
+    if (r.cancelled || !r.pack?.host || !r.path) return
+    const { pack, path } = r
+    const host = pack.host!
+    setCreating(true)
+    try {
+      let copyName = pack.server.name.slice(0, 44)
+      for (let n = 2; profiles.some(p => p.name.toLowerCase() === copyName.toLowerCase()); n++) copyName = `${pack.server.name.slice(0, 44)} ${n}`
+      const port = nextPort()
+      const saved = await saveProfile({
+        id: '',
+        name: copyName,
+        description: `Copied from a server pack made ${new Date(pack.createdAt).toLocaleDateString()}`,
+        buildVersion: pack.server.build,
+        serverInstallPath: settings?.serverInstallPath || 'C:\\PZServer',
+        worldSavePath: '',
+        port,
+        udpPort: port + 1,
+        // their PC might have more memory to spare than this one
+        memory: Math.min(host.memory || memory, memory),
+        adminPassword: suggestPassword(),
+        serverPassword: pack.server.password || '',
+        maxPlayers: host.maxPlayers,
+        mods: host.mods.map(m => ({ workshopId: m.workshopId, modId: m.modId, name: m.name, thumbnailUrl: m.thumbnailUrl })),
+        mapOrder: host.mapOrder,
+        launchMode: 'managed',
+        iniSettings: {
+          ...host.ini,
+          ...(host.baseMap ? { Map: host.baseMap } : {}),
+          PublicName: copyName,
+          RCONPort: nextRconPort(),
+        },
+        sandboxSettings: host.sandbox,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      if (pack.localMods.length > 0) {
+        const fixes = await window.electronAPI.client.installPackFixes(path)
+        if (!fixes.success) setPackError(`The server was made, but its fix mods couldn't be installed: ${fixes.message}`)
+      }
+      const workshopIds = host.mods.map(m => m.workshopId).filter(Boolean)
+      if (workshopIds.length > 0) void downloadAndScan(saved.id, workshopIds)
+      openServer(saved.id, 'mods')
+    } catch (e) {
+      setPackError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCreating(false)
+    }
   }
 
   const create = async (thenMods: boolean) => {
@@ -156,6 +211,18 @@ export default function CreateServer() {
             <div className="flex justify-between">
               <button onClick={() => setActiveView('home')} className="btn-ghost"><ArrowLeft size={14} /> Cancel</button>
               <button onClick={() => setStep(1)} disabled={!nameOk} className="btn-primary disabled:opacity-40">Next <ArrowRight size={14} /></button>
+            </div>
+
+            <div className="border-t border-pz-border pt-5">
+              <button onClick={copyPack} disabled={creating} className="card p-4 text-left w-full hover:border-pz-green transition-all flex items-center gap-4">
+                <FileUp size={22} className="text-pz-green flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="font-semibold text-pz-text">Copy a server pack instead</div>
+                  <div className="text-xs text-pz-subtext">Got a .pzpack from someone? Host the same server: their mods, fix mods and settings, with a fresh world.</div>
+                </div>
+                {creating ? <Loader size={16} className="animate-spin text-pz-muted" /> : <ArrowRight size={16} className="text-pz-muted" />}
+              </button>
+              {packError && <p className="text-xs text-pz-red mt-2">{packError}</p>}
             </div>
           </div>
         )}

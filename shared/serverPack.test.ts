@@ -128,3 +128,35 @@ describe('parseJoinAddress', () => {
     expect(parseJoinAddress('x.y:99999', 16261).error).toMatch(/valid port/)
   })
 })
+
+describe('hosting from a pack', () => {
+  const host = {
+    mods: [{ workshopId: '111', modId: 'Guns', name: 'Guns' }, { workshopId: '', modId: 'Fix', name: 'The fix' }],
+    maxPlayers: 8, memory: 8192,
+    ini: { PVP: false, PauseEmpty: true },
+    sandbox: { Zombies: 2, ZombieLore: { Speed: 1 }, SomeMod: { Option: true } },
+  }
+
+  it('strips private ini settings', async () => {
+    const { publicIni } = await import('./serverPack')
+    expect(publicIni({ PVP: true, Password: 'x', RCONPassword: 'y', DiscordToken: 'z', DefaultPort: 16261, Mods: '\A', PublicName: 'VAN', Nested: {} }))
+      .toEqual({ PVP: true })
+  })
+
+  it('needs the host part only when hosting', () => {
+    expect(validatePack(pack())).toEqual([])
+    expect(validatePack(pack(), true)[0]).toMatch(/only has what players need/)
+    expect(validatePack(pack({ host }), true)).toEqual([])
+  })
+
+  it("a broken host part doesn't stop players", () => {
+    const bad = pack({ host: { ...host, ini: { PVP: { nested: true } } } as never })
+    expect(validatePack(bad)).toEqual([])
+    expect(validatePack(bad, true).join(' ')).toMatch(/server settings/)
+  })
+
+  it('every fix mod the host list uses has to be in the pack', () => {
+    const missing = pack({ host: { ...host, mods: [...host.mods, { workshopId: '', modId: 'Other', name: 'Other fix' }] } })
+    expect(validatePack(missing, true).join(' ')).toMatch(/missing the fix mod "Other fix"/)
+  })
+})

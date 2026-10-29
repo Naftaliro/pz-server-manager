@@ -571,6 +571,7 @@ function ImportExport({ profile }: { profile: ServerProfile }) {
 function SharePack({ profile }: { profile: ServerProfile }) {
   const [address, setAddress] = useState(profile.playitAddress || '')
   const [withPassword, setWithPassword] = useState(false)
+  const [withSettings, setWithSettings] = useState(true)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   const fixCount = profile.mods.filter(isLocalMod).length
@@ -583,7 +584,7 @@ function SharePack({ profile }: { profile: ServerProfile }) {
   const save = async () => {
     setBusy(true)
     setMsg(null)
-    const r = await window.electronAPI.client.exportPack(profile.id, { address, includePassword: withPassword })
+    const r = await window.electronAPI.client.exportPack(profile.id, { address, includePassword: withPassword, includeSettings: withSettings })
     setBusy(false)
     if (!r.success) setMsg({ tone: 'error', text: r.message || "Couldn't make the pack." })
     else if (!r.cancelled) setMsg({ tone: 'ok', text: `Saved. Send that file to your friends (Discord works). It has ${r.workshopItems} Workshop mods and ${r.fixMods} fix${r.fixMods === 1 ? '' : 'es'}.` })
@@ -597,6 +598,9 @@ function SharePack({ profile }: { profile: ServerProfile }) {
         mods{fixCount > 0 ? `, your ${fixCount} fix mod${fixCount === 1 ? '' : 's'}` : ''} and load order, then join with one click.
         Make a new one whenever you change mods.
       </p>
+      <p className="text-xs text-pz-subtext">
+        With the settings in it, anyone can also host a copy of this server: in Knox Launcher they make a new server and pick <b>Copy a server pack</b>.
+      </p>
       <div>
         <label className="label">Address friends join with</label>
         <input value={address} onChange={e => setAddress(e.target.value)} className="input text-sm" placeholder="Your public IP or playit address" />
@@ -607,6 +611,10 @@ function SharePack({ profile }: { profile: ServerProfile }) {
           Put the server password in the pack (anyone with the file can join)
         </label>
       )}
+      <label className="flex items-center gap-2 text-xs text-pz-subtext">
+        <input type="checkbox" checked={withSettings} onChange={e => setWithSettings(e.target.checked)} />
+        Include the server's settings (world, zombies and server options, never passwords)
+      </label>
       <button onClick={save} disabled={busy} className="btn-primary">
         {busy ? <Loader size={14} className="animate-spin" /> : <Download size={14} />} Save server pack
       </button>

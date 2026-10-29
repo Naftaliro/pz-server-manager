@@ -188,9 +188,12 @@ interface ElectronAPI {
     setAccount: (id: string, account: { username: string; password: string }) => Promise<{ success: boolean; message?: string }>
     installFixes: (id: string) => Promise<{ success: boolean; message?: string; installed?: string[]; backedUp?: string[] }>
     launch: (id?: string, join?: boolean) => Promise<{ success: boolean; message?: string }>
-    exportPack: (profileId: string, opts: { address?: string; includePassword?: boolean }) => Promise<{
+    exportPack: (profileId: string, opts: { address?: string; includePassword?: boolean; includeSettings?: boolean }) => Promise<{
       success: boolean; message?: string; cancelled?: boolean; path?: string; fixMods?: number; workshopItems?: number
     }>
+    // the pack's fix mod files stay in the main process, only their names come back
+    openPackForHost: () => Promise<{ success: boolean; message?: string; cancelled?: boolean; path?: string; pack?: import('../../shared/serverPack').ServerPack }>
+    installPackFixes: (path: string, worldSavePath?: string) => Promise<{ success: boolean; message?: string; installed?: string[]; backedUp?: string[] }>
   }
   world: {
     wipe: (serverName: string, dataPath: string) => Promise<{ success: boolean; message: string }>

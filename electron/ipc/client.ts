@@ -5,13 +5,14 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSy
 import { readdir, readFile, stat } from 'fs/promises'
 import { steamLibraries } from './steamcmd'
 import { scanModFolders, PZ_APP_ID } from './modManager'
-import { getProfile } from './profileManager'
+import { getProfile, getServerName, type ServerProfile } from './profileManager'
 import { resolveDataPath } from './serverManager'
 import { loadSettings, saveSettings } from './appSettings'
 import { enabledIds, orderModIds, orderedModMaps } from '../../shared/modCore'
+import { parseIni, parseSandbox, deepMerge, type SettingsTree } from '../../shared/gameConfig'
 import {
-  PACK_FORMAT, PACK_VERSION, PACK_MAX_BYTES, validatePack, checkPack, modFingerprint, launchUrl, isSafeRelPath, accountProblem, parseJoinAddress,
-  type ServerPack, type PackLocalMod, type ClientState,
+  PACK_FORMAT, PACK_VERSION, PACK_MAX_BYTES, validatePack, checkPack, modFingerprint, launchUrl, isSafeRelPath, accountProblem, parseJoinAddress, publicIni,
+  type ServerPack, type PackLocalMod, type PackHost, type ClientState,
 } from '../../shared/serverPack'
 
 // ---------------------------------------------------------------------------
@@ -114,7 +115,29 @@ export async function clientState(folders: string[] = []): Promise<ClientState &
 
 // ── Host side: build a pack from a server profile ─────────────────────────────
 
-export async function buildPack(profileId: string, opts: { address?: string; includePassword?: boolean }): Promise<ServerPack> {
+// What someone needs to host a copy: the settings as the server actually runs them (the
+// game's files, with the app's settings on top, same as at start), minus private bits
+function hostSection(profile: ServerProfile): PackHost {
+  const serverDir = join(resolveDataPath(profile.worldSavePath), 'Server')
+  const name = getServerName(profile)
+  const read = (file: string) => (existsSync(file) ? readFileSync(file, 'utf-8') : '')
+  const ini = { ...parseIni(read(join(serverDir, `${name}.ini`))).values, ...profile.iniSettings }
+  const { VERSION, Version, ...sandbox } = deepMerge(
+    parseSandbox(read(join(serverDir, `${name}_SandboxVars.lua`))).values,
+    (profile.sandboxSettings || {}) as SettingsTree,
+  )
+  return {
+    mods: profile.mods.map(m => ({ workshopId: m.workshopId, modId: m.workshopId ? m.modId : enabledIds(m).join(';'), name: m.name, thumbnailUrl: m.thumbnailUrl })),
+    mapOrder: profile.mapOrder,
+    baseMap: typeof profile.iniSettings?.Map === 'string' ? profile.iniSettings.Map : undefined,
+    maxPlayers: profile.maxPlayers,
+    memory: profile.memory,
+    ini: publicIni(ini),
+    sandbox,
+  }
+}
+
+export async function buildPack(profileId: string, opts: { address?: string; includePassword?: boolean; includeSettings?: boolean }): Promise<ServerPack> {
   const profile = getProfile(profileId)
   if (!profile) throw new Error('That server profile no longer exists.')
   // a playit address comes with its own port, which isn't the server's port
@@ -153,6 +176,7 @@ export async function buildPack(profileId: string, opts: { address?: string; inc
     mods: orderModIds(profile.mods).order,
     maps: orderedModMaps(profile.mods, profile.mapOrder),
     localMods,
+    host: opts.includeSettings ? hostSection(profile) : undefined,
   }
 }
 
@@ -175,11 +199,11 @@ function storeSaved(list: SavedServer[]) {
   writeFileSync(savedPath(), JSON.stringify(list, null, 2), 'utf-8')
 }
 
-export function readPackFile(path: string): ServerPack {
+export function readPackFile(path: string, forHosting = false): ServerPack {
   if (statSync(path).size > PACK_MAX_BYTES) throw new Error("That file is too big to be a server pack.")
   let raw: unknown
   try { raw = JSON.parse(readFileSync(path, 'utf-8')) } catch { throw new Error("That file isn't a server pack.") }
-  const errors = validatePack(raw)
+  const errors = validatePack(raw, forHosting)
   if (errors.length) throw new Error(errors.join(' '))
   return raw as ServerPack
 }
@@ -200,18 +224,27 @@ function addSaved(pack: ServerPack): SavedServer {
 export async function installFixes(id: string): Promise<{ installed: string[]; backedUp: string[] }> {
   const saved = loadSaved().find(s => s.id === id)
   if (!saved) throw new Error('That server is no longer in your list.')
-  const errors = validatePack(saved.pack)
+  return installPackFixes(saved.pack, clientDataDir())
+}
+
+// dataDir: the Zomboid folder the mods go into (the player's, or the host's for a copy of the server)
+export async function installPackFixes(pack: ServerPack, dataDir: string): Promise<{ installed: string[]; backedUp: string[] }> {
+  const errors = validatePack(pack)
   if (errors.length) throw new Error(errors.join(' '))
 
-  const state = await clientState(saved.pack.localMods.map(m => m.folder))
-  const check = checkPack(saved.pack, state)
-  const modsDir = join(state.dataDir, 'mods')
-  const backupRoot = join(state.dataDir, 'pzm-mod-backups')
+  const modsDir = join(dataDir, 'mods')
+  const have: Record<string, string> = {}
+  for (const m of pack.localMods) {
+    const p = join(modsDir, m.folder)
+    if (existsSync(p) && statSync(p).isDirectory()) have[m.folder.toLowerCase()] = await folderFingerprint(p)
+  }
+  const check = checkPack(pack, { gameFound: true, workshopDownloaded: [], localMods: have })
+  const backupRoot = join(dataDir, 'pzm-mod-backups')
   mkdirSync(modsDir, { recursive: true })
   const installed: string[] = []
   const backedUp: string[] = []
 
-  for (const mod of saved.pack.localMods) {
+  for (const mod of pack.localMods) {
     if (check.localMods.find(m => m.folder === mod.folder)?.status === 'ok') continue
     // decode and check every file before touching anything on disk
     const files = mod.files.map(f => {
@@ -297,8 +330,24 @@ export function setupClientHandlers(mainWindow: BrowserWindow | null) {
     return {}
   }))
 
-  // host side
-  ipcMain.handle('client:exportPack', wrap(async (profileId: string, opts: { address?: string; includePassword?: boolean }) => {
+  // host side: make a copy of someone's server from their pack. The pack stays on disk
+  // and only its settings go to the window (the fix mods inside can be big)
+  ipcMain.handle('client:openPackForHost', wrap(async () => {
+    const res = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Open a server pack',
+      filters: [{ name: 'Server pack', extensions: ['pzpack'] }, { name: 'All files', extensions: ['*'] }],
+      properties: ['openFile'],
+    })
+    if (res.canceled || !res.filePaths[0]) return { cancelled: true }
+    const pack = readPackFile(res.filePaths[0], true)
+    return { path: res.filePaths[0], pack: { ...pack, localMods: pack.localMods.map(m => ({ ...m, files: [] })) } }
+  }))
+
+  ipcMain.handle('client:installPackFixes', wrap(async (path: string, worldSavePath?: string) => {
+    return installPackFixes(readPackFile(path, true), resolveDataPath(worldSavePath))
+  }))
+
+  ipcMain.handle('client:exportPack', wrap(async (profileId: string, opts: { address?: string; includePassword?: boolean; includeSettings?: boolean }) => {
     const pack = await buildPack(profileId, opts)
     const res = await dialog.showSaveDialog(mainWindow!, {
       title: 'Save server pack',

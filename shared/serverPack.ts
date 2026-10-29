@@ -41,6 +41,63 @@ export interface ServerPack {
   mods: string[]
   maps: string[]
   localMods: PackLocalMod[]
+  // everything needed to host a copy of the server. Optional, so packs without it (and
+  // apps that don't know about it) still work for players
+  host?: PackHost
+}
+
+export interface PackHost {
+  // the server's mod list in load order. workshopId '' = a fix mod from localMods
+  mods: Array<{ workshopId: string; modId: string; name: string; thumbnailUrl?: string }>
+  mapOrder?: string[]
+  // the base game map line (Muldraugh, KY), mod maps come from the mods
+  baseMap?: string
+  maxPlayers: number
+  memory?: number
+  // the .ini, minus anything private or tied to the host's PC (see PRIVATE_INI_KEYS)
+  ini: Record<string, string | number | boolean>
+  // SandboxVars.lua as the server runs it, mod settings included
+  sandbox: Record<string, unknown>
+}
+
+// Never put in a pack: passwords, tokens, ports and ids that belong to the host's own
+// server, and the mod lines (rebuilt from host.mods)
+export const PRIVATE_INI_KEYS = new Set([
+  'Password', 'RCONPassword', 'RCONPort', 'DiscordToken', 'DiscordChannel', 'DiscordChannelID', 'DiscordChatChannel',
+  'DiscordLogChannel', 'DiscordCommandChannel', 'WebhookAddress', 'ResetID', 'ServerPlayerID', 'DefaultPort', 'UDPPort',
+  'server_browser_announced_ip', 'Mods', 'WorkshopItems', 'Map', 'PublicName', 'AdminPassword',
+])
+
+export function publicIni(values: Record<string, unknown>): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {}
+  for (const [k, v] of Object.entries(values)) {
+    if (PRIVATE_INI_KEYS.has(k)) continue
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[k] = v
+  }
+  return out
+}
+
+// settings trees only hold numbers, strings, booleans and nested sections
+function isSettingsTree(v: unknown, depth = 0): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v) || depth > 4) return false
+  return Object.values(v).every(x => ['string', 'number', 'boolean'].includes(typeof x) || isSettingsTree(x, depth + 1))
+}
+
+function hostErrors(h: unknown, localFolders: PackLocalMod[]): string[] {
+  const host = h as Partial<PackHost>
+  if (!host || typeof host !== 'object') return ["The pack's server settings aren't valid."]
+  const errors: string[] = []
+  if (!Array.isArray(host.mods) || !host.mods.every(m => m && typeof m.name === 'string' && typeof m.modId === 'string' && /^\d*$/.test(String(m.workshopId)))) {
+    errors.push("The pack's mod list for hosting isn't valid.")
+  } else {
+    const localIds = new Set(localFolders.map(m => m.id))
+    const missing = host.mods.filter(m => !m.workshopId && m.modId.split(';').some(id => !localIds.has(id)))
+    if (missing.length) errors.push(`The pack is missing the fix mod "${missing[0].name}".`)
+  }
+  if (!Number.isInteger(host.maxPlayers) || host.maxPlayers! < 1 || host.maxPlayers! > 100) errors.push("The pack's player limit isn't valid.")
+  if (!isSettingsTree(host.ini) || Object.values(host.ini!).some(v => typeof v === 'object')) errors.push("The pack's server settings aren't valid.")
+  if (!isSettingsTree(host.sandbox)) errors.push("The pack's world settings aren't valid.")
+  return errors
 }
 
 // Windows-safe relative path with no way out of the mod folder
@@ -58,7 +115,8 @@ export function isSafeFolderName(name: string): boolean {
 }
 
 // What's wrong with a parsed pack file, empty when it's fine
-export function validatePack(raw: unknown): string[] {
+// forHosting: also check the hosting part (players don't use it, so it can't stop them joining)
+export function validatePack(raw: unknown, forHosting = false): string[] {
   const errors: string[] = []
   const p = raw as Partial<ServerPack>
   if (!p || typeof p !== 'object') return ["This isn't a server pack file."]
@@ -79,6 +137,10 @@ export function validatePack(raw: unknown): string[] {
   }
   for (const w of p.workshopItems) {
     if (!w || !/^\d+$/.test(String(w.workshopId))) { errors.push('The pack has a bad Workshop item in it.'); break }
+  }
+  if (forHosting) {
+    if (!p.host) errors.push("This pack only has what players need. Ask the host to make a new one with \"Include the server's settings\" ticked.")
+    else errors.push(...hostErrors(p.host, p.localMods.filter(m => m && typeof m.id === 'string')))
   }
   const folders = new Set<string>()
   for (const m of p.localMods) {

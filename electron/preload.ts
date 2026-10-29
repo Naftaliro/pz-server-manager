@@ -172,7 +172,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setAccount: (id: string, account: { username: string; password: string }) => ipcRenderer.invoke('client:setAccount', id, account),
     installFixes: (id: string) => ipcRenderer.invoke('client:installFixes', id),
     launch: (id?: string, join?: boolean) => ipcRenderer.invoke('client:launch', id, join),
-    exportPack: (profileId: string, opts: { address?: string; includePassword?: boolean }) => ipcRenderer.invoke('client:exportPack', profileId, opts),
+    exportPack: (profileId: string, opts: { address?: string; includePassword?: boolean; includeSettings?: boolean }) => ipcRenderer.invoke('client:exportPack', profileId, opts),
+    openPackForHost: () => ipcRenderer.invoke('client:openPackForHost'),
+    installPackFixes: (path: string, worldSavePath?: string) => ipcRenderer.invoke('client:installPackFixes', path, worldSavePath),
   },
 
   // World management
