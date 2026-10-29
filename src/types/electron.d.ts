@@ -98,7 +98,8 @@ interface ElectronAPI {
     sendCommand: (profileId: string, command: string) => Promise<{ success: boolean; output?: string; message?: string }>
     getPlayers: (profileId: string) => Promise<string[]>
     preflight: (profileId: string) => Promise<PreflightIssue[]>
-    playerAction: (profileId: string, action: 'kick' | 'ban' | 'admin' | 'unadmin', name: string) => Promise<{ success: boolean; message?: string }>
+    playerAction: (profileId: string, action: 'kick' | 'ban' | 'unban' | 'admin' | 'unadmin', name: string) => Promise<{ success: boolean; message?: string }>
+    knownPlayers: (profileId: string) => Promise<{ success: boolean; message?: string; players?: Array<{ username: string; lastSeen?: string; role?: string; banned: boolean; banReason?: string }> }>
     restartWithWarning: (profileId: string, minutes: number) => Promise<{ success: boolean; message?: string }>
     listBackups: (profileId: string) => Promise<Array<{ name: string; sizeMb: number }>>
     backupNow: (profileId: string) => Promise<{ success: boolean; message: string }>

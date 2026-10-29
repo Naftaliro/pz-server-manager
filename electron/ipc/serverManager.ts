@@ -10,6 +10,7 @@ import https from 'https'
 import { getProfile, listProfiles, patchProfile, getServerName } from './profileManager'
 import type { ServerProfile } from './profileManager'
 import { rconCommand } from './rcon'
+import { knownPlayers } from './playerDb'
 import { isServerInstalled, checkServerUpdate } from './steamcmd'
 import { workshopContentDir, scanWorkshopItem, fetchModDetails, PZ_APP_ID } from './modManager'
 import { formatModIds, orderModIds, buildMapLine, enabledIds, wrongBuildMods, type ModSnapshot } from '../../shared/modCore'
@@ -1037,11 +1038,23 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
   ipcMain.handle('server:preflight', async (_event, profileId: string) => preflight(profileId))
 
   // kick / ban / admin from the players list
-  ipcMain.handle('server:playerAction', async (_event, profileId: string, action: 'kick' | 'ban' | 'admin' | 'unadmin', name: string) => {
+  // everyone with an account on the server, banned or not (from the game's database)
+  ipcMain.handle('server:knownPlayers', async (_event, profileId: string) => {
+    const profile = getProfile(profileId)
+    if (!profile) return { success: false, message: 'That server is no longer in your list.' }
+    try {
+      return { success: true, players: knownPlayers(profile, resolveDataPath(profile.worldSavePath)) }
+    } catch (e) {
+      return { success: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('server:playerAction', async (_event, profileId: string, action: 'kick' | 'ban' | 'unban' | 'admin' | 'unadmin', name: string) => {
     const safe = name.replace(/"/g, '')
     const command = {
       kick: `kickuser "${safe}"`,
       ban: `banuser "${safe}"`,
+      unban: `unbanuser "${safe}"`,
       admin: `setaccesslevel "${safe}" admin`,
       unadmin: `setaccesslevel "${safe}" none`,
     }[action]

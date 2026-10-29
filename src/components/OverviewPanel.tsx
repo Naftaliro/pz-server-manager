@@ -331,8 +331,16 @@ function InviteCard({ profile, net, playitOn, running }: {
 
 // ── Players with kick/ban/admin buttons ───────────────────────────────────────
 
+type KnownPlayer = NonNullable<Awaited<ReturnType<typeof window.electronAPI.server.knownPlayers>>['players']>[number]
+
 function PlayersCard({ profile, online, running, say }: { profile: ServerProfile; online: string[]; running: boolean; say: (m?: string) => void }) {
-  const [confirm, setConfirm] = useState<{ action: 'kick' | 'ban' | 'admin'; name: string } | null>(null)
+  const [confirm, setConfirm] = useState<{ action: 'kick' | 'ban' | 'unban' | 'admin'; name: string } | null>(null)
+  // everyone with an account, from the game's database
+  const [known, setKnown] = useState<KnownPlayer[]>([])
+  const [showAll, setShowAll] = useState(false)
+  const loadKnown = () => window.electronAPI.server.knownPlayers(profile.id).then(r => setKnown(r.players || [])).catch(() => undefined)
+  useEffect(() => { void loadKnown() }, [profile.id, running, online.length])
+  const bannedCount = known.filter(p => p.banned).length
 
   const act = async () => {
     if (!confirm) return
@@ -340,8 +348,10 @@ function PlayersCard({ profile, online, running, say }: { profile: ServerProfile
     setConfirm(null)
     const r = await window.electronAPI.server.playerAction(profile.id, action, name)
     say(r.success
-      ? { kick: `Kicked ${name}.`, ban: `Banned ${name}.`, admin: `${name} is an admin now.` }[action]
+      ? { kick: `Kicked ${name}.`, ban: `Banned ${name}.`, unban: `${name} can join again.`, admin: `${name} is an admin now.` }[action]
       : `Didn't work: ${r.message}`)
+    // the game writes its database a moment later
+    setTimeout(() => void loadKnown(), 1500)
   }
 
   return (
@@ -363,15 +373,43 @@ function PlayersCard({ profile, online, running, say }: { profile: ServerProfile
           ))}
         </div>
       )}
+
+      {known.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-pz-border">
+          <button onClick={() => setShowAll(s => !s)} className="text-xs text-pz-subtext hover:text-pz-text flex items-center gap-1">
+            {showAll ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            Everyone who's played ({known.length}){bannedCount > 0 && <span className="text-pz-red ml-1">· {bannedCount} banned</span>}
+          </button>
+          {showAll && (
+            <div className="mt-2 space-y-1 max-h-64 overflow-y-auto">
+              {known.map(p => (
+                <div key={p.username} className="flex items-center gap-2 text-sm px-1">
+                  <span className={`flex-1 truncate ${p.banned ? 'text-pz-muted line-through' : 'text-pz-text'}`} title={p.banReason || undefined}>{p.username}</span>
+                  {p.role && <span className="text-[10px] uppercase tracking-wide text-pz-yellow">{p.role}</span>}
+                  {p.lastSeen && <span className="text-xs text-pz-muted">{new Date(p.lastSeen).toLocaleDateString()}</span>}
+                  {p.banned ? (
+                    <button onClick={() => setConfirm({ action: 'unban', name: p.username })} disabled={!running} className="btn-ghost text-xs py-0.5 px-2 disabled:opacity-40" title={running ? '' : 'Start the server first'}>Unban</button>
+                  ) : (
+                    <button onClick={() => setConfirm({ action: 'ban', name: p.username })} disabled={!running} className="text-pz-muted hover:text-pz-red disabled:opacity-40" title={running ? 'Ban' : 'Start the server first'}><Ban size={13} /></button>
+                  )}
+                </div>
+              ))}
+              {!running && <p className="text-xs text-pz-muted px-1 pt-1">Start the server to ban or unban someone.</p>}
+            </div>
+          )}
+        </div>
+      )}
+
       <ConfirmDialog
         isOpen={!!confirm}
-        title={confirm ? { kick: `Kick ${confirm.name}?`, ban: `Ban ${confirm.name}?`, admin: `Make ${confirm.name} an admin?` }[confirm.action] : ''}
+        title={confirm ? { kick: `Kick ${confirm.name}?`, ban: `Ban ${confirm.name}?`, unban: `Unban ${confirm.name}?`, admin: `Make ${confirm.name} an admin?` }[confirm.action] : ''}
         message={confirm ? {
           kick: 'They get thrown out but can join again.',
-          ban: "They get thrown out and can't come back. You can unban them later with the unbanuser command in the Console.",
+          ban: "They get thrown out and can't come back. You can unban them later under \"Everyone who's played\".",
+          unban: 'They can join the server again.',
           admin: 'Admins can spawn items, teleport, kick and ban people. Only do this for people you trust.',
         }[confirm.action] : ''}
-        confirmLabel={confirm ? { kick: 'Kick', ban: 'Ban', admin: 'Make admin' }[confirm.action] : ''}
+        confirmLabel={confirm ? { kick: 'Kick', ban: 'Ban', unban: 'Unban', admin: 'Make admin' }[confirm.action] : ''}
         danger={confirm?.action === 'ban'}
         onConfirm={act}
         onCancel={() => setConfirm(null)}

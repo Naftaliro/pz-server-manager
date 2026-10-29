@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getPlayers: (profileId: string) => ipcRenderer.invoke('server:getPlayers', profileId),
     preflight: (profileId: string) => ipcRenderer.invoke('server:preflight', profileId),
     playerAction: (profileId: string, action: string, name: string) => ipcRenderer.invoke('server:playerAction', profileId, action, name),
+    knownPlayers: (profileId: string) => ipcRenderer.invoke('server:knownPlayers', profileId),
     restartWithWarning: (profileId: string, minutes: number) => ipcRenderer.invoke('server:restartWithWarning', profileId, minutes),
     listBackups: (profileId: string) => ipcRenderer.invoke('server:listBackups', profileId),
     backupNow: (profileId: string) => ipcRenderer.invoke('server:backupNow', profileId),
