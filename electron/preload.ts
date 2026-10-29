@@ -138,9 +138,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Config file management
   config: {
-    readIni: (serverName: string, dataPath: string) => ipcRenderer.invoke('config:readIni', serverName, dataPath),
+    sources: (profileId: string) => ipcRenderer.invoke('config:sources', profileId),
+    presets: (installPath?: string) => ipcRenderer.invoke('config:presets', installPath),
     writeIni: (serverName: string, dataPath: string, settings: unknown) => ipcRenderer.invoke('config:writeIni', serverName, dataPath, settings),
-    readSandbox: (serverName: string, dataPath: string) => ipcRenderer.invoke('config:readSandbox', serverName, dataPath),
     writeSandbox: (serverName: string, dataPath: string, settings: unknown) => ipcRenderer.invoke('config:writeSandbox', serverName, dataPath, settings),
   },
 

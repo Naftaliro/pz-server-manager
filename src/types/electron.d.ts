@@ -119,9 +119,20 @@ interface ElectronAPI {
     duplicate: (id: string) => Promise<import('../store/useAppStore').ServerProfile | null>
   }
   config: {
-    readIni: (serverName: string, dataPath: string) => Promise<{ success: boolean; settings?: Record<string, unknown>; exists?: boolean; message?: string }>
+    // the game's own files as text (the editors parse them with shared/gameConfig)
+    sources: (profileId: string) => Promise<{
+      success: boolean
+      message?: string
+      sandbox?: string
+      ini?: string
+      sandboxTemplate?: string
+      iniTemplate?: string
+      sandboxFromGame?: boolean
+      // preset name -> file text, from the server install
+      presets?: Record<string, string>
+    }>
+    presets: (installPath?: string) => Promise<Record<string, string>>
     writeIni: (serverName: string, dataPath: string, settings: unknown) => Promise<{ success: boolean; message?: string }>
-    readSandbox: (serverName: string, dataPath: string) => Promise<{ success: boolean; settings?: Record<string, unknown>; exists?: boolean; message?: string }>
     writeSandbox: (serverName: string, dataPath: string, settings: unknown) => Promise<{ success: boolean; message?: string }>
   }
   mods: {

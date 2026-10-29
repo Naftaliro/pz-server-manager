@@ -3,9 +3,10 @@ import { Save, Sliders, FileCode2, Settings2, Copy, Trash2, Skull, CheckCircle, 
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile, BuildVersion } from '../store/useAppStore'
 import ConfirmDialog from './ConfirmDialog'
-import { PRESETS, PRESET_BLURBS } from '../lib/presets'
+import { PRESETS, loadPresets, applyPreset as presetOver } from '../lib/presets'
 import type { PresetKey } from '../lib/presets'
-import { patchProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
+import { patchProfile, RECOMMENDED_MEMORY_MB, getServerName, dataPath } from '../lib/profile'
+import type { SettingsTree } from '../../shared/gameConfig'
 
 // The settings normal people actually change. Everything else is one click away under "More settings".
 export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
@@ -39,8 +40,11 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
   const [showPw, setShowPw] = useState(false)
   const [presetConfirm, setPresetConfirm] = useState<PresetKey | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [presets, setPresets] = useState<Partial<Record<PresetKey, SettingsTree>>>({})
+  const [presetMsg, setPresetMsg] = useState('')
 
   useEffect(() => { setForm(fromProfile()) }, [profile.id, profile.updatedAt])
+  useEffect(() => { loadPresets(profile.serverInstallPath).then(setPresets) }, [profile.serverInstallPath])
   useEffect(() => { window.electronAPI.system.info().then(i => setTotalMem(i.totalMemMb)).catch(() => undefined) }, [])
 
   const dirty = JSON.stringify(form) !== JSON.stringify(fromProfile())
@@ -77,18 +81,13 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
   }
 
   const applyPreset = async (key: PresetKey) => {
-    const { ZombieConfig, ...rest } = PRESETS[key].settings as Record<string, unknown> & { ZombieConfig?: Record<string, unknown> }
-    await patchProfile(profile.id, p => {
-      const current = p.sandboxSettings || {}
-      return {
-        sandboxSettings: {
-          ...current,
-          ...rest,
-          ZombieConfig: { ...((current.ZombieConfig as Record<string, unknown>) || {}), ...(ZombieConfig || {}) },
-        },
-      }
-    })
     setPresetConfirm(null)
+    const preset = presets[key]
+    if (!preset) return
+    const saved = await patchProfile(profile.id, p => ({ sandboxSettings: presetOver((p.sandboxSettings || {}) as SettingsTree, preset) }))
+    await window.electronAPI.config.writeSandbox(getServerName(profile), dataPath(profile), (saved?.sandboxSettings || {}) as SettingsTree)
+    setPresetMsg(`Switched to ${PRESETS[key].label}.${running ? ' It applies the next time the server starts.' : ''}`)
+    setTimeout(() => setPresetMsg(''), 5000)
   }
 
   const duplicate = async () => {
@@ -154,15 +153,20 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
         </Card>
 
         <Card title="Difficulty">
-          <p className="text-xs text-pz-subtext -mt-1 mb-2">Switching resets zombie and loot settings to that preset. Your world stays.</p>
-          <div className="grid grid-cols-2 gap-2">
-            {(Object.keys(PRESETS) as PresetKey[]).map(key => (
-              <button key={key} onClick={() => setPresetConfirm(key)} className="bg-pz-darker border border-pz-border rounded-lg p-3 text-left hover:border-pz-green transition-colors">
-                <div className="flex items-center gap-1.5 text-sm font-semibold text-pz-text"><Skull size={12} className="text-pz-muted" /> {PRESETS[key].label}</div>
-                <div className="text-xs text-pz-subtext mt-0.5">{PRESET_BLURBS[key]}</div>
-              </button>
-            ))}
-          </div>
+          <p className="text-xs text-pz-subtext -mt-1 mb-2">The game's own presets. Switching sets every world and zombie setting to that preset. Your world and mod settings stay.</p>
+          {Object.keys(presets).length === 0 ? (
+            <p className="text-xs text-pz-yellow">Couldn't find the game's presets in the server files. Check the server is installed (App settings).</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {(Object.keys(PRESETS) as PresetKey[]).filter(k => presets[k]).map(key => (
+                <button key={key} onClick={() => setPresetConfirm(key)} className="bg-pz-darker border border-pz-border rounded-lg p-3 text-left hover:border-pz-green transition-colors">
+                  <div className="flex items-center gap-1.5 text-sm font-semibold text-pz-text"><Skull size={12} className="text-pz-muted" /> {PRESETS[key].label}</div>
+                  <div className="text-xs text-pz-subtext mt-0.5">{PRESETS[key].blurb}</div>
+                </button>
+              ))}
+            </div>
+          )}
+          {presetMsg && <p className="text-xs text-pz-green">{presetMsg}</p>}
         </Card>
 
         <Card title="Keep it running">
@@ -258,7 +262,7 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
       <ConfirmDialog
         isOpen={!!presetConfirm}
         title={`Switch to ${presetConfirm ? PRESETS[presetConfirm].label : ''}?`}
-        message="Zombie and loot settings get replaced with this preset. Anything you changed by hand in World & zombies settings is overwritten."
+        message="Every world and zombie setting is set to this preset, including anything you changed by hand in World & zombies. Mod settings stay."
         confirmLabel="Switch"
         onConfirm={() => presetConfirm && applyPreset(presetConfirm)}
         onCancel={() => setPresetConfirm(null)}

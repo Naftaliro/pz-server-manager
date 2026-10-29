@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, Lock, Users, Skull, Package, Play, Loader, Wrench } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
-import { PRESETS, PRESET_BLURBS } from '../lib/presets'
+import { PRESETS, loadPresets } from '../lib/presets'
 import type { PresetKey } from '../lib/presets'
+import type { SettingsTree } from '../../shared/gameConfig'
 import { DEV_PRESETS } from '../lib/devPresets'
 import { saveProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
 import { downloadAndScan } from '../lib/mods'
@@ -18,7 +19,10 @@ export default function CreateServer() {
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [maxPlayers, setMaxPlayers] = useState(8)
-  const [preset, setPreset] = useState<PresetKey>('apocalypse')
+  const [preset, setPreset] = useState<PresetKey>('Apocalypse')
+  // the game's own preset files, from the server install
+  const [presets, setPresets] = useState<Partial<Record<PresetKey, SettingsTree>>>({})
+  useEffect(() => { loadPresets(settings?.serverInstallPath).then(setPresets) }, [settings?.serverInstallPath])
   // a developer preset brings its own sandbox and mods, and replaces the difficulty pick
   const [devKey, setDevKey] = useState<string | null>(null)
   const devPreset = DEV_PRESETS.find(p => p.key === devKey)
@@ -55,7 +59,6 @@ export default function CreateServer() {
     setCreating(true)
     try {
       const port = nextPort()
-      const { ZombieConfig, ...sandbox } = PRESETS[preset].settings as Record<string, unknown> & { ZombieConfig?: Record<string, unknown> }
       const saved = await saveProfile({
         id: '',
         name: name.trim(),
@@ -80,7 +83,8 @@ export default function CreateServer() {
           // each server gets its own RCON port so two can run side by side
           RCONPort: nextRconPort(),
         },
-        sandboxSettings: devPreset ? devPreset.sandboxSettings : { ...sandbox, ZombieConfig: ZombieConfig || {} },
+        // no preset file found: the game uses its own defaults (Apocalypse)
+        sandboxSettings: devPreset ? devPreset.sandboxSettings : presets[preset] || {},
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       })
@@ -163,7 +167,10 @@ export default function CreateServer() {
               <p className="text-sm text-pz-subtext mt-1">You can fine-tune everything later.</p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {(Object.keys(PRESETS) as PresetKey[]).map(key => (
+              {Object.keys(presets).length === 0 && (
+                <p className="text-sm text-pz-subtext sm:col-span-2">The game's presets aren't in the server files, so the server starts with the normal game settings. You can change them later.</p>
+              )}
+              {(Object.keys(PRESETS) as PresetKey[]).filter(k => presets[k]).map(key => (
                 <button
                   key={key}
                   onClick={() => { setPreset(key); setDevKey(null) }}
@@ -172,9 +179,9 @@ export default function CreateServer() {
                   <div className="flex items-center gap-2 mb-1">
                     <Skull size={14} className={preset === key ? 'text-pz-green' : 'text-pz-muted'} />
                     <span className="font-semibold text-pz-text">{PRESETS[key].label}</span>
-                    {key === 'apocalypse' && <span className="text-[10px] uppercase tracking-wide text-pz-green ml-auto">Default</span>}
+                    {key === 'Apocalypse' && <span className="text-[10px] uppercase tracking-wide text-pz-green ml-auto">Default</span>}
                   </div>
-                  <p className="text-xs text-pz-subtext">{PRESET_BLURBS[key]}</p>
+                  <p className="text-xs text-pz-subtext">{PRESETS[key].blurb}</p>
                 </button>
               ))}
             </div>

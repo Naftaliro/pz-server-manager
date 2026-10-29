@@ -50,6 +50,7 @@ export interface ServerProfile {
   playitAddress?: string
   iniSettings: Record<string, unknown>
   sandboxSettings: Record<string, unknown>
+  sandboxSettingsVersion?: number
   createdAt: string
   updatedAt: string
   lastStarted?: string

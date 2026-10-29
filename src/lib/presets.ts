@@ -1,50 +1,34 @@
-// Sandbox presets, shared by the create-server wizard and the sandbox editor.
-// These mirror the game's own presets closely enough for a starting point.
+// Difficulty presets. The values come from the game's own preset files in the server
+// install (media/lua/shared/Sandbox), so they always match the server's build.
+import { parseSandbox, deepMerge, isTree, VANILLA_BLOCKS } from '../../shared/gameConfig'
+import type { SettingsTree } from '../../shared/gameConfig'
+
 export const PRESETS = {
-  apocalypse: {
-    label: 'Apocalypse',
-    description: 'Lore-canon mode. Zombie respawn disabled, more firearms.',
-    settings: {
-      Zombies: 4, Distribution: 1, DayLength: 3, XpMultiplier: 1.0,
-      FoodLoot: 4, WeaponLoot: 3, OtherLoot: 3,
-      ZombieConfig: { Speed: 3, Strength: 2, Toughness: 2, RespawnHours: 0, PopulationMultiplier: 1.0 }
-    }
-  },
-  outbreak: {
-    label: 'Outbreak',
-    description: 'Faster progression, more forgiving. Good for limited time.',
-    settings: {
-      Zombies: 3, Distribution: 1, DayLength: 3, XpMultiplier: 2.0,
-      FoodLoot: 5, WeaponLoot: 4, OtherLoot: 4,
-      ZombieConfig: { Speed: 3, Strength: 2, Toughness: 2, RespawnHours: 72, PopulationMultiplier: 0.75 }
-    }
-  },
-  extinction: {
-    label: 'Extinction',
-    description: 'Veterans only. Sprinters, scarce supplies.',
-    settings: {
-      Zombies: 1, Distribution: 1, DayLength: 3, XpMultiplier: 1.0,
-      FoodLoot: 2, WeaponLoot: 2, OtherLoot: 2,
-      ZombieConfig: { Speed: 1, Strength: 1, Toughness: 1, RespawnHours: 72, PopulationMultiplier: 2.0 }
-    }
-  },
-  rising: {
-    label: 'Rising',
-    description: 'Cozy apocalypse. More building materials, less combat pressure.',
-    settings: {
-      Zombies: 5, Distribution: 1, DayLength: 3, XpMultiplier: 1.5,
-      FoodLoot: 5, WeaponLoot: 3, OtherLoot: 5,
-      ZombieConfig: { Speed: 3, Strength: 3, Toughness: 3, RespawnHours: 72, PopulationMultiplier: 0.5 }
-    }
-  },
-}
+  Apocalypse: { label: 'Apocalypse', blurb: 'The normal game. Cleared areas stay clear. A good default if you\'re not sure.' },
+  Outbreak: { label: 'Outbreak', blurb: 'A bit easier. Power and water last longer, more tools and books, faster skills and farming.' },
+  Extinction: { label: 'Extinction', blurb: 'Hard. More zombies that come back, some sprinters, tougher zombies and not much loot.' },
+  Rising: { label: 'Rising', blurb: 'Relaxed building game. Few slow zombies, lots of materials and tools, a starter kit.' },
+} as const
 
 export type PresetKey = keyof typeof PRESETS
 
-// friendlier wording for the wizard
-export const PRESET_BLURBS: Record<PresetKey, string> = {
-  apocalypse: 'The normal game. A good default if you are not sure.',
-  outbreak: 'Easier. More loot, faster leveling, fewer zombies.',
-  extinction: 'Hard. Sprinting zombies and not much loot.',
-  rising: 'Relaxed building game. Lots of supplies, fewer zombies.',
+// file text -> the settings it sets (the file format version isn't a setting)
+export function presetValues(text: string): SettingsTree {
+  const { Version, VERSION, ...values } = parseSandbox(text).values
+  return values
+}
+
+// Put a preset over a server's sandbox settings: every game setting is replaced, mod
+// settings and anything the preset doesn't mention stay
+export function applyPreset(current: SettingsTree, preset: SettingsTree): SettingsTree {
+  const next: SettingsTree = { ...current }
+  for (const block of VANILLA_BLOCKS) if (isTree(next[block]) && isTree(preset[block])) delete next[block]
+  return deepMerge(next, preset)
+}
+
+export async function loadPresets(installPath?: string): Promise<Partial<Record<PresetKey, SettingsTree>>> {
+  const files = await window.electronAPI.config.presets(installPath).catch(() => ({} as Record<string, string>))
+  const out: Partial<Record<PresetKey, SettingsTree>> = {}
+  for (const key of Object.keys(PRESETS) as PresetKey[]) if (files[key]) out[key] = presetValues(files[key])
+  return out
 }
