@@ -50,6 +50,8 @@ export interface ServerProfile {
   discordWebhook?: string
   discordPlayerEvents?: boolean
   playitAddress?: string
+  // start this server when the app opens (with "Start with Windows" it comes up after a reboot)
+  startWithApp?: boolean
   iniSettings: Record<string, unknown>
   sandboxSettings: Record<string, unknown>
   // which profileMigrations ran on sandboxSettings

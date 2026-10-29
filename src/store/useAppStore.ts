@@ -48,6 +48,8 @@ export interface ServerProfile {
   discordPlayerEvents?: boolean
   // address the user pasted in, used if we can't read it from playit
   playitAddress?: string
+  // start this server when the app opens (with "Start with Windows" it comes up after a reboot)
+  startWithApp?: boolean
   iniSettings: Record<string, unknown>
   sandboxSettings: Record<string, unknown>
   sandboxSettingsVersion?: number

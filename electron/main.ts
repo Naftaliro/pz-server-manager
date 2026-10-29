@@ -24,6 +24,9 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null
 
+// what Windows passes when it starts the app at login
+const STARTUP_ARG = '--started-with-windows'
+
 // the packaged app's one page, the only thing its window may load
 const appPage = pathToFileURL(join(__dirname, '../dist/index.html')).href
 
@@ -63,6 +66,9 @@ function createWindow() {
   } else {
     mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }
+
+  // started by Windows at login ("Start with Windows"): stay out of the way on the taskbar
+  if (process.argv.includes(STARTUP_ARG)) mainWindow.minimize()
 
   // The window only ever shows the app. A file dropped on it or a stray link would
   // otherwise replace the app with that page, and the page would keep the app's preload.
@@ -161,6 +167,12 @@ app.whenReady().then(() => {
     }
   })
   ipcMain.on('window:close', () => mainWindow?.close())
+
+  // "Start with Windows". No argument: just read it
+  ipcMain.handle('app:startWithWindows', (_event, on?: boolean) => {
+    if (typeof on === 'boolean') app.setLoginItemSettings({ openAtLogin: on, args: [STARTUP_ARG] })
+    return app.getLoginItemSettings({ args: [STARTUP_ARG] }).openAtLogin
+  })
 
   // Open external links in browser
   ipcMain.on('shell:openExternal', (_event, url: string) => {

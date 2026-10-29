@@ -33,6 +33,7 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
     dailyRestartHour: profile.dailyRestartHour ?? null,
     discordWebhook: profile.discordWebhook || '',
     discordPlayerEvents: !!profile.discordPlayerEvents,
+    startWithApp: !!profile.startWithApp,
   })
   const [form, setForm] = useState(fromProfile)
   const [totalMem, setTotalMem] = useState(16384)
@@ -46,6 +47,8 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
   useEffect(() => { setForm(fromProfile()) }, [profile.id, profile.updatedAt])
   useEffect(() => { loadPresets(profile.serverInstallPath).then(setPresets) }, [profile.serverInstallPath])
   useEffect(() => { window.electronAPI.system.info().then(i => setTotalMem(i.totalMemMb)).catch(() => undefined) }, [])
+  const [withWindows, setWithWindows] = useState<boolean | null>(null)
+  useEffect(() => { window.electronAPI.system.startWithWindows().then(setWithWindows).catch(() => undefined) }, [])
 
   const dirty = JSON.stringify(form) !== JSON.stringify(fromProfile())
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm(prev => ({ ...prev, [key]: value }))
@@ -67,6 +70,7 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
       dailyRestartHour: form.dailyRestartHour,
       discordWebhook: form.discordWebhook.trim(),
       discordPlayerEvents: form.discordPlayerEvents,
+      startWithApp: form.startWithApp,
       iniSettings: {
         ...p.iniSettings,
         PVP: form.pvp,
@@ -170,6 +174,13 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
         </Card>
 
         <Card title="Keep it running">
+          <Toggle label="Start when Knox Launcher opens" hint="The server comes up by itself whenever the app opens." value={form.startWithApp} onChange={v => set('startWithApp', v)} />
+          {form.startWithApp && withWindows === false && (
+            <p className="text-xs text-pz-subtext -mt-2 pl-[3.25rem]">
+              To have it back up after the PC restarts, also{' '}
+              <button onClick={async () => setWithWindows(await window.electronAPI.system.startWithWindows(true))} className="text-pz-green underline">start Knox Launcher with Windows</button>.
+            </p>
+          )}
           <Toggle label="Restart if it crashes" hint="Brings the server back by itself if it stops unexpectedly (gives up after 3 crashes in 30 minutes)." value={form.autoRestart} onChange={v => set('autoRestart', v)} />
           <Toggle label="Restart when a mod updates" hint="When a mod updates on the Workshop, players get a 5 minute warning in chat and the server restarts with the new version. Otherwise nobody with the update can join." value={form.restartOnModUpdate} onChange={v => set('restartOnModUpdate', v)} />
           <Toggle label="Restart every day" hint="Long-running servers slowly get laggy. Players get a 5 minute warning in chat and it's back up on the hour. Only happens while the app is open." value={form.dailyRestartHour !== null} onChange={v => set('dailyRestartHour', v ? 4 : null)} />

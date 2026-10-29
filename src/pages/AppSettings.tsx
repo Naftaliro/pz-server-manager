@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, HardDrive, Wrench, RefreshCw, Info, ExternalLink, CheckCircle, AlertCircle, Globe, Shield, Loader, KeyRound } from 'lucide-react'
+import { FolderOpen, HardDrive, Wrench, RefreshCw, Info, ExternalLink, CheckCircle, AlertCircle, Globe, Shield, Loader, KeyRound, Power } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { BuildVersion } from '../store/useAppStore'
 import InstallRunner from '../components/InstallRunner'
@@ -180,6 +180,8 @@ export default function AppSettings() {
           </p>
         </div>
 
+        <StartupCard />
+
         <ModBackupsCard />
 
         <div className="card p-5 space-y-3">
@@ -242,6 +244,34 @@ export default function AppSettings() {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+// Start with Windows, so servers set to "Start when Knox Launcher opens" come back after a reboot
+function StartupCard() {
+  const { profiles, openServer } = useAppStore()
+  const [on, setOn] = useState<boolean | null>(null)
+  useEffect(() => { window.electronAPI.system.startWithWindows().then(setOn).catch(() => undefined) }, [])
+  const autoServers = profiles.filter(p => p.startWithApp)
+
+  return (
+    <div className="card p-5 space-y-3">
+      <h3 className="section-title flex items-center gap-2"><Power size={14} /> Startup</h3>
+      <button onClick={async () => setOn(await window.electronAPI.system.startWithWindows(!on))} disabled={on === null} className="w-full flex items-center gap-3 text-left">
+        <div className={`w-10 h-5 rounded-full relative transition-colors flex-shrink-0 ${on ? 'bg-pz-green' : 'bg-pz-border'}`}>
+          <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-pz-text transition-transform ${on ? 'translate-x-5' : 'translate-x-0.5'}`} />
+        </div>
+        <div>
+          <div className="text-sm text-pz-text">Start Knox Launcher with Windows</div>
+          <div className="text-xs text-pz-muted">It opens minimized when you log in. Daily restarts and mod update restarts only happen while the app is open.</div>
+        </div>
+      </button>
+      <p className="text-xs text-pz-subtext">
+        {autoServers.length > 0
+          ? <>Starts by itself when the app opens: {autoServers.map((p, i) => <span key={p.id}>{i > 0 && ', '}<button onClick={() => openServer(p.id, 'settings')} className="text-pz-green underline">{p.name}</button></span>)}.</>
+          : 'No server starts by itself yet. Turn on "Start when Knox Launcher opens" in a server\'s Settings tab.'}
+      </p>
     </div>
   )
 }

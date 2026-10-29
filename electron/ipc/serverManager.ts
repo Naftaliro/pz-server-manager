@@ -576,6 +576,16 @@ async function reattachRunning() {
   }
 }
 
+// "Start when Knox Launcher opens": one at a time, each start already waits on its own checks
+async function startWithApp() {
+  for (const profile of listProfiles()) {
+    if (!profile.startWithApp || runningServers.has(profile.id)) continue
+    emitConsoleOutput(profile.id, '[Knox] Starting because "Start when Knox Launcher opens" is on')
+    const r = await startServer(profile.id).catch(e => ({ success: false, message: e instanceof Error ? e.message : String(e) }))
+    if (!r.success) emitConsoleOutput(profile.id, `[Knox] Couldn't start: ${r.message}`)
+  }
+}
+
 // Pick a server that's already running back up instead of starting another copy
 function reattachProfile(profile: ServerProfile, pid: number) {
   const serverName = getServerName(profile)
@@ -1113,8 +1123,9 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
 
   setInterval(checkDailyRestarts, 30 * 1000)
 
-  // pick up servers that were left running when the app was closed
-  setTimeout(() => { reattachRunning().catch(() => undefined) }, 3000)
+  // pick up servers that were left running when the app was closed, then start the ones
+  // set to start with the app
+  setTimeout(() => { reattachRunning().catch(() => undefined).then(startWithApp) }, 3000)
   // look up the latest server build in the background so the first Start doesn't wait on it
   setTimeout(() => {
     const dir = loadSettings().serverInstallPath

@@ -24,6 +24,8 @@ interface ElectronAPI {
   }
   system: {
     info: () => Promise<{ totalMemMb: number; platform: string }>
+    // no argument: read the current setting
+    startWithWindows: (on?: boolean) => Promise<boolean>
   }
   discord: {
     test: (url: string, serverName: string) => Promise<{ success: boolean; message?: string }>
