@@ -83,6 +83,8 @@ export interface AppSettings {
   // "Ask before updating the game server", on unless turned off
   askBeforeServerUpdate?: boolean
   skippedServerUpdate?: Record<string, string>
+  // the Overview shows dots instead of the public IP (streams, screenshots)
+  hidePublicIp?: boolean
 }
 
 // 'starting' = loading world/mods, 'running' = players can join

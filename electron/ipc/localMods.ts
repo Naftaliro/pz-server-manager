@@ -1,8 +1,12 @@
 import { ipcMain, app } from 'electron'
 import { join, basename } from 'path'
 import { existsSync, cpSync, mkdirSync, readFileSync } from 'fs'
-import { resolveDataPath } from './serverManager'
-import { listDirs, parseModInfo } from './modManager'
+import { cp } from 'fs/promises'
+import { resolveDataPath } from './dataFolder'
+import { listDirs, parseModInfo, scanModFolders } from './modManager'
+import { enabledIds } from '../../shared/modCore'
+import { sameFolder } from '../../shared/dataFolder'
+import type { ServerProfile } from './profileManager'
 
 // ---------------------------------------------------------------------------
 // Small fix mods that ship with the app (repo folder local-mods/, packaged as an
@@ -45,6 +49,28 @@ export function installLocalMods(modIds: string[], worldSavePath?: string): { in
     installed.push(id)
   }
   return { installed, missing }
+}
+
+// A server with a data folder of its own reads local mods from <its folder>\mods, but they
+// usually got put in the shared Zomboid\mods (by hand, by older versions, by a preset). Copy
+// the ones it uses and doesn't have yet: the app's own fix mods, or the shared folder's copy.
+// Returns the ids copied
+export async function syncLocalMods(profile: Pick<ServerProfile, 'worldSavePath' | 'mods'>): Promise<string[]> {
+  const dataPath = resolveDataPath(profile.worldSavePath)
+  const shared = resolveDataPath()
+  if (sameFolder(dataPath, shared)) return []
+  const wanted = profile.mods.filter(m => !m.workshopId).flatMap(enabledIds)
+  if (wanted.length === 0) return []
+  const have = new Set((await scanModFolders(join(dataPath, 'mods'))).map(f => f.info.id))
+  const missing = wanted.filter(id => !have.has(id))
+  if (missing.length === 0) return []
+  const copied = installLocalMods(missing, profile.worldSavePath).installed
+  for (const { folder, info } of await scanModFolders(join(shared, 'mods'))) {
+    if (!missing.includes(info.id) || copied.includes(info.id) || existsSync(join(dataPath, 'mods', folder))) continue
+    await cp(join(shared, 'mods', folder), join(dataPath, 'mods', folder), { recursive: true })
+    copied.push(info.id)
+  }
+  return copied
 }
 
 export function setupLocalModHandlers() {

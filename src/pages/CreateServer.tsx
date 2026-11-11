@@ -10,6 +10,7 @@ import { downloadAndScan } from '../lib/mods'
 import { suggestPassword, publicIni, type ServerPack } from '../../shared/serverPack'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { steamImageUrl } from '../../shared/workshopItem'
+import { freeGamePort, freeRconPort } from '../../shared/ports'
 
 type Step = 0 | 1 | 2
 
@@ -44,18 +45,8 @@ export default function CreateServer() {
   const nameOk = name.trim().length > 0 && name.length <= 50 && !nameTaken
 
   // each server needs its own ports, so step past ones in use by other profiles
-  const nextPort = () => {
-    let port = 16261
-    while (profiles.some(p => p.port === port || p.udpPort === port || p.port === port + 1)) port += 2
-    return port
-  }
-
-  const nextRconPort = () => {
-    const used = new Set(profiles.map(p => Number(p.iniSettings?.RCONPort || 27015)))
-    let port = 27015
-    while (used.has(port)) port++
-    return port
-  }
+  const nextPort = () => freeGamePort(profiles)
+  const nextRconPort = () => freeRconPort(profiles)
 
   // Host a copy of someone's server from their server pack: same mods, fix mods and settings
   const [packError, setPackError] = useState('')
@@ -124,7 +115,7 @@ export default function CreateServer() {
         updatedAt: new Date().toISOString(),
       })
       if (pack.localMods.length > 0) {
-        const fixes = await window.electronAPI.client.installPackFixes(path)
+        const fixes = await window.electronAPI.client.installPackFixes(path, saved.worldSavePath)
         if (!fixes.success) setPackError(`The server was made, but its fix mods couldn't be installed: ${fixes.message}`)
       }
       const workshopIds = host.mods.map(m => m.workshopId).filter(Boolean)

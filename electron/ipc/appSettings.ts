@@ -30,6 +30,8 @@ export interface AppSettings {
   askBeforeServerUpdate?: boolean
   // "Not now" on an update: install folder (lowercased) -> the build that was skipped
   skippedServerUpdate?: Record<string, string>
+  // the Overview shows dots instead of the public IP (streams, screenshots)
+  hidePublicIp?: boolean
 }
 
 const DEFAULTS: AppSettings = {

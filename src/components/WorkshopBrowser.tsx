@@ -11,6 +11,8 @@ import { steamImageUrl } from '../../shared/workshopItem'
 
 const BASE = 'https://steamcommunity.com/workshop/browse/?appid=108600&section=readytouseitems'
 const MSG_PREFIX = '__PZM__:'
+// how wide Steam's workshop pages are laid out, in CSS pixels
+const STEAM_PAGE_WIDTH = 1000
 
 type Sort = 'popular' | 'trend' | 'recent' | 'updated'
 const SORTS: Record<Sort, { label: string; params: string }> = {
@@ -120,6 +122,8 @@ export default function WorkshopBrowser({ addedIds, buildVersion, onAdd, searchR
   // webview methods throw until its first dom-ready, so everything goes through wv()
   const readyRef = useRef(false)
   const wv = () => (readyRef.current ? webviewRef.current : null)
+  // fits the page to the width (set up below, also run on every page load)
+  const zoomRef = useRef<() => void>(() => undefined)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<Sort>('popular')
   const [b42Only, setB42Only] = useState(buildVersion !== 'b41')
@@ -216,6 +220,7 @@ export default function WorkshopBrowser({ addedIds, buildVersion, onAdd, searchR
     const onDomReady = () => {
       const first = !readyRef.current
       readyRef.current = true
+      zoomRef.current()
       view.insertCSS(PAGE_CSS).catch(() => undefined)
       view.executeJavaScript(PAGE_SCRIPT).catch(() => undefined)
       pushAddedToPage()
@@ -249,6 +254,22 @@ export default function WorkshopBrowser({ addedIds, buildVersion, onAdd, searchR
       view.removeEventListener('did-start-loading', onStart)
       view.removeEventListener('did-stop-loading', onStop)
     }
+  }, [])
+
+  // Steam's pages are a fixed ~1000 px wide. In a smaller window (1024x600 leaves the webview
+  // about 750) the right side got cut off, so zoom the page out to fit, never in
+  const boxRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const box = boxRef.current
+    if (!box) return
+    const fit = () => {
+      const zoom = Math.max(0.6, Math.min(1, box.clientWidth / STEAM_PAGE_WIDTH))
+      try { wv()?.setZoomFactor(zoom) } catch { /* not ready yet, dom-ready does it */ }
+    }
+    zoomRef.current = fit
+    const ro = new ResizeObserver(fit)
+    ro.observe(box)
+    return () => ro.disconnect()
   }, [])
 
   const go = (target: string) => { wv()?.loadURL(target).catch(() => undefined) }
@@ -429,7 +450,7 @@ export default function WorkshopBrowser({ addedIds, buildVersion, onAdd, searchR
         </div>
       )}
 
-      <div className="relative flex-1 min-h-0 bg-pz-darker">
+      <div ref={boxRef} className="relative flex-1 min-h-0 bg-pz-darker">
         <webview
           ref={webviewRef as unknown as React.Ref<HTMLElement>}
           src={initialSrc}

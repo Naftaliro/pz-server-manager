@@ -17,6 +17,7 @@ import {
 import { learnedBuilds } from './gameBuilds'
 import { expandArchiveScript } from './winScripts'
 import { redirectTarget } from './httpsOnly'
+import { followFile } from './logTail'
 
 const STEAMCMD_URL = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 const PZ_SERVER_APP_ID = '380870'
@@ -127,7 +128,7 @@ export function setupSteamCmdHandlers() {
       return { success: true, path, message: 'SteamCMD ready' }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error)
-      return { success: false, message: `Failed to download SteamCMD: ${msg}` }
+      return { success: false, message: `Couldn't download SteamCMD (${msg}). Check your internet connection and try again` }
     }
   })
 
@@ -318,7 +319,45 @@ export async function ensureSteamCmd(targetDir: string): Promise<string> {
   await downloadFile(STEAMCMD_URL, zipPath)
   await runCommand('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', expandArchiveScript(zipPath, targetDir)])
   fs.unlinkSync(zipPath)
+  await bootstrapSteamCmd(exe)
   return exe
+}
+
+// A fresh steamcmd.exe is only the updater: its first run downloads the rest of SteamCMD and
+// exits (code 7) without doing anything it was asked to. Get that over with right after
+// unzipping, so the first real job (the 7 GB server download) doesn't fail. A run that has
+// nothing left to update exits 0. It also fetches the app info once: with an empty cache the
+// first +app_update fails with "Missing configuration"
+const BOOTSTRAP_ARGS = ['+login', 'anonymous', '+app_info_update', '1', '+quit']
+async function bootstrapSteamCmd(exe: string): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const code = await runSteamCmd(exe, BOOTSTRAP_ARGS, () => undefined).catch(() => null)
+    if (code === 0) return
+  }
+}
+
+// SteamCMD stopped for a reason that goes away when it runs again: it updated itself (7), or
+// its app info cache was still empty ("Missing configuration")
+export function worthRetrying(code: number | null, output: string[]): boolean {
+  return code === 7 || output.some(l => /Failed to install app '\d+' \(Missing configuration\)/i.test(l))
+}
+
+// What went wrong when SteamCMD stopped without installing the server, in plain words.
+// Code 7 is it restarting after updating itself, not a connection problem
+export function installFailureMessage(code: number | null, output: string[], installDir: string): string {
+  const reason = output.map(l => l.match(/ERROR! Failed to (?:install|update) app '\d+' \(([^)]+)\)/i)?.[1]).find(Boolean)
+  if (reason && /disk write|write failure|access denied/i.test(reason)) {
+    return `Windows wouldn't let SteamCMD write to ${installDir}. Pick a folder you can write to (not inside Program Files) and try again`
+  }
+  if (reason && /disk space/i.test(reason)) {
+    return `There isn't enough free space for the server in ${installDir} (it needs about 8 GB)`
+  }
+  if ((reason && /connect|timeout|network/i.test(reason)) || output.some(l => /FAILED \(No Connection\)|Connecting anonymously to Steam Public\.\.\.\s*FAILED|Timed out waiting/i.test(l))) {
+    return "SteamCMD couldn't reach Steam. Check your internet connection and try again"
+  }
+  if (reason) return `SteamCMD couldn't install the server: ${reason}. Try again, the details are under "Show details"`
+  if (code === 7) return 'SteamCMD stopped after updating itself, twice in a row. Try again, it usually works the next time'
+  return `SteamCMD stopped without installing the server (exit code ${code ?? 'unknown'}). Try again, the details are under "Show details"`
 }
 
 // Run steamcmd with the given +commands, feeding each output line to onLine. No shell: the
@@ -368,7 +407,27 @@ export async function runServerInstall(
       sendProgress(`Install directory: ${installDir}`)
       sendProgress(`Branch: ${target} (${buildOfBranch(target) === 'b41' ? 'Build 41' : 'Build 42'})`)
 
-      const code = await runSteamCmd(steamcmdPath, args, sendProgress)
+      const output: string[] = []
+      const onLine = (line: string) => { output.push(line); if (output.length > 300) output.shift(); sendProgress(line) }
+      // piped, SteamCMD holds its output back until it's done, so the "Update state ...
+      // progress: 42.17 (3003 / 7124 bytes)" lines only show up in its own console log (every 2 s)
+      const progress = followFile(join(dirname(steamcmdPath), 'logs', 'console_log.txt'), (line) => {
+        if (/Update state \(0x[0-9a-f]+\)/i.test(line)) sendProgress(line.replace(/^\[[^\]]*\]\s*/, ''))
+      })
+      let code: number | null
+      try {
+        code = await runSteamCmd(steamcmdPath, args, onLine)
+        // steamcmd exits 7 when it updated itself instead of doing the job (a SteamCMD folder from
+        // before the app bootstrapped it, or an update Valve pushed since), and a fresh one can
+        // trip over its empty app info cache: run it again, once
+        if (worthRetrying(code, output) && !isServerInstalled(installDir)) {
+          sendProgress(code === 7 ? 'SteamCMD updated itself, starting the download again...' : 'SteamCMD needed a second go, starting the download again...')
+          output.length = 0
+          code = await runSteamCmd(steamcmdPath, args, onLine)
+        }
+      } finally {
+        progress.stop()
+      }
       branchCache = branchCache && { ...branchCache, at: 0 }
 
       // steamcmd exits 7 after a successful self-update, so trust the files over the exit code
@@ -380,7 +439,7 @@ export async function runServerInstall(
         return { success: true, branch: target, message: isUpdate ? 'Server updated successfully' : 'Server installed successfully' }
       }
       if (isServerInstalled(installDir) && (code === 0 || code === 7)) throw new Error(`Steam left the server on ${now.branch} instead of ${target}`)
-      throw new Error(`SteamCMD exited with code ${code}`)
+      throw new Error(installFailureMessage(code, output, installDir))
     })
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error)

@@ -26,6 +26,8 @@ interface ElectronAPI {
     info: () => Promise<{ totalMemMb: number; platform: string }>
     // no argument: read the current setting
     startWithWindows: (on?: boolean) => Promise<boolean>
+    // why this copy can't start with Windows (it's running from a temp folder), null when it can
+    startupProblem: () => Promise<string | null>
   }
   discord: {
     test: (url: string, serverName: string) => Promise<{ success: boolean; message?: string }>
@@ -112,6 +114,10 @@ interface ElectronAPI {
     backupNow: (profileId: string) => Promise<{ success: boolean; message: string }>
     restoreBackup: (profileId: string, name: string) => Promise<{ success: boolean; message: string }>
     openBackups: (profileId: string) => Promise<string>
+    // where the server keeps its world, settings, players and log, and who else uses that folder
+    dataFolder: (profileId: string) => Promise<{ path: string; exists: boolean; shared: boolean; sharedWith: string[] } | null>
+    // copy its files into a folder of its own, check them, then switch to it
+    useOwnDataFolder: (profileId: string) => Promise<{ success: boolean; message: string; worldSavePath?: string }>
     onModUpdates: (callback: (profileId: string, names: string[]) => void) => () => void
     networkInfo: () => Promise<{ publicIp: string | null; lanIps: string[] }>
     onPlayers: (callback: (profileId: string, players: string[]) => void) => () => void
@@ -371,6 +377,8 @@ interface ServerProblem {
   hint: string
   line: string
   at: number
+  // what the button next to it opens
+  fix?: 'open-mods' | 'open-console'
 }
 
 interface WorkshopMod {

@@ -8,6 +8,7 @@ import { installedBuild } from './steamcmd'
 import { getPlayitState } from './playit'
 import { firewallRuleExists } from './network'
 import { lastDiscordError } from './discord'
+import { logSummary } from './serverLog'
 
 // "Copy diagnostics": one paste-able report so a friend saying "it doesn't work"
 // turns into something fixable. Gets pasted into public GitHub issues, so
@@ -52,14 +53,16 @@ function scrub(text: string, hidden: string[]): string {
   return out
 }
 
-function tailFile(path: string, maxLines: number): string {
+// What the last start's log says, boiled down (see logSummary). The log is one start's worth
+// (it's cleared on every start), a few MB at most; only the last 16 MB are read
+function summarizeLog(path: string): string {
   if (!existsSync(path)) return '(no log file yet)'
   const size = statSync(path).size
-  const length = Math.min(size, 64 * 1024)
+  const length = Math.min(size, 16 * 1024 * 1024)
   const buf = Buffer.alloc(length)
   const fd = openSync(path, 'r')
   try { readSync(fd, buf, 0, length, size - length) } finally { closeSync(fd) }
-  return buf.toString('utf-8').split(/\r?\n/).filter(l => l.trim()).slice(-maxLines).join('\n')
+  return logSummary(buf.toString('utf-8').split(/\r?\n/)).join('\n')
 }
 
 const time = (at: number) => new Date(at).toISOString().replace('T', ' ').slice(0, 19)
@@ -114,8 +117,8 @@ export async function buildDiagnostics(): Promise<string> {
     }
     if (d.logPath) {
       let log: string
-      try { log = tailFile(d.logPath, 150) } catch (e) { log = `(could not read log: ${e instanceof Error ? e.message : e})` }
-      lines.push('', 'last log lines:', '```', log, '```')
+      try { log = summarizeLog(d.logPath) } catch (e) { log = `(could not read log: ${e instanceof Error ? e.message : e})` }
+      lines.push('', `log of the last start (${d.logPath}):`, '```', log, '```')
     }
   }
 

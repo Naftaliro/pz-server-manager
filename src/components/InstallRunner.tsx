@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, RefreshCw, CheckCircle, AlertCircle, ChevronDown, ChevronRight, Loader } from 'lucide-react'
 import type { BuildVersion } from '../store/useAppStore'
+import { parseSteamProgress, gbDone } from '../lib/steamProgress'
 
 type Phase = 'idle' | 'steamcmd' | 'server' | 'done' | 'error'
 
@@ -20,6 +21,7 @@ export default function InstallRunner({ steamcmdDir, serverDir, buildVersion, mo
   const [error, setError] = useState('')
   const [pct, setPct] = useState<number | null>(null)
   const [stage, setStage] = useState('')
+  const [bytes, setBytes] = useState<{ done: number; total: number } | null>(null)
   const [showLog, setShowLog] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -27,12 +29,12 @@ export default function InstallRunner({ steamcmdDir, serverDir, buildVersion, mo
 
   const onLine = (line: string) => {
     setLogs(prev => [...prev.slice(-500), line])
-    // " Update state (0x61) downloading, progress: 42.17 (1234 / 5678)"
     // steamcmd goes through several stages that each count 0-100, so say which one we're in
-    const m = line.match(/Update state \(0x[0-9a-f]+\)\s*([a-z ]+?),\s*progress:\s*([\d.]+)/i)
-    if (m) {
-      setStage(m[1].trim())
-      setPct(Math.min(100, parseFloat(m[2])))
+    const p = parseSteamProgress(line)
+    if (p) {
+      setStage(p.stage)
+      setPct(p.pct)
+      setBytes(p.done !== undefined && p.total ? { done: p.done, total: p.total } : null)
     }
   }
 
@@ -41,6 +43,7 @@ export default function InstallRunner({ steamcmdDir, serverDir, buildVersion, mo
     setError('')
     setPct(null)
     setStage('')
+    setBytes(null)
     try {
       setPhase('steamcmd')
       onLine('Getting SteamCMD (Valve\'s download tool)...')
@@ -88,7 +91,8 @@ export default function InstallRunner({ steamcmdDir, serverDir, buildVersion, mo
           </div>
           {pct !== null && (
             <p className="text-xs text-pz-muted">
-              {stage === 'downloading' ? 'Downloading' : stage === 'committing' ? 'Installing files' : stage === 'verifying' ? 'Checking files' : stage || 'Working'}: {pct.toFixed(0)}%
+              {stage === 'downloading' ? 'Downloading' : stage === 'committing' ? 'Installing files' : /^verifying/.test(stage) ? 'Checking files' : /^preallocating/.test(stage) ? 'Making room' : stage || 'Working'}: {pct.toFixed(0)}%
+              {bytes && bytes.total > 0 && ` (${gbDone(bytes.done, bytes.total)})`}
             </p>
           )}
         </div>
@@ -103,8 +107,8 @@ export default function InstallRunner({ steamcmdDir, serverDir, buildVersion, mo
       {phase === 'error' && (
         <div className="flex items-start gap-2 text-sm text-pz-red">
           <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
-          {/* a full sentence is the app saying what to do (stop a server first...), SteamCMD's own errors get the usual hint */}
-          <span>{/[.!]$/.test(error) ? error : <>Something went wrong: {error}. Check your internet connection and that the folder isn't read-only, then try again.</>}</span>
+          {/* a full sentence is the app saying what to do (stop a server first...) or what went wrong, shown as it is */}
+          <span>{/[.!]$/.test(error) ? error : <>Something went wrong: {error}.</>}</span>
         </div>
       )}
 

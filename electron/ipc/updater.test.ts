@@ -39,7 +39,21 @@ describe.runIf(process.platform === 'win32')('portable updates on Windows', () =
 
   it("won't take a zip without the app's exe", async () => {
     const u = make(pkg => writeFileSync(join(pkg, 'other.exe'), 'x'))
-    expect(await unpackAndCheckUpdate(u.zip, u.extractDir, exe)).toEqual({ error: expect.stringMatching(/doesn't have PZ Server Manager.exe/) })
+    expect(await unpackAndCheckUpdate(u.zip, u.extractDir, exe)).toEqual({ error: expect.stringMatching(/doesn't have Knox Launcher.exe/) })
+  }, 120000)
+
+  // a copy from before 1.6 runs as PZ Server Manager.exe, the new zip has Knox Launcher.exe
+  it('finds the renamed exe and checks that one', async () => {
+    const u = make(pkg => copyFileSync(process.execPath, join(pkg, 'Knox Launcher.exe')))
+    expect(await unpackAndCheckUpdate(u.zip, u.extractDir, exe)).toEqual({ error: expect.stringMatching(/^Knox Launcher.exe in the update isn't signed by Mitchell Berg/) })
+  }, 120000)
+
+  it('checks the exe under the other name too when the zip has both', async () => {
+    const u = make(pkg => {
+      copyFileSync(process.execPath, join(pkg, 'Knox Launcher.exe'))
+      writeFileSync(join(pkg, 'PZ Server Manager.exe'), 'not even a program')
+    })
+    expect(await unpackAndCheckUpdate(u.zip, u.extractDir, 'Knox Launcher.exe')).toEqual({ error: expect.stringMatching(/isn't signed by Mitchell Berg/) })
   }, 120000)
 
   it("won't take something that isn't a zip", async () => {

@@ -80,7 +80,7 @@ export default function RawFileEditor() {
         else { setSandboxContent(''); setSandboxExists(false) }
       }
     } catch {
-      setError('Failed to read file.')
+      setError("Couldn't read the file.")
     } finally {
       setLoading(false)
     }
@@ -100,10 +100,10 @@ export default function RawFileEditor() {
         else setSandboxExists(true)
         setTimeout(() => setSaved(false), 2500)
       } else {
-        setError(result.message || 'Failed to save file.')
+        setError(result.message || "Couldn't save the file.")
       }
     } catch {
-      setError('Failed to save file.')
+      setError("Couldn't save the file.")
     } finally {
       setSaving(false)
     }
@@ -113,8 +113,8 @@ export default function RawFileEditor() {
     const ext = activeTab === 'ini' ? ['ini'] : ['lua']
     const filePath = await window.electronAPI.dialog.openFile({
       filters: [
-        { name: activeTab === 'ini' ? 'Server Config' : 'Lua Script', extensions: ext },
-        { name: 'All Files', extensions: ['*'] },
+        { name: activeTab === 'ini' ? 'Server settings' : 'Lua file', extensions: ext },
+        { name: 'All files', extensions: ['*'] },
       ]
     })
     if (!filePath) return
@@ -133,7 +133,7 @@ export default function RawFileEditor() {
   if (!profile) {
     return (
       <div className="flex items-center justify-center h-full text-pz-muted">
-        No profile selected.
+        Pick a server first.
       </div>
     )
   }
@@ -146,19 +146,19 @@ export default function RawFileEditor() {
           <ArrowLeft size={16} />
         </button>
         <div className="flex-1">
-          <h1 className="text-lg font-semibold text-pz-text">Raw File Editor</h1>
-          <p className="text-xs text-pz-muted">{profile.name} — edit config files directly on disk</p>
+          <h1 className="text-lg font-semibold text-pz-text">Raw files</h1>
+          <p className="text-xs text-pz-muted">{profile.name} · the server's settings files as plain text</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={handleBrowse} className="btn-ghost text-xs py-1.5 px-3" title="Browse for a different file">
-            <FolderOpen size={13} /> Browse
+          <button onClick={handleBrowse} className="btn-outline text-xs" title="Open a different file">
+            <FolderOpen size={12} /> Open another file
           </button>
-          <button onClick={() => loadFile(activeTab)} disabled={loading} className="btn-ghost text-xs py-1.5 px-3" title="Reload from disk">
-            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Reload
+          <button onClick={() => loadFile(activeTab)} disabled={loading} className="btn-outline text-xs" title="Read the file again">
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Reload
           </button>
-          <button onClick={handleSave} disabled={saving || loading} className="btn-primary text-xs py-1.5 px-3">
-            <Save size={13} />
-            {saving ? 'Saving...' : saved ? 'Saved!' : 'Save to Disk'}
+          <button onClick={handleSave} disabled={saving || loading} className="btn-primary">
+            <Save size={14} />
+            {saving ? 'Saving...' : saved ? 'Saved' : 'Save'}
           </button>
         </div>
       </div>
@@ -166,8 +166,8 @@ export default function RawFileEditor() {
       {/* Tabs */}
       <div className="flex border-b border-pz-border bg-pz-darker px-6 flex-shrink-0">
         {[
-          { id: 'ini' as FileTab, label: 'Server Config (.ini)' },
-          { id: 'sandbox' as FileTab, label: 'Sandbox Settings (.lua)' },
+          { id: 'ini' as FileTab, label: 'Server options (.ini)' },
+          { id: 'sandbox' as FileTab, label: 'World & zombies (.lua)' },
         ].map(t => (
           <button
             key={t.id}
@@ -182,15 +182,15 @@ export default function RawFileEditor() {
       {/* File path bar */}
       <div className="flex items-center gap-2 px-6 py-2 bg-pz-dark border-b border-pz-border flex-shrink-0">
         <span className="text-xs text-pz-muted font-mono truncate flex-1" title={currentPath}>
-          {currentPath || 'Path not set — save a profile first'}
+          {currentPath || 'No file yet, save the server first'}
         </span>
         {currentExists ? (
           <span className="flex items-center gap-1 text-xs text-pz-green flex-shrink-0">
-            <CheckCircle size={11} /> File exists
+            <CheckCircle size={11} /> On disk
           </span>
         ) : (
           <span className="flex items-center gap-1 text-xs text-pz-muted flex-shrink-0">
-            <AlertCircle size={11} /> File not found (will be created on save)
+            <AlertCircle size={11} /> Not there yet, saving makes it
           </span>
         )}
       </div>
@@ -200,7 +200,7 @@ export default function RawFileEditor() {
         <Search size={13} className="text-pz-muted flex-shrink-0" />
         <input
           type="text"
-          placeholder="Search in file… (Enter to jump to next match)"
+          placeholder="Search in the file (Enter for the next match)"
           value={searchQuery}
           onChange={e => { setSearchQuery(e.target.value); setSearchIndex(0) }}
           onKeyDown={e => { if (e.key === 'Enter') { e.shiftKey ? jumpPrev() : jumpNext() } }}
@@ -230,13 +230,24 @@ export default function RawFileEditor() {
         )}
       </div>
 
-      {/* Info banner */}
-      <div className="flex items-start gap-2 px-6 py-2 bg-amber-900/20 border-b border-amber-700/30 flex-shrink-0">
-        <Info size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-amber-300 leading-relaxed">
-          <strong>Direct file editing mode.</strong> Changes saved here are written directly to disk and will be used as-is when the server starts — <em>as long as the server profile is set to "Use files as-is" launch mode</em>.
-        </p>
-      </div>
+      {/* What happens to these edits, which depends on who writes the files (Server options, Basics) */}
+      {profile.launchMode === 'passthrough' ? (
+        <div className="flex items-start gap-2 px-6 py-2 bg-pz-blue/10 border-b border-pz-blue/30 flex-shrink-0">
+          <Info size={13} className="text-pz-blue flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-pz-subtext leading-relaxed">
+            This server is set to <b className="text-pz-text">Me, by hand</b>: the app starts it without touching these files, so what you save here is exactly what it uses.
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-start gap-2 px-6 py-2 bg-pz-yellow/10 border-b border-pz-yellow/30 flex-shrink-0">
+          <Info size={13} className="text-pz-yellow flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-pz-subtext leading-relaxed">
+            The app writes its settings into these files every time the server starts. What you change here stays, except the settings the app keeps itself:
+            ports, passwords, max players, the mod list and map, and anything set on the Settings tab, in Server options or in World &amp; zombies. Those go back to the app's value, so change them there.
+            To have the server use these files exactly as they are, pick <b className="text-pz-text">Me, by hand</b> under "Who writes the settings files" in Server options.
+          </p>
+        </div>
+      )}
 
       {/* Error */}
       {error && (
@@ -262,8 +273,8 @@ export default function RawFileEditor() {
             className="w-full h-full bg-pz-darker text-pz-text font-mono text-xs leading-relaxed p-4 rounded border border-pz-border resize-none focus:outline-none focus:border-pz-green/50 placeholder-pz-muted"
             placeholder={
               activeTab === 'ini'
-                ? '# Server config file not found yet.\n# Start the server once to generate it, or paste your existing .ini content here and click Save to Disk.'
-                : '-- SandboxVars.lua not found yet.\n-- Start the server once to generate it, or paste your existing SandboxVars content here and click Save to Disk.'
+                ? "# This file isn't there yet.\n# Start the server once to make it, or paste a .ini here and hit Save."
+                : "-- This file isn't there yet.\n-- Start the server once to make it, or paste a SandboxVars.lua here and hit Save."
             }
             style={{ fontFamily: "'Consolas', 'Courier New', monospace" }}
           />

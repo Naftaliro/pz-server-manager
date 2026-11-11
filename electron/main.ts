@@ -22,14 +22,28 @@ import { setupDiscordHandlers } from './ipc/discord'
 import { allowedFile, allowedFolder, localPath } from './ipc/allowedPaths'
 import { configFolders, appFolders } from './ipc/appFolders'
 import { lockDownSession } from './ipc/workshopSession'
+import { STARTUP_ARG, secondLaunch, RUN_KEY, RUN_VALUE, parseRunKey, runKeyPlan, startupProblem, type RunValue } from './ipc/startup'
+import { execFile } from 'child_process'
+import os from 'os'
 
 // vite-plugin-electron passes the dev server address when running `npm run dev`
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null
 
-// what Windows passes when it starts the app at login
-const STARTUP_ARG = '--started-with-windows'
+
+// One copy of the app at a time. A second one (another click on the shortcut, or the installed
+// copy next to a portable one, they share one data folder) would start the same servers, run
+// SteamCMD next to the first one's and post everything to Discord twice. Electron hands its
+// command line to the first copy, which comes to the front, and the second one quits
+const firstInstance = app.requestSingleInstanceLock()
+if (!firstInstance) app.quit()
+app.on('second-instance', (_event, argv) => {
+  if (!mainWindow || secondLaunch(argv) === 'ignore') return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+})
 
 // the packaged app's one page, the only thing its window may load
 const appPage = pathToFileURL(join(__dirname, '../dist/index.html')).href
@@ -93,6 +107,31 @@ function createWindow() {
   })
 }
 
+// ── Start with Windows (see ipc/startup.ts) ──
+function readRunKey(): Promise<RunValue[]> {
+  return new Promise((resolve) => {
+    execFile('reg.exe', ['query', RUN_KEY], { windowsHide: true, timeout: 10000 }, (err, stdout) => resolve(err ? [] : parseRunKey(String(stdout))))
+  })
+}
+
+async function runKeyNow() {
+  return runKeyPlan(await readRunKey(), app.getPath('exe'), existsSync)
+}
+
+function tempFolders(): string[] {
+  return [os.tmpdir(), app.getPath('temp'), process.env.TEMP, process.env.TMP].filter((d): d is string => !!d)
+}
+
+async function setStartWithWindows(on: boolean): Promise<boolean> {
+  const exe = app.getPath('exe')
+  const plan = await runKeyNow()
+  for (const name of plan.remove) app.setLoginItemSettings({ openAtLogin: false, name, path: exe, args: [STARTUP_ARG] })
+  // the folder won't be there next login, the Startup card says why
+  if (on && startupProblem(exe, tempFolders())) return false
+  app.setLoginItemSettings({ openAtLogin: on, name: RUN_VALUE, path: exe, args: [STARTUP_ARG] })
+  return (await runKeyNow()).on
+}
+
 // Files the user picked in an Open or Save dialog this session, which the window may then
 // read or write wherever they are
 const pickedFiles = new Set<string>()
@@ -145,6 +184,8 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 app.whenReady().then(() => {
+  // the second copy only had to hand over its command line
+  if (!firstInstance) return
   lockDownWorkshopSession()
   createWindow()
 
@@ -190,10 +231,16 @@ app.whenReady().then(() => {
   ipcMain.on('window:close', () => mainWindow?.close())
 
   // "Start with Windows". No argument: just read it
-  ipcMain.handle('app:startWithWindows', (_event, on?: boolean) => {
-    if (typeof on === 'boolean') app.setLoginItemSettings({ openAtLogin: on, args: [STARTUP_ARG] })
-    return app.getLoginItemSettings({ args: [STARTUP_ARG] }).openAtLogin
+  ipcMain.handle('app:startWithWindows', async (_event, on?: boolean) => {
+    if (typeof on === 'boolean') return setStartWithWindows(on)
+    return (await runKeyNow()).on
   })
+  // why this copy can't start with Windows (it runs from a temp folder), null when it can
+  ipcMain.handle('app:startupProblem', () => startupProblem(app.getPath('exe'), tempFolders()))
+  // a value an older version wrote gets the new name (and this exe, after the rename)
+  if (app.isPackaged) {
+    void runKeyNow().then(plan => { if (plan.migrate) return setStartWithWindows(true) }).catch(() => undefined)
+  }
 
   // Open external links in browser
   ipcMain.on('shell:openExternal', (_event, url: string) => {

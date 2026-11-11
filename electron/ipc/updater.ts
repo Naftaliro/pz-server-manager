@@ -7,7 +7,7 @@ import originalFs from 'original-fs'
 import path from 'path'
 import { spawn, execFile } from 'child_process'
 import {
-  updateScript, updaterWindowCommand, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller,
+  updateScript, updaterWindowCommand, uninstallersFor, APP_EXE_NAMES, INSTALLER_UPDATE_ARGS, isNsisInstaller,
   RELEASE_SIGNER, signatureQueryScript, signedByUs, folderSignaturesScript, updatePackageProblem, expandArchiveScript,
   type SignatureInfo,
 } from './winScripts'
@@ -21,8 +21,11 @@ const RELEASE_EXE_URL = new RegExp(`^https://github\\.com/${GITHUB_OWNER}/${GITH
 // Installed with the setup exe (so Windows "Apps & features" knows the version) or the
 // portable zip. Updates go the same way they came in
 function isInstalledCopy(): boolean {
-  return app.isPackaged && fs.existsSync(uninstallerFor(app.getPath('exe')))
+  return app.isPackaged && uninstallersFor(app.getPath('exe')).some(u => fs.existsSync(u))
 }
+
+// what GitHub's API sees as the client
+const userAgent = () => `KnoxLauncher/${getCurrentVersion()}`
 
 // Read the version fresh each time from the app — never cache at module load
 function getCurrentVersion(): string {
@@ -81,7 +84,7 @@ function httpsGetJson(url: string, redirectCount = 0): Promise<unknown> {
 
     const options = {
       headers: {
-        'User-Agent': `PZServerManager/${getCurrentVersion()}`,
+        'User-Agent': userAgent(),
         'Accept': 'application/vnd.github.v3+json',
       },
     }
@@ -124,7 +127,7 @@ function downloadFile(
     if (!url.startsWith('https://')) { reject(new Error('Updates only come over https')); return }
 
     const req = https.get(url, {
-      headers: { 'User-Agent': `PZServerManager/${getCurrentVersion()}` }
+      headers: { 'User-Agent': userAgent() }
     }, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode || 0) && res.headers.location) {
         res.resume()
@@ -237,29 +240,37 @@ function expandZip(zipPath: string, destDir: string): Promise<void> {
 }
 
 // The release zip is flat (exe at the root next to locales\ and resources\), but take a zip
-// with everything in one folder too
-function findUnpackedApp(extractDir: string, exeName: string): string | null {
-  if (originalFs.existsSync(path.join(extractDir, exeName))) return extractDir
-  for (const d of originalFs.readdirSync(extractDir, { withFileTypes: true })) {
-    if (d.isDirectory() && originalFs.existsSync(path.join(extractDir, d.name, exeName))) return path.join(extractDir, d.name)
+// with everything in one folder too. The exe can have either name (the 1.6 rename): the new
+// name wins, then the one the app is running as
+function findUnpackedApp(extractDir: string, exeName: string): { dir: string; exe: string } | null {
+  const names = [...new Set([...APP_EXE_NAMES, exeName])]
+  const dirs = [extractDir, ...originalFs.readdirSync(extractDir, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => path.join(extractDir, d.name))]
+  for (const dir of dirs) {
+    const exe = names.find(n => originalFs.existsSync(path.join(dir, n)))
+    if (exe) return { dir, exe }
   }
   return null
 }
 
 // Unpack the portable zip and check it the same way as the installer (updatePackageProblem).
-// sourceDir = the folder to copy over the app, only when everything checked out
-export async function unpackAndCheckUpdate(zipPath: string, extractDir: string, exeName: string): Promise<{ sourceDir: string } | { error: string }> {
-  let sourceDir: string | null
+// sourceDir = the folder to copy over the app and exeName = the app's exe in it, only when
+// everything checked out
+export async function unpackAndCheckUpdate(zipPath: string, extractDir: string, exeName: string): Promise<{ sourceDir: string; exeName: string } | { error: string }> {
+  let found: { dir: string; exe: string } | null
   try {
     await expandZip(zipPath, extractDir)
-    sourceDir = findUnpackedApp(extractDir, exeName)
+    found = findUnpackedApp(extractDir, exeName)
   } catch (err) {
     return { error: `Couldn't unpack the update: ${(err as Error).message}.` }
   }
-  if (!sourceDir) return { error: `The update doesn't have ${exeName} in it.` }
-  const sigs = await readFolderSignatures(sourceDir)
-  const problem = sigs ? updatePackageProblem(sigs, path.join(sourceDir, exeName)) : "Couldn't check the update's signature."
-  return problem ? { error: problem } : { sourceDir }
+  if (!found) return { error: `The update doesn't have ${APP_EXE_NAMES[0]} in it.` }
+  const sigs = await readFolderSignatures(found.dir)
+  // every app exe in it has to be ours, under either name, not only the one that gets started
+  const exes = APP_EXE_NAMES.filter(n => originalFs.existsSync(path.join(found!.dir, n)))
+  const problem = sigs
+    ? [found.exe, ...exes].map(n => updatePackageProblem(sigs, path.join(found!.dir, n))).find(Boolean) || null
+    : "Couldn't check the update's signature."
+  return problem ? { error: problem } : { sourceDir: found.dir, exeName: found.exe }
 }
 
 // ── Installed copy: run the new setup exe ─────────────────────────────────────
@@ -469,10 +480,10 @@ export function setupUpdaterHandlers() {
       cleanTempDir(tempDir)
       return { success: false, message: `${checked.error} The update wasn't installed. Please update manually from the GitHub releases page.` }
     }
-    const { sourceDir } = checked
+    const { sourceDir, exeName } = checked
 
     // ── Step 5: Write the updater batch script ───────────────────────────────────
-    const batchScript = updateScript({ sourceDir, appExe })
+    const batchScript = updateScript({ sourceDir, appExe, newExeName: exeName })
 
     const batchPath = path.join(tempDir, 'pz-update.bat')
 

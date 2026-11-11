@@ -7,6 +7,8 @@ import { withValidWorkshopIds, type ModInfo, type ModSnapshot } from '../../shar
 import { dropOldSandboxDefaults, SANDBOX_SETTINGS_VERSION } from '../../shared/profileMigrations'
 import type { SettingsTree } from '../../shared/gameConfig'
 import { SECRET_INI_KEYS } from '../../shared/serverPack'
+import { ownDataFolder, expandDataPath } from '../../shared/dataFolder'
+import { freeGamePort, freeRconPort, copyName } from '../../shared/ports'
 
 export interface ModEntry {
   workshopId: string
@@ -240,7 +242,9 @@ function uniqueServerName(name: string, profiles: ServerProfile[]): string {
   const base = sanitizeServerName(name) || 'server'
   const taken = new Set(profiles.map(p => getServerName(p).toLowerCase()))
   let candidate = base
-  for (let n = 2; taken.has(candidate.toLowerCase()); n++) candidate = `${base}_${n}`
+  // a leftover data folder of a deleted server with that name would hand it the old world
+  const free = (c: string) => !taken.has(c.toLowerCase()) && !existsSync(expandDataPath(ownDataFolder(c), process.env))
+  for (let n = 2; !free(candidate); n++) candidate = `${base}_${n}`
   return candidate
 }
 
@@ -270,10 +274,13 @@ export function setupProfileHandlers() {
     if (!profile.id) {
       // New profile
       const settings = loadSettings()
+      const serverName = profile.serverName || uniqueServerName(profile.name, profiles)
       const newProfile: ServerProfile = {
         ...profile,
         id: randomUUID(),
-        serverName: profile.serverName || uniqueServerName(profile.name, profiles),
+        serverName,
+        // a data folder of its own unless one was picked (see shared/dataFolder.ts)
+        worldSavePath: profile.worldSavePath?.trim() || ownDataFolder(serverName),
         buildVersion: profile.buildVersion || settings.buildVersion || 'b42',
         serverInstallPath: profile.serverInstallPath || settings.serverInstallPath,
         iniSettings: {
@@ -330,20 +337,28 @@ export function setupProfileHandlers() {
     if (!original) return null
 
     const now = new Date().toISOString()
+    const serverName = uniqueServerName(`${getServerName(original)}_copy`, profiles)
+    // ports nobody else in the list has (the same pick as the create wizard), so the copy can
+    // run next to the original and earlier copies
+    const port = freeGamePort(profiles)
     const duplicate: ServerProfile = {
       ...JSON.parse(JSON.stringify(original)),
       id: randomUUID(),
-      name: `${original.name} (Copy)`,
-      serverName: uniqueServerName(`${getServerName(original)}_copy`, profiles),
-      port: original.port + 2,
-      udpPort: (original.udpPort || original.port + 1) + 2,
+      name: copyName(original.name, profiles.map(p => p.name)),
+      serverName,
+      // a fresh world in a folder of its own
+      worldSavePath: ownDataFolder(serverName),
+      port,
+      udpPort: port + 1,
       createdAt: now,
       updatedAt: now,
       lastStarted: undefined,
+      lastStartedMods: undefined,
       iniSettings: {
         ...original.iniSettings,
-        DefaultPort: original.port + 2,
-        RCONPort: Number(original.iniSettings?.RCONPort || 27015) + 1,
+        DefaultPort: port,
+        UDPPort: port + 1,
+        RCONPort: freeRconPort(profiles),
         RCONPassword: randomPassword(),
         ResetID: randomId(),
         ServerPlayerID: randomId(),

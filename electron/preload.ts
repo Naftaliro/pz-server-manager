@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   system: {
     info: () => ipcRenderer.invoke('system:info'),
     startWithWindows: (on?: boolean) => ipcRenderer.invoke('app:startWithWindows', on),
+    startupProblem: () => ipcRenderer.invoke('app:startupProblem'),
   },
 
   discord: {
@@ -102,6 +103,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     backupNow: (profileId: string) => ipcRenderer.invoke('server:backupNow', profileId),
     restoreBackup: (profileId: string, name: string) => ipcRenderer.invoke('server:restoreBackup', profileId, name),
     openBackups: (profileId: string) => ipcRenderer.invoke('server:openBackups', profileId),
+    dataFolder: (profileId: string) => ipcRenderer.invoke('server:dataFolder', profileId),
+    useOwnDataFolder: (profileId: string) => ipcRenderer.invoke('server:useOwnDataFolder', profileId),
     onModUpdates: (callback: (profileId: string, names: string[]) => void) => {
       const handler = (_e: unknown, profileId: string, names: string[]) => callback(profileId, names)
       ipcRenderer.on('server:modUpdates', handler)
@@ -113,8 +116,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('server:players', handler)
       return () => ipcRenderer.removeListener('server:players', handler)
     },
-    onProblem: (callback: (profileId: string, problem: { hint: string; line: string; at: number }) => void) => {
-      const handler = (_e: unknown, profileId: string, problem: { hint: string; line: string; at: number }) => callback(profileId, problem)
+    onProblem: (callback: (profileId: string, problem: { hint: string; line: string; at: number; fix?: string }) => void) => {
+      const handler = (_e: unknown, profileId: string, problem: { hint: string; line: string; at: number; fix?: string }) => callback(profileId, problem)
       ipcRenderer.on('server:problem', handler)
       return () => ipcRenderer.removeListener('server:problem', handler)
     },

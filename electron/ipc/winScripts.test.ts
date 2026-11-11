@@ -7,7 +7,7 @@ import {
   batText, quotedValue, patchStartBat, launcherScript, updateScript,
   serverWindowCommand, updaterWindowCommand, sendKeysScript,
   firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, FIREWALL_RULE, OLD_FIREWALL_RULE,
-  type FirewallRuleInfo, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller, folderSizeArgs, parseFolderSize,
+  type FirewallRuleInfo, uninstallerFor, uninstallersFor, APP_EXE_NAMES, INSTALLER_UPDATE_ARGS, isNsisInstaller, folderSizeArgs, parseFolderSize,
   RELEASE_SIGNER, signatureQueryScript, signedByUs, type SignatureInfo,
   folderSignaturesScript, updatePackageProblem, expandArchiveScript, ARTIFACT_SIGNING_EKU, CODE_SIGNING_EKU,
 } from './winScripts'
@@ -98,6 +98,29 @@ describe('updateScript', () => {
     expect(out).toContain('robocopy "%SRC%" "C:\\Users\\Łukasz!\\Programs\\Knox Launcher"')
     expect(out).toContain('if errorlevel 1 goto failed')
     expect(out.indexOf(':failed')).toBeGreaterThan(out.indexOf('exit /b 0'))
+  })
+
+  it("doesn't delete anything when the exe keeps its name", () => {
+    expect(out).not.toMatch(/\bdel \/f/)
+    expect(out).toContain('start "" "C:\\Users\\Łukasz!\\Programs\\Knox Launcher\\PZ Server Manager.exe"')
+  })
+
+  describe('a copy from before the rename', () => {
+    const renamed = updateScript({
+      sourceDir: 'C:\\x\\extracted',
+      appExe: 'D:\\Games\\Knox 100%\\PZ Server Manager.exe',
+      newExeName: 'Knox Launcher.exe',
+    })
+    it('waits for either name to close', () => {
+      expect(renamed).toContain('tasklist /FI "IMAGENAME eq PZ Server Manager.exe"')
+      expect(renamed).toContain('tasklist /FI "IMAGENAME eq Knox Launcher.exe"')
+    })
+    it('checks for and starts the new exe, then removes the old one', () => {
+      expect(renamed).toContain('if not exist "%SRC%\\Knox Launcher.exe" goto failed')
+      expect(renamed).toContain('if exist "D:\\Games\\Knox 100%%\\Knox Launcher.exe" del /f /q "D:\\Games\\Knox 100%%\\PZ Server Manager.exe"')
+      expect(renamed).toContain('start "" "D:\\Games\\Knox 100%%\\Knox Launcher.exe"')
+      expect(renamed.indexOf('del /f')).toBeGreaterThan(renamed.indexOf(':copied'))
+    })
   })
 })
 
@@ -223,6 +246,33 @@ describe.runIf(process.platform === 'win32')('on Windows', () => {
       try { execFileSync('taskkill', ['/IM', exe, '/F']) } catch { /* not running */ }
     }
   }, 90000)
+
+  it('moves a copy from before the rename over to the new exe name', async () => {
+    const base = join(mkdtempSync(join(tmpdir(), 'pzm-')), TRICKY)
+    const appDir = join(base, 'Knox')
+    const extracted = join(base, 'extracted')
+    for (const d of [join(appDir, 'resources'), join(extracted, 'resources')]) mkdirSync(d, { recursive: true })
+    const oldExe = 'Knox Old Test.exe'
+    const newExe = 'Knox New Test.exe'
+    writeFileSync(join(appDir, oldExe), 'old version')
+    copyFileSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe'), join(extracted, newExe))
+    writeFileSync(join(extracted, 'resources', 'app.asar'), 'new')
+    const scriptPath = join(base, 'pz-update.bat')
+    writeFileSync(scriptPath, updateScript({ sourceDir: extracted, appExe: join(appDir, oldExe), newExeName: newExe }), 'utf-8')
+    const cmd = updaterWindowCommand(scriptPath)
+    spawn('cmd.exe', [cmd.args], {
+      env: { ...process.env, ...cmd.env }, detached: true, stdio: 'ignore', windowsHide: false, windowsVerbatimArguments: true,
+    }).unref()
+    const running = () => execFileSync('tasklist', ['/FI', `IMAGENAME eq ${newExe}`, '/NH']).toString().includes(newExe)
+    try {
+      expect(await waitFor(running)).toBe(true)
+      expect(existsSync(join(appDir, newExe))).toBe(true)
+      expect(existsSync(join(appDir, oldExe))).toBe(false)
+      expect(readFileSync(join(appDir, 'resources', 'app.asar'), 'utf-8')).toBe('new')
+    } finally {
+      try { execFileSync('taskkill', ['/IM', newExe, '/F']) } catch { /* not running */ }
+    }
+  }, 90000)
 })
 
 describe('firewall', () => {
@@ -286,8 +336,15 @@ describe.runIf(process.platform === 'win32')('firewall on Windows', () => {
 
 describe('installer updates', () => {
   it('finds the uninstaller electron-builder puts next to the installed exe', () => {
-    expect(uninstallerFor('C:\\Users\\Me\\AppData\\Local\\Programs\\pz-server-manager\\PZ Server Manager.exe'))
-      .toBe('C:\\Users\\Me\\AppData\\Local\\Programs\\pz-server-manager\\Uninstall PZ Server Manager.exe')
+    expect(uninstallerFor('C:\\Users\\Me\\AppData\\Local\\Programs\\pz-server-manager\\Knox Launcher.exe'))
+      .toBe('C:\\Users\\Me\\AppData\\Local\\Programs\\pz-server-manager\\Uninstall Knox Launcher.exe')
+  })
+
+  it('knows the uninstaller under both exe names (the 1.6 rename)', () => {
+    const dir = 'C:\\Users\\Me\\AppData\\Local\\Programs\\pz-server-manager'
+    for (const exe of APP_EXE_NAMES) {
+      expect(uninstallersFor(`${dir}\\${exe}`).sort()).toEqual([`${dir}\\Uninstall Knox Launcher.exe`, `${dir}\\Uninstall PZ Server Manager.exe`])
+    }
   })
 
   it('runs the installer silently as an update and restarts the app', () => {
@@ -458,8 +515,10 @@ describe.runIf(process.platform === 'win32')('installer updates on Windows', () 
   })
   it.runIf(!!zip)('and not the portable zip or the app exe', () => {
     expect(isNsisInstaller(head(join(release, zip!)))).toBe(false)
-    const exe = join(release, 'win-unpacked', 'PZ Server Manager.exe')
-    if (existsSync(exe)) expect(isNsisInstaller(head(exe))).toBe(false)
+    for (const name of APP_EXE_NAMES) {
+      const exe = join(release, 'win-unpacked', name)
+      if (existsSync(exe)) expect(isNsisInstaller(head(exe))).toBe(false)
+    }
   })
 })
 

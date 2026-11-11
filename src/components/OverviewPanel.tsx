@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   RotateCcw, Copy, CheckCircle, Users, Globe, Home as HomeIcon, Lock, Shield, ChevronDown, ChevronRight,
   AlertTriangle, X, FolderOpen, Trash2, Loader, Wifi, Package, MemoryStick, MessageSquare, Zap,
-  UserX, Ban, Crown, Archive, History, Radar, Download,
+  UserX, Ban, Crown, Archive, History, Radar, Download, Eye, EyeOff,
 } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile } from '../store/useAppStore'
@@ -29,6 +29,8 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
   const [restarting, setRestarting] = useState(false)
   const [serverUpdate, setServerUpdate] = useState<ServerUpdateInfo | null>(null)
   const checkUpdate = () => window.electronAPI.steamcmd.checkUpdate(profile.serverInstallPath).then(setServerUpdate).catch(() => undefined)
+  // hidden until asked for, like on the Settings tab (streams, screenshots)
+  const [showAdminPw, setShowAdminPw] = useState(false)
 
   const say = (msg?: string) => { if (msg) { setNotice(msg); setTimeout(() => setNotice(''), 6000) } }
 
@@ -111,7 +113,9 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
           <StartButton profile={profile} big />
         </div>
 
-        {notice && <p className="text-sm text-pz-green bg-pz-green/10 border border-pz-green/30 rounded-lg px-3 py-2">{notice}</p>}
+        {notice && (
+          <p className={`text-sm rounded-lg px-3 py-2 border ${notice.startsWith("Didn't work") ? 'text-pz-yellow bg-pz-yellow/10 border-pz-yellow/30' : 'text-pz-green bg-pz-green/10 border-pz-green/30'}`}>{notice}</p>
+        )}
 
         {/* Mods updated on the Workshop while running */}
         {updatedMods.length > 0 && status === 'running' && (
@@ -147,9 +151,14 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
               <button onClick={() => clearProblems(profile.id)} className="text-pz-muted hover:text-pz-text" title="Dismiss"><X size={14} /></button>
             </div>
             {serverProblems.map((p, i) => (
-              <div key={i} className="text-sm">
-                <p className="text-pz-text">{p.hint}</p>
-                <p className="text-xs text-pz-muted font-mono truncate" title={p.line}>{p.line}</p>
+              <div key={i} className="text-sm flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-pz-text">{p.hint}</p>
+                  <p className="text-xs text-pz-muted font-mono truncate" title={p.line}>{p.line}</p>
+                </div>
+                {p.fix === 'open-mods' && (
+                  <button onClick={() => openServer(profile.id, 'mods')} className="btn-outline text-xs py-1 px-2 flex-shrink-0"><Package size={12} /> Open the Mods tab</button>
+                )}
               </div>
             ))}
             <button onClick={() => openServer(profile.id, 'console')} className="text-xs text-pz-green hover:underline">See the full log</button>
@@ -182,7 +191,7 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
               <p className="text-xs text-pz-subtext mb-3">Join with this username and password to get admin powers (spawn items, teleport, kick players and so on).</p>
               <div className="grid grid-cols-2 gap-2">
                 <CopyField label="Username" value="admin" />
-                <CopyField label="Password" value={profile.adminPassword || 'admin'} />
+                <CopyField label="Password" value={profile.adminPassword || 'admin'} hidden={!showAdminPw} onToggleHidden={() => setShowAdminPw(s => !s)} />
               </div>
             </div>
 
@@ -231,7 +240,10 @@ function InviteCard({ profile, net, playitOn, running, branch, gameVersion }: {
   branch?: string
   gameVersion?: string
 }) {
-  const { setActiveView } = useAppStore()
+  const { setActiveView, settings, setSettings } = useAppStore()
+  // for streams and screenshots, remembered across servers and restarts
+  const hideAddress = !!settings?.hidePublicIp
+  const toggleAddress = async () => setSettings(await window.electronAPI.settings.set({ hidePublicIp: !hideAddress }))
   const [helpOpen, setHelpOpen] = useState(false)
   const [playit, setPlayit] = useState<PlayitState | null>(null)
   const [pasted, setPasted] = useState(profile.playitAddress || '')
@@ -286,6 +298,8 @@ function InviteCard({ profile, net, playitOn, running, branch, gameVersion }: {
           icon={<Globe size={12} />}
           value={net === null && !usePlayit ? 'Looking up...' : address || 'Couldn\'t find it, google "what is my ip"'}
           copyable={!!address}
+          hidden={hideAddress && !!address}
+          onToggleHidden={address ? toggleAddress : undefined}
         />
         <div className="grid grid-cols-2 gap-2">
           <CopyField label="Port" value={port} />
@@ -366,9 +380,8 @@ function PlayersCard({ profile, online, running, say }: { profile: ServerProfile
     const { action, name } = confirm
     setConfirm(null)
     const r = await window.electronAPI.server.playerAction(profile.id, action, name)
-    say(r.success
-      ? { kick: `Kicked ${name}.`, ban: `Banned ${name}.`, unban: `${name} can join again.`, admin: `${name} is an admin now.` }[action]
-      : `Didn't work: ${r.message}`)
+    // what the server answered, a "doesn't exist" too
+    say(r.success ? r.message : `Didn't work: ${r.message}`)
     // the game writes its database a moment later
     setTimeout(() => void loadKnown(), 1500)
   }
@@ -523,13 +536,22 @@ function WorldCard({ profile, world, stopped, onWipe, say }: {
   )
 }
 
-function CopyField({ label, value, icon, copyable = true }: { label: string; value: string; icon?: React.ReactNode; copyable?: boolean }) {
+// hidden: shows dots instead (it still copies), with an eye button to flip it
+function CopyField({ label, value, icon, copyable = true, hidden, onToggleHidden }: {
+  label: string; value: string; icon?: React.ReactNode; copyable?: boolean
+  hidden?: boolean; onToggleHidden?: () => void
+}) {
   const [copied, setCopied] = useState(false)
   return (
     <div>
       <div className="text-[11px] text-pz-muted mb-0.5 flex items-center gap-1">{icon}{label}</div>
       <div className="flex items-center gap-2 bg-pz-darker border border-pz-border rounded-md px-3 py-1.5">
-        <span className="text-sm text-pz-text font-mono flex-1 truncate select-text">{value}</span>
+        <span className={`text-sm text-pz-text font-mono flex-1 truncate ${hidden ? 'select-none' : 'select-text'}`}>{hidden ? '••••••••' : value}</span>
+        {onToggleHidden && (
+          <button onClick={onToggleHidden} className="text-pz-muted hover:text-pz-text flex-shrink-0" title={hidden ? 'Show' : 'Hide'}>
+            {hidden ? <Eye size={13} /> : <EyeOff size={13} />}
+          </button>
+        )}
         {copyable && (
           <button
             onClick={() => { navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1500) }}

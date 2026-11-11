@@ -48,3 +48,40 @@ describe('a new server makes its own secrets', () => {
     expect(p.mods.map((m: { modId: string }) => m.modId)).toEqual(['A', 'Fix'])
   })
 })
+
+describe('a new server gets its own data folder', () => {
+  it('in Zomboid\\Knox servers, unless one was picked', async () => {
+    const p = await save({ id: '', name: 'Folder Test', mods: [], port: 16271, iniSettings: {} })
+    expect(p.worldSavePath).toBe('%USERPROFILE%\\Zomboid\\Knox servers\\Folder_Test')
+    const picked = await save({ id: '', name: 'Picked', mods: [], port: 16273, worldSavePath: 'D:\\PZData', iniSettings: {} })
+    expect(picked.worldSavePath).toBe('D:\\PZData')
+  })
+
+  it('an older server without one keeps the shared folder', async () => {
+    const p = await save({ id: '', name: 'Old', mods: [], port: 16275, iniSettings: {} })
+    const again = await save({ ...p, worldSavePath: '' })
+    expect(again.worldSavePath).toBe('')
+  })
+})
+
+describe('Make a copy', () => {
+  const duplicate = (id: string) => handlers.get('profiles:duplicate')!({}, id) as Promise<Record<string, any>>
+
+  it('twice gives two servers with their own ports, RCON port, name and folder', async () => {
+    const base = await save({ id: '', name: 'Dup Base', mods: [], port: 26261, udpPort: 26262, iniSettings: { RCONPort: 37015 } })
+    const a = await duplicate(base.id)
+    const b = await duplicate(base.id)
+    const all = (await handlers.get('profiles:list')!({})) as Array<Record<string, any>>
+    expect([a.name, b.name]).toEqual(['Dup Base (Copy)', 'Dup Base (Copy 2)'])
+    const ports = all.flatMap(p => [p.port, p.udpPort ?? p.port + 1])
+    expect(new Set(ports).size).toBe(ports.length)
+    // (the servers made by the tests above all have the default 27015)
+    const rcon = [base, a, b].map(p => Number(p.iniSettings.RCONPort))
+    expect(new Set(rcon).size).toBe(3)
+    expect(rcon).not.toContain(27015)
+    expect(a.iniSettings.DefaultPort).toBe(a.port)
+    expect(a.serverName).not.toBe(b.serverName)
+    expect(a.worldSavePath).not.toBe(b.worldSavePath)
+    expect(a.iniSettings.RCONPassword).not.toBe(base.iniSettings.RCONPassword)
+  })
+})
