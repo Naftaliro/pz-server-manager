@@ -4,7 +4,7 @@ import dgram from 'dgram'
 import os from 'os'
 import http from 'http'
 import { join } from 'path'
-import { existsSync, writeFileSync, unlinkSync } from 'fs'
+import { existsSync, writeFileSync, mkdtempSync, rmSync } from 'fs'
 import { listProfiles } from './profileManager'
 import { loadSettings } from './appSettings'
 import { firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, type FirewallEntry, type FirewallRuleInfo } from './winScripts'
@@ -192,13 +192,16 @@ export async function firewallRuleExists(): Promise<boolean> {
 
 // Runs a .cmd as admin, so Windows shows one "Allow" prompt. The netsh commands go in a
 // small file so there's no quoting soup between powershell and cmd.
+// The file goes in a new folder of its own with a name nobody can guess beforehand, and is
+// made fresh (never written into one that's already there), so nothing else gets run as admin
 function runElevated(script: string): Promise<Error | null> {
-  const path = join(app.getPath('temp'), 'pzm-firewall.cmd')
-  writeFileSync(path, script)
+  const dir = mkdtempSync(join(app.getPath('temp'), 'pzm-firewall-'))
+  const path = join(dir, 'pzm-firewall.cmd')
+  writeFileSync(path, script, { flag: 'wx' })
   const ps = `try { Start-Process -FilePath cmd.exe -ArgumentList '/c','"${path.replace(/'/g, "''")}"' -Verb RunAs -Wait -WindowStyle Hidden; exit 0 } catch { exit 5 }`
   return new Promise((resolve) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 120000 }, (err) => {
-      try { unlinkSync(path) } catch { /* already gone */ }
+      try { rmSync(dir, { recursive: true, force: true }) } catch { /* already gone */ }
       resolve(err)
     })
   })
