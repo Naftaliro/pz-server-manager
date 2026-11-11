@@ -9,6 +9,7 @@ import { saveProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
 import { downloadAndScan } from '../lib/mods'
 import { suggestPassword, publicIni, type ServerPack } from '../../shared/serverPack'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { steamImageUrl } from '../../shared/workshopItem'
 
 type Step = 0 | 1 | 2
 
@@ -91,7 +92,7 @@ export default function CreateServer() {
         // the pack's password is for joining their server, the copy gets one of its own
         serverPassword: pack.server.password ? suggestPassword() : '',
         maxPlayers: host.maxPlayers,
-        mods: host.mods.map(m => ({ workshopId: m.workshopId, modId: m.modId, name: m.name, thumbnailUrl: m.thumbnailUrl })),
+        mods: host.mods.map(m => ({ workshopId: m.workshopId, modId: m.modId, name: m.name, thumbnailUrl: steamImageUrl(m.thumbnailUrl) })),
         mapOrder: host.mapOrder,
         launchMode: 'managed',
         iniSettings: {

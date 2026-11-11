@@ -24,6 +24,22 @@ export function buildWorkshopTxt(opts: {
   ].join('\r\n')
 }
 
+// Where Steam keeps Workshop preview pictures (preview_url from GetPublishedFileDetails:
+// images.steamusercontent.com now, steamuserimages-a.akamaihd.net in older saved lists)
+export const STEAM_IMAGE_HOSTS = ['images.steamusercontent.com', 'steamuserimages-a.akamaihd.net', 'shared.akamai.steamstatic.com', 'shared.fastly.steamstatic.com']
+
+// A mod's picture, only when it's on Steam's image servers. Packs and saved lists carry this
+// link, and showing a picture from anywhere else would tell that server who's looking
+export function steamImageUrl(url: unknown): string | undefined {
+  if (typeof url !== 'string' || url.length > 2048) return undefined
+  try {
+    const u = new URL(url)
+    return u.protocol === 'https:' && !u.username && !u.password && !u.port && STEAM_IMAGE_HOSTS.includes(u.hostname) ? url : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function readWorkshopId(txt: string): string | null {
   const id = txt.match(/^\s*id\s*=\s*(\d+)\s*$/m)?.[1]
   return id || null

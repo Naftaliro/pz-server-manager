@@ -5,6 +5,7 @@ import { readdir, readFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { parseModInfo, resolvePack, isWorkshopId, type ModInfo, type Build } from '../../shared/modCore'
 import { loadSettings } from './appSettings'
+import { steamImageUrl } from '../../shared/workshopItem'
 
 export { parseModInfo }
 export type { ModInfo }
@@ -70,7 +71,7 @@ export async function fetchModDetails(allIds: string[]): Promise<WorkshopDetails
         workshopId: String(item.publishedfileid),
         name: String(item.title || 'Unknown Mod'),
         description: cleanDescription(String(item.description || '')).substring(0, 300),
-        thumbnailUrl: String(item.preview_url || ''),
+        thumbnailUrl: steamImageUrl(item.preview_url) || '',
         subscriptions: Number(item.subscriptions || 0),
         tags: Array.isArray(item.tags) ? (item.tags as Array<{ tag: string }>).map(t => t.tag) : [],
         timeUpdated: Number(item.time_updated || 0),

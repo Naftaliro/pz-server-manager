@@ -15,6 +15,7 @@ import {
 } from '../lib/mods'
 import { patchProfile, formatBytes, formatModIds } from '../lib/profile'
 import { sortModList, orderModIds, orderedModMaps, diffSnapshot, parseModLines } from '../../shared/modCore'
+import { steamImageUrl } from '../../shared/workshopItem'
 
 type SubTab = 'list' | 'browse' | 'pack' | 'import'
 
@@ -392,8 +393,8 @@ function ModRow({ profileId, mod, index, total, advanced, wrongBuild, download, 
           <button onClick={() => onMove(-1)} disabled={index === 0} className="text-pz-muted hover:text-pz-text disabled:opacity-20" title="Move up"><ChevronUp size={14} /></button>
           <button onClick={() => onMove(1)} disabled={index === total - 1} className="text-pz-muted hover:text-pz-text disabled:opacity-20" title="Move down"><ChevronDown size={14} /></button>
         </div>
-        {mod.thumbnailUrl ? (
-          <img src={mod.thumbnailUrl} alt="" className="w-11 h-11 rounded object-cover flex-shrink-0" />
+        {steamImageUrl(mod.thumbnailUrl) ? (
+          <img src={steamImageUrl(mod.thumbnailUrl)} alt="" className="w-11 h-11 rounded object-cover flex-shrink-0" />
         ) : (
           <div className="w-11 h-11 rounded bg-pz-border flex items-center justify-center flex-shrink-0"><Package size={16} className="text-pz-muted" /></div>
         )}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Home, RotateCw, Search, Plus, Check, Loader, AlertTriangle, Layers, ExternalLink } from 'lucide-react'
 import { formatBytes } from '../lib/profile'
 import { isWorkshopId } from '../../shared/modCore'
+import { steamImageUrl } from '../../shared/workshopItem'
 
 // The real Steam Workshop in a webview. We don't scrape anything to find mods any more:
 // the user browses Steam normally and we watch which item page they're on, then use
@@ -371,7 +372,7 @@ export default function WorkshopBrowser({ addedIds, buildVersion, onAdd, searchR
           ) : item.details && (
             <div className="space-y-2">
               <div className="flex items-center gap-3">
-                {item.details.thumbnailUrl && <img src={item.details.thumbnailUrl} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />}
+                {steamImageUrl(item.details.thumbnailUrl) && <img src={steamImageUrl(item.details.thumbnailUrl)} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />}
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-pz-text truncate">{item.details.name}</div>
                   <div className="text-xs text-pz-muted">

@@ -10,6 +10,7 @@ import { resolveDataPath } from './serverManager'
 import { loadSettings, saveSettings } from './appSettings'
 import { enabledIds, orderModIds, orderedModMaps } from '../../shared/modCore'
 import { parseIni, parseSandbox, deepMerge, type SettingsTree } from '../../shared/gameConfig'
+import { steamImageUrl } from '../../shared/workshopItem'
 import {
   PACK_FORMAT, PACK_VERSION, PACK_MAX_BYTES, validatePack, cleanHostSettings, checkPack, modFingerprint, launchUrl, isSafeRelPath, accountProblem, parseJoinAddress, publicIni,
   type ServerPack, type PackLocalMod, type PackHost, type ClientState,
@@ -215,7 +216,9 @@ export function readPackFile(path: string, forHosting = false): ServerPack & { d
   const pack = raw as ServerPack
   if (!forHosting || !pack.host) return pack
   const { ini, sandbox, dropped } = cleanHostSettings(pack.host)
-  return { ...pack, host: { ...pack.host, ini, sandbox }, droppedSettings: dropped }
+  // pictures only from Steam's own image servers (anything else could watch who opens the list)
+  const mods = pack.host.mods.map(m => ({ ...m, thumbnailUrl: steamImageUrl(m.thumbnailUrl) }))
+  return { ...pack, host: { ...pack.host, mods, ini, sandbox }, droppedSettings: dropped }
 }
 
 // Same server again (same name + address + port) replaces the old copy, so a newer
