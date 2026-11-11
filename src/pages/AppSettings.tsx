@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { FolderOpen, HardDrive, Wrench, RefreshCw, Info, ExternalLink, CheckCircle, AlertCircle, Globe, Shield, Loader, KeyRound, Power } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
-import type { BuildVersion } from '../store/useAppStore'
 import InstallRunner from '../components/InstallRunner'
+import { buildOfBranch, shortVersion, steamSwitchSteps } from '../../shared/gameVersion'
 import PlayitSetup from '../components/PlayitSetup'
 import { triggerManualUpdateCheck } from '../components/UpdateBanner'
 import CopyDiagnosticsButton from '../components/CopyDiagnosticsButton'
@@ -16,7 +16,9 @@ export default function AppSettings() {
   const [firewall, setFirewall] = useState<Awaited<ReturnType<typeof window.electronAPI.network.firewallStatus>> | null>(null)
   const [fwBusy, setFwBusy] = useState(false)
   const [fwMsg, setFwMsg] = useState('')
-  const [serverUpdate, setServerUpdate] = useState<{ checked: boolean; updateAvailable: boolean } | null>(null)
+  const [serverUpdate, setServerUpdate] = useState<ServerUpdateInfo | null>(null)
+  const [branches, setBranches] = useState<SteamBranchOption[] | null>(null)
+  const [branchMsg, setBranchMsg] = useState('')
   const [apiKey, setApiKey] = useState(settings?.steamApiKey || '')
   useEffect(() => { setApiKey(settings?.steamApiKey || '') }, [settings?.steamApiKey])
 
@@ -31,7 +33,22 @@ export default function AppSettings() {
   useEffect(() => { refreshInstalled() }, [serverDir])
   const refreshFirewall = () => window.electronAPI.network.firewallStatus().then(setFirewall).catch(() => setFirewall(null))
   useEffect(() => { void refreshFirewall() }, [])
-  useEffect(() => { window.electronAPI.steamcmd.checkUpdate(serverDir).then(setServerUpdate).catch(() => undefined) }, [serverDir, installed])
+  const refreshUpdate = () => window.electronAPI.steamcmd.checkUpdate(serverDir).then(setServerUpdate).catch(() => undefined)
+  useEffect(() => { void refreshUpdate() }, [serverDir, installed])
+  // Steam's list of game versions, only once someone opens the advanced options
+  useEffect(() => {
+    if (!advanced || branches) return
+    window.electronAPI.steamcmd.branches().then(r => setBranches(r.branches || [])).catch(() => setBranches([]))
+  }, [advanced])
+
+  const pickBranch = async (name: string) => {
+    setBranchMsg('')
+    const r = await window.electronAPI.steamcmd.chooseBranch(serverDir, name === serverUpdate?.branch ? '' : name)
+    if (!r.success) { setBranchMsg(r.message || "Couldn't pick that."); return }
+    // new servers default to the build the branch is
+    await update({ buildVersion: buildOfBranch(name) })
+    await refreshUpdate()
+  }
 
   const allowFirewall = async () => {
     setFwBusy(true)
@@ -89,24 +106,59 @@ export default function AppSettings() {
                 : <><AlertCircle size={12} /> No server here yet</>}
             </p>
           </div>
-          {serverUpdate?.checked && (
-            <p className={`text-xs flex items-center gap-1 ${serverUpdate.updateAvailable ? 'text-pz-yellow' : 'text-pz-green'}`}>
-              {serverUpdate.updateAvailable ? <><AlertCircle size={12} /> A newer version is out, update it so friends on the new game version can join.</> : <><CheckCircle size={12} /> Up to date with the latest game version</>}
+          {serverUpdate?.installed && (
+            <p className="text-xs text-pz-subtext">
+              Game version <b className="text-pz-text">{shortVersion(serverUpdate.installedVersion) || `build ${serverUpdate.installed}`}</b>
+              {' · '}{serverUpdate.branch === 'public' ? 'the normal version' : <span className="text-pz-blue">{serverUpdate.branchLabel}</span>}
+              <span className="text-pz-muted"> (Steam branch {serverUpdate.branch}, build {serverUpdate.installed})</span>
             </p>
           )}
+          {serverUpdate?.branchMissing ? (
+            <p className="text-xs flex items-center gap-1 text-pz-red">
+              <AlertCircle size={12} /> Steam doesn't offer the "{serverUpdate.branch}" version anymore, so this install can't get updates. Pick another version below (Advanced).
+            </p>
+          ) : serverUpdate?.checked && (
+            <p className={`text-xs flex items-center gap-1 ${serverUpdate.updateAvailable ? 'text-pz-yellow' : 'text-pz-green'}`}>
+              {serverUpdate.updateAvailable
+                ? <><AlertCircle size={12} /> A newer version is out{serverUpdate.latestVersion ? ` (${shortVersion(serverUpdate.latestVersion)})` : ''}, update it so friends on the new game version can join.</>
+                : <><CheckCircle size={12} /> Up to date{serverUpdate.branch === 'public' ? ' with the latest game version' : ` on ${serverUpdate.branchLabel}`}</>}
+            </p>
+          )}
+          {serverUpdate?.behindPublic && (
+            <p className="text-xs text-pz-subtext flex items-start gap-1">
+              <Info size={12} className="mt-0.5 flex-shrink-0 text-pz-blue" />
+              Players on the normal version{serverUpdate.publicVersion ? ` (${shortVersion(serverUpdate.publicVersion)})` : ''} can't join servers on this install. {steamSwitchSteps(serverUpdate.branch)}
+            </p>
+          )}
+          {serverUpdate?.chosenBranch && (
+            <p className="text-xs text-pz-yellow flex items-center gap-1"><AlertCircle size={12} /> "Update server" switches it to {branches?.find(b => b.name === serverUpdate.chosenBranch)?.label || serverUpdate.chosenBranch}.</p>
+          )}
+          <button onClick={() => update({ askBeforeServerUpdate: settings?.askBeforeServerUpdate === false })} className="w-full flex items-center gap-3 text-left">
+            <div className={`w-10 h-5 rounded-full relative transition-colors flex-shrink-0 ${settings?.askBeforeServerUpdate !== false ? 'bg-pz-green' : 'bg-pz-border'}`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-pz-text transition-transform ${settings?.askBeforeServerUpdate !== false ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </div>
+            <div>
+              <div className="text-sm text-pz-text">Ask before updating the game server</div>
+              <div className="text-xs text-pz-muted">
+                {settings?.askBeforeServerUpdate !== false
+                  ? 'When the game gets an update, the server waits until you say so on its Overview. The worlds get backed up first.'
+                  : 'Updates go in by themselves at the next daily or mod update restart, with a backup first. Crash restarts never update.'}
+              </div>
+            </div>
+          </button>
           {settings?.steamManaged ? (
             <p className="text-xs text-pz-subtext">This server came from your Steam library, so Steam keeps it updated. Open Steam to update "Project Zomboid Dedicated Server".</p>
           ) : (<>
           <p className="text-xs text-pz-subtext">
-            When the game gets an update on Steam, update the server too, otherwise nobody can join. Stop your servers first.
+            When the game gets an update on Steam, update the server too, otherwise nobody can join. Stop your servers first, every world on this install gets backed up before the update.
           </p>
           <InstallRunner
-            key={`${serverDir}-${settings?.buildVersion}-${mode}`}
+            key={`${serverDir}-${settings?.buildVersion}-${mode}-${serverUpdate?.chosenBranch || ''}`}
             steamcmdDir={settings?.steamcmdDir || 'C:\\PZServerManager\\steamcmd'}
             serverDir={serverDir}
             buildVersion={settings?.buildVersion || 'b42'}
             mode={mode}
-            onDone={refreshInstalled}
+            onDone={() => { void refreshInstalled(); void refreshUpdate() }}
           />
           </>)}
         </div>
@@ -199,18 +251,28 @@ export default function AppSettings() {
           {advanced && (
             <div className="pt-2 space-y-3 border-t border-pz-border">
               <div>
-                <label className="label">Server build</label>
-                <div className="flex gap-2">
-                  {(['b42', 'b41'] as BuildVersion[]).map(v => (
-                    <button key={v} onClick={() => update({ buildVersion: v })} className={`flex-1 py-2 rounded-md border text-sm font-semibold transition-colors ${
-                      settings?.buildVersion === v ? 'bg-pz-green/20 border-pz-green text-pz-green' : 'border-pz-border text-pz-muted hover:border-pz-text'
-                    }`}>
-                      {v === 'b42' ? 'Build 42 (stable)' : 'Build 41 (legacy41 branch)'}
-                    </button>
-                  ))}
-                </div>
+                <label className="label">Game version (Steam branch)</label>
+                {branches === null ? (
+                  <p className="text-xs text-pz-muted flex items-center gap-2"><Loader size={12} className="animate-spin" /> Asking Steam which versions it has...</p>
+                ) : branches.length === 0 ? (
+                  <p className="text-xs text-pz-yellow">Couldn't ask Steam which versions it has. Check your internet connection.</p>
+                ) : (
+                  <select
+                    value={serverUpdate?.chosenBranch || serverUpdate?.branch || (settings?.buildVersion === 'b41' ? 'legacy41' : 'public')}
+                    onChange={e => pickBranch(e.target.value)}
+                    className="input"
+                  >
+                    {branches.filter(b => !b.pwdRequired).map(b => (
+                      <option key={b.name} value={b.name}>
+                        {b.name === 'public' ? 'Latest (normal version)' : b.label}{b.version && !b.label.startsWith(shortVersion(b.version) || '-') ? ` · ${shortVersion(b.version)}` : ''}{b.description && b.name !== 'public' && !/fall-?back/i.test(b.description) ? ` · ${b.description}` : ''}
+                      </option>
+                    ))}
+                    {serverUpdate?.branchMissing && <option value={serverUpdate.branch}>{serverUpdate.branch} (gone from Steam)</option>}
+                  </select>
+                )}
+                {branchMsg && <p className="text-xs text-pz-red mt-1">{branchMsg}</p>}
                 <p className="text-xs text-pz-muted mt-1">
-                  Changes which branch Install/Update downloads and the default for new servers. Switching an existing install needs an update run.
+                  Which version of the game this install runs. Players need the same one. Picking another one switches the install on the next "Update server" (every world on it is backed up first), and sets the default for new servers.
                 </p>
               </div>
               <div>
