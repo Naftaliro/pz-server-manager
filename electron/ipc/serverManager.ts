@@ -32,6 +32,7 @@ import { syncLocalMods } from './localMods'
 import { sharingWith, sameFolder } from '../../shared/dataFolder'
 import { StartWatch, quotedScriptLine, startFailureHint, requiredModHint, isProgressLine, type StartFailure } from './serverLog'
 import { startBlocker } from './busy'
+import { folderSize } from './folderSize'
 
 // 'starting' = java is up but still loading the world/mods, 'running' = friends can join
 type Status = 'starting' | 'running' | 'stopping' | 'stopped'
@@ -61,6 +62,10 @@ interface ServerProcess {
   lastLineAt: number
   lastNote: string
   slowNotice?: boolean
+  // the install's workshop folder size while the log is quiet (see checkSlowStart)
+  workshopBytes?: number
+  workshopCheckedAt?: number
+  measuringWorkshop?: boolean
   // the start failed and it's being shut down, nothing else should touch it
   failed?: boolean
   // the mod ids it was started with
@@ -482,8 +487,24 @@ function checkSlowStart(profileId: string, srv: ServerProcess) {
       `Still starting after ${SLOW_START_MINUTES} minutes. That can be normal the first time with lots of mods (the server may be downloading them). The last thing it wrote:`,
       srv.lastNote || 'Nothing in its log yet.', 'open-console')
   }
+  // a quiet log while the game downloads Workshop mods itself isn't stuck: the game prints a
+  // "Workshop: download x/y" line every 100 ms while it does (the QA logs never had more than
+  // 9 s without a line), but if it ever goes quiet, a growing workshop folder counts as
+  // progress too. Measured once a minute, and only while the log is quiet
+  const quiet = srv.lastLineAt ? Date.now() - srv.lastLineAt : 0
+  if (quiet > 60000 && !srv.measuringWorkshop && Date.now() - (srv.workshopCheckedAt || 0) > 60000) {
+    srv.measuringWorkshop = true
+    srv.workshopCheckedAt = Date.now()
+    folderSize(join(srv.serverDir, 'steamapps', 'workshop')).then(bytes => {
+      if (srv.workshopBytes !== undefined && bytes !== srv.workshopBytes) {
+        srv.lastLineAt = Date.now()
+        srv.lastNote = 'Downloading Workshop mods...'
+      }
+      srv.workshopBytes = bytes
+    }).catch(() => undefined).finally(() => { srv.measuringWorkshop = false })
+  }
   // only when there is a log to go by (custom setups may not have one)
-  if (srv.lastLineAt && minutes >= STUCK_MINUTES && Date.now() - srv.lastLineAt > STUCK_MINUTES * 60000) {
+  if (srv.lastLineAt && !srv.measuringWorkshop && minutes >= STUCK_MINUTES && Date.now() - srv.lastLineAt > STUCK_MINUTES * 60000) {
     void failStart(profileId, srv, {
       hint: `The server has been starting for ${Math.round(minutes)} minutes and hasn't written anything to its log for the last ${STUCK_MINUTES}, so it looks stuck and was stopped. The last thing it wrote:`,
       line: srv.lastNote,
