@@ -201,8 +201,11 @@ export function setupPlayitHandlers() {
   ipcMain.handle('playit:setup', async () => {
     const exe = await findPlayit()
     if (!exe) return { success: false, message: 'playit is not installed yet.' }
-    // a normal visible console window running their interactive setup
-    spawn('cmd.exe', ['/c', `start "playit.gg setup" "${exe}"`], { detached: true, stdio: 'ignore', windowsVerbatimArguments: true }).unref()
+    // a normal visible console window running their interactive setup. The path goes in as a
+    // variable so cmd never reads & ( ) ^ in it as part of the command (same as serverWindowCommand)
+    spawn('cmd.exe', ['/d /c start "playit.gg setup" "%PZM_PLAYIT%"'], {
+      detached: true, stdio: 'ignore', windowsVerbatimArguments: true, env: { ...process.env, PZM_PLAYIT: exe },
+    }).unref()
     return { success: true }
   })
 

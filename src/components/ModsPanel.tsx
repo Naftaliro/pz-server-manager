@@ -14,7 +14,7 @@ import {
   missingRequirements, disabledRequirements, isLocalMod, modKey, listProblems,
 } from '../lib/mods'
 import { patchProfile, formatBytes, formatModIds } from '../lib/profile'
-import { sortModList, orderModIds, orderedModMaps, diffSnapshot } from '../../shared/modCore'
+import { sortModList, orderModIds, orderedModMaps, diffSnapshot, parseModLines } from '../../shared/modCore'
 
 type SubTab = 'list' | 'browse' | 'pack' | 'import'
 
@@ -497,23 +497,6 @@ function Chip({ tone, children }: { tone: 'green' | 'yellow' | 'red' | 'blue' | 
 
 // ── Import / export ───────────────────────────────────────────────────────────
 
-function parseModLines(text: string): { workshopIds: string[]; modIds: string[] } {
-  const workshopIds: string[] = []
-  const modIds: string[] = []
-  for (const line of text.split(/\r?\n/)) {
-    const t = line.trim()
-    const val = t.split('=').slice(1).join('=').trim()
-    if (/^WorkshopItems\s*=/i.test(t) && val) workshopIds.push(...val.split(';').map(s => s.trim()).filter(Boolean))
-    // B42 ini files put a \ in front of each id, we store them without it
-    if (/^Mods\s*=/i.test(t) && val) modIds.push(...val.split(';').map(s => s.trim().replace(/^\\+/, '')).filter(Boolean))
-  }
-  // a bare list of ids or workshop links works too
-  if (workshopIds.length === 0) {
-    for (const m of text.matchAll(/(?:id=)?(\d{8,12})/g)) if (!workshopIds.includes(m[1])) workshopIds.push(m[1])
-  }
-  return { workshopIds, modIds }
-}
-
 function ImportExport({ profile }: { profile: ServerProfile }) {
   const [text, setText] = useState('')
   const [msg, setMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
@@ -523,9 +506,10 @@ function ImportExport({ profile }: { profile: ServerProfile }) {
   const exportText = `WorkshopItems=${profile.mods.map(m => m.workshopId).filter(Boolean).join(';')}\nMods=${formatModIds(orderModIds(profile.mods).order, profile.buildVersion)}`
 
   const runImport = async (input: string) => {
-    const { workshopIds, modIds } = parseModLines(input)
+    const { workshopIds, modIds, skipped } = parseModLines(input)
+    const skippedNote = skipped ? ` Skipped ${skipped} entr${skipped === 1 ? 'y' : 'ies'} in WorkshopItems= that ${skipped === 1 ? "isn't a workshop ID" : "aren't workshop IDs"}.` : ''
     if (workshopIds.length === 0) {
-      setMsg({ tone: 'error', text: 'No workshop IDs found. Paste the WorkshopItems= line from a server .ini, or a list of workshop links.' })
+      setMsg({ tone: 'error', text: `No workshop IDs found. Paste the WorkshopItems= line from a server .ini, or a list of workshop links.${skippedNote}` })
       return
     }
     setWorking(true)
@@ -550,7 +534,7 @@ function ImportExport({ profile }: { profile: ServerProfile }) {
           }),
         }))
       }
-      setMsg({ tone: 'ok', text: `Added ${added} mod${added === 1 ? '' : 's'} (${workshopIds.length - added} were already in your list). They're downloading now.` })
+      setMsg({ tone: 'ok', text: `Added ${added} mod${added === 1 ? '' : 's'} (${workshopIds.length - added} were already in your list). They're downloading now.${skippedNote}` })
       setText('')
     } catch (e) {
       setMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) })

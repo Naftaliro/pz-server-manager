@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { join, dirname } from 'path'
+import { join, dirname, win32 } from 'path'
 import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { spawn, execFile } from 'child_process'
 import https from 'https'
@@ -8,13 +8,54 @@ import { folderSize } from './folderSize'
 import { loadSettings, steamcmdExe } from './appSettings'
 import { PZ_APP_ID } from './modManager'
 import { backupAfterDownload } from './modBackups'
+import { isWorkshopId } from '../../shared/modCore'
 
 const STEAMCMD_URL = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 const PZ_SERVER_APP_ID = '380870'
 
 // B42 is the default public branch now, B41 lives on the legacy41 beta
-function branchArgs(buildVersion?: string): string {
-  return buildVersion === 'b41' ? ' -beta legacy41' : ''
+function branchArgs(buildVersion?: string): string[] {
+  return buildVersion === 'b41' ? ['-beta', 'legacy41'] : []
+}
+
+// What goes on SteamCMD's command line. SteamCMD runs without a shell (so nothing in here can
+// start another program), and every +command and its arguments are separate items: SteamCMD
+// puts them back together itself, and a path with spaces goes in as one item
+export function installArgs(installDir: string, buildVersion?: string): string[] {
+  return [
+    '+force_install_dir', checkedDir(installDir),
+    '+login', 'anonymous',
+    '+app_update', PZ_SERVER_APP_ID, ...branchArgs(buildVersion), 'validate',
+    '+quit',
+  ]
+}
+
+export function workshopDownloadArgs(installDir: string, workshopIds: string[]): string[] {
+  const bad = workshopIds.find(id => !isWorkshopId(id))
+  if (bad !== undefined) throw new Error(`"${String(bad)}" isn't a Workshop item id.`)
+  return [
+    '+force_install_dir', checkedDir(installDir),
+    '+login', 'anonymous',
+    ...workshopIds.flatMap(id => ['+workshop_download_item', PZ_APP_ID, id]),
+    '+quit',
+  ]
+}
+
+// A folder for +force_install_dir: a full Windows path. No quotes (Windows doesn't allow
+// them in names) and nothing SteamCMD would read as the start of another +command
+function checkedDir(dir: string): string {
+  if (typeof dir !== 'string' || !win32.isAbsolute(dir) || /["\0\r\n]/.test(dir) || /(^|\s)\+/.test(dir)) {
+    throw new Error(`"${String(dir)}" isn't a folder SteamCMD can install into.`)
+  }
+  return dir
+}
+
+// SteamCMD is always our own steamcmd.exe, never some other program the window names
+function checkedSteamCmd(exe: string): string {
+  if (typeof exe !== 'string' || !win32.isAbsolute(exe) || win32.basename(exe).toLowerCase() !== 'steamcmd.exe') {
+    throw new Error(`"${String(exe)}" isn't SteamCMD.`)
+  }
+  return exe
 }
 
 // SteamCMD falls over if two copies run against the same folder, so everything goes through here one at a time
@@ -93,7 +134,7 @@ async function latestBuild(branch: string): Promise<string | null> {
     try { exe = await ensureSteamCmd(settings.steamcmdDir) } catch { return null }
   }
   let out = ''
-  await exclusive(() => runSteamCmd(exe, ['+login anonymous', '+app_info_update 1', `+app_info_print ${PZ_SERVER_APP_ID}`, '+quit'], (l) => { out += l + '\n' }))
+  await exclusive(() => runSteamCmd(exe, ['+login', 'anonymous', '+app_info_update', '1', '+app_info_print', PZ_SERVER_APP_ID, '+quit'], (l) => { out += l + '\n' }))
   // ..."branches" { "public" { "buildid" "123" ... } "legacy41" { ... } }
   const branches = out.slice(out.search(/"branches"/i))
   const block = branches.match(new RegExp(`"${branch}"\\s*\\{([^}]*)\\}`, 'i'))?.[1]
@@ -155,15 +196,18 @@ async function ensureSteamCmd(targetDir: string): Promise<string> {
 
   const zipPath = join(targetDir, 'steamcmd.zip')
   await downloadFile(STEAMCMD_URL, zipPath)
-  await runCommand('powershell', ['-NoProfile', '-Command', `Expand-Archive -Path "${zipPath}" -DestinationPath "${targetDir}" -Force`])
+  // single-quoted for powershell, which reads nothing inside those but ''
+  const ps = (p: string) => `'${p.replace(/'/g, "''")}'`
+  await runCommand('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${ps(zipPath)} -DestinationPath ${ps(targetDir)} -Force`])
   fs.unlinkSync(zipPath)
   return exe
 }
 
-// Run steamcmd with the given +commands, feeding each output line to onLine
+// Run steamcmd with the given +commands, feeding each output line to onLine. No shell: the
+// arguments go to steamcmd as they are, so & | > and the like in them are just text
 function runSteamCmd(exe: string, args: string[], onLine: (line: string) => void): Promise<number | null> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(exe, args, { shell: true, cwd: dirname(exe), windowsHide: true })
+    const proc = spawn(checkedSteamCmd(exe), args, { cwd: dirname(exe), windowsHide: true })
     const handle = (prefix: string) => (data: Buffer) => {
       for (const line of data.toString().split(/\r?\n/)) {
         const trimmed = line.trim()
@@ -187,6 +231,8 @@ function runServerInstall(
 ) {
   return exclusive(async () => {
     try {
+      const args = installArgs(installDir, buildVersion)
+      checkedSteamCmd(steamcmdPath)
       if (!existsSync(installDir)) mkdirSync(installDir, { recursive: true })
 
       const sender = event.sender
@@ -197,12 +243,7 @@ function runServerInstall(
       sendProgress(`Install directory: ${installDir}`)
       sendProgress(`Branch: ${buildVersion === 'b41' ? 'legacy41 (Build 41)' : 'public (Build 42)'}`)
 
-      const code = await runSteamCmd(steamcmdPath, [
-        `+force_install_dir "${installDir}"`,
-        '+login anonymous',
-        `+app_update ${PZ_SERVER_APP_ID}${branchArgs(buildVersion)} validate`,
-        '+quit',
-      ], sendProgress)
+      const code = await runSteamCmd(steamcmdPath, args, sendProgress)
 
       // steamcmd exits 7 after a successful self-update, so trust the files over the exit code
       if (isServerInstalled(installDir) && (code === 0 || code === 7)) {
@@ -230,16 +271,24 @@ export function downloadMods(
   workshopIds: string[],
   send: (e: ModDownloadEvent) => void
 ): Promise<{ success: boolean; done: string[]; failed: string[]; message?: string }> {
+  // ids come from mod lists people paste in and packs other people made: only plain numbers
+  // get anywhere near SteamCMD
+  const list = Array.isArray(workshopIds) ? workshopIds : []
+  const bad = list.filter(id => !isWorkshopId(id)).map(String)
+  bad.forEach(id => send({ workshopId: id, state: 'failed', message: "That isn't a Workshop item id." }))
+  workshopIds = list.filter(isWorkshopId)
+  if (workshopIds.length === 0) {
+    return Promise.resolve({ success: bad.length === 0, done: [], failed: bad, message: bad.length ? "Those aren't Workshop item ids." : undefined })
+  }
   return exclusive(async () => {
     const settings = loadSettings()
     let exe = steamcmdExe(settings)
     const installDir = settings.serverInstallPath
-    if (!existsSync(exe)) {
-      try {
-        exe = await ensureSteamCmd(settings.steamcmdDir)
-      } catch (e) {
-        return { success: false, done: [], failed: workshopIds, message: `Couldn't get SteamCMD: ${e instanceof Error ? e.message : String(e)}` }
-      }
+    try {
+      checkedDir(installDir)
+      if (!existsSync(exe)) exe = await ensureSteamCmd(settings.steamcmdDir)
+    } catch (e) {
+      return { success: false, done: [], failed: [...bad, ...workshopIds], message: `Couldn't get SteamCMD: ${e instanceof Error ? e.message : String(e)}` }
     }
     if (!existsSync(installDir)) mkdirSync(installDir, { recursive: true })
 
@@ -271,12 +320,7 @@ export function downloadMods(
     const errors: Record<string, string> = {}
     try {
       for (let attempt = 1; attempt <= 4 && pending.length > 0; attempt++) {
-        await runSteamCmd(exe, [
-          `+force_install_dir "${installDir}"`,
-          '+login anonymous',
-          ...pending.map(id => `+workshop_download_item ${PZ_APP_ID} ${id}`),
-          '+quit',
-        ], (line) => {
+        await runSteamCmd(exe, workshopDownloadArgs(installDir, pending), (line) => {
           const ok = line.match(/Success\. Downloaded item (\d+)/i)
           if (ok) {
             done.add(ok[1])
@@ -297,7 +341,7 @@ export function downloadMods(
     for (const id of pending) {
       send({ workshopId: id, state: 'failed', message: errors[id] || 'Download failed' })
     }
-    return { success: pending.length === 0, done: [...done], failed: pending }
+    return { success: pending.length === 0 && bad.length === 0, done: [...done], failed: [...bad, ...pending] }
   })
 }
 
@@ -321,7 +365,7 @@ function downloadFile(url: string, dest: string): Promise<void> {
 
 function runCommand(cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(cmd, args, { shell: true, windowsHide: true })
+    const proc = spawn(cmd, args, { windowsHide: true })
     proc.on('close', (code) => {
       if (code === 0) resolve()
       else reject(new Error(`Command failed with code ${code}`))

@@ -1,7 +1,7 @@
 import { useAppStore } from '../store/useAppStore'
 import type { ModEntry, ModFileEntry, ServerProfile } from '../store/useAppStore'
 import { patchProfile } from './profile'
-import { enabledIds, orderModIds, wrongBuildMods, isListSorted, type OrderProblem } from '../../shared/modCore'
+import { enabledIds, orderModIds, wrongBuildMods, isListSorted, isWorkshopId, type OrderProblem } from '../../shared/modCore'
 
 export { enabledIds }
 
@@ -109,7 +109,7 @@ export async function addModsToProfile(profileId: string, items: WorkshopModDeta
   const profile = useAppStore.getState().profiles.find(p => p.id === profileId)
   if (!profile) return 0
   const existing = new Set(profile.mods.map(m => m.workshopId))
-  const fresh = items.filter(d => !existing.has(d.workshopId))
+  const fresh = items.filter(d => isWorkshopId(d.workshopId) && !existing.has(d.workshopId))
   if (fresh.length === 0) return 0
   // check again inside the patch, a quick double click could have added it already
   await patchProfile(profileId, p => ({
@@ -137,8 +137,9 @@ let downloading: Promise<unknown> = Promise.resolve()
 
 // Download through SteamCMD into the server folder, then read the real ids out of the files.
 // Calls are chained so two quick adds don't fight over steamcmd.
-export function downloadAndScan(profileId: string, workshopIds: string[]): Promise<void> {
+export function downloadAndScan(profileId: string, ids: string[]): Promise<void> {
   const { setModDownload } = useAppStore.getState()
+  const workshopIds = ids.filter(isWorkshopId)
   workshopIds.forEach(id => setModDownload(id, { state: 'queued' }))
 
   const job = downloading.then(async () => {

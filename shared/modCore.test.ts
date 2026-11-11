@@ -2,8 +2,43 @@ import { describe, it, expect } from 'vitest'
 import {
   parseModInfo, formatModIds, orderModIds, sortModList, isListSorted, buildMapLine, orderedModMaps,
   wrongBuildMods, diffSnapshot, parseWorkshopIds, resolvePack, comparePack,
+  isWorkshopId, parseModLines, withValidWorkshopIds,
   type ModLike, type ModInfo,
 } from './modCore'
+
+// security review F1: a "server config" someone shares, with a shell command in the mod list
+const POISONED_INI = 'PVP=true\nWorkshopItems=0;1 & calc.exe;2392709985;3" & whoami & "\nMods=\\A;\\B'
+
+describe('workshop ids', () => {
+  it('only takes plain numbers up to 20 digits', () => {
+    for (const ok of ['0', '2392709985', '1'.repeat(20)]) expect(isWorkshopId(ok)).toBe(true)
+    for (const bad of ['', ' 1', '1 ', '1 & calc', '1;2', '1\r\n2', '-1', '1e5', '1'.repeat(21), '..\\x', 123, null, undefined]) {
+      expect(isWorkshopId(bad)).toBe(false)
+    }
+  })
+
+  it('Import mods drops WorkshopItems entries that are not ids, and says how many', () => {
+    const r = parseModLines(POISONED_INI)
+    expect(r.workshopIds).toEqual(['0', '2392709985'])
+    expect(r.skipped).toBe(2)
+    expect(r.modIds).toEqual(['A', 'B'])
+  })
+
+  it('does not dig numbers out of a WorkshopItems line that was all junk', () => {
+    expect(parseModLines('WorkshopItems=x & ping 12345678901').workshopIds).toEqual([])
+    // a bare list of links still works
+    expect(parseModLines('https://steamcommunity.com/sharedfiles/filedetails/?id=2392709985').workshopIds).toEqual(['2392709985'])
+  })
+
+  it('the modpack box ignores the same junk', () => {
+    expect(parseWorkshopIds(POISONED_INI)).toEqual(['0', '2392709985'])
+  })
+
+  it('drops list entries with a bad workshop id, keeps local mods', () => {
+    const list = [{ workshopId: '1' }, { workshopId: '' }, { workshopId: '2 & calc' }, { workshopId: 5 }]
+    expect(withValidWorkshopIds(list)).toEqual([{ workshopId: '1' }, { workshopId: '' }])
+  })
+})
 
 const info = (id: string, extra: Partial<ModInfo> = {}): ModInfo => ({ id, name: id, requires: [], maps: [], ...extra })
 const mod = (workshopId: string, infos: ModInfo[], enabled = infos.map(i => i.id)): ModLike => ({

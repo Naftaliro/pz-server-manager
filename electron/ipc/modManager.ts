@@ -3,7 +3,7 @@ import https from 'https'
 import { existsSync, readdirSync, statSync, type Dirent } from 'fs'
 import { readdir, readFile, stat } from 'fs/promises'
 import { join } from 'path'
-import { parseModInfo, resolvePack, type ModInfo, type Build } from '../../shared/modCore'
+import { parseModInfo, resolvePack, isWorkshopId, type ModInfo, type Build } from '../../shared/modCore'
 import { loadSettings } from './appSettings'
 
 export { parseModInfo }
@@ -55,15 +55,17 @@ function httpsPost(url: string, body: string): Promise<string> {
   })
 }
 
-export async function fetchModDetails(ids: string[]): Promise<WorkshopDetails[]> {
+export async function fetchModDetails(allIds: string[]): Promise<WorkshopDetails[]> {
   const out: WorkshopDetails[] = []
+  // they go into the request body as they are
+  const ids = (Array.isArray(allIds) ? allIds : []).filter(isWorkshopId)
   for (let i = 0; i < ids.length; i += 100) {
     const batch = ids.slice(i, i + 100)
     const params = [`itemcount=${batch.length}`, ...batch.map((id, n) => `publishedfileids[${n}]=${id}`)].join('&')
     const raw = await httpsPost('https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/', params)
     const details: Array<Record<string, unknown>> = JSON.parse(raw)?.response?.publishedfiledetails || []
     for (const item of details) {
-      if (item.result !== 1) continue
+      if (item.result !== 1 || !isWorkshopId(String(item.publishedfileid))) continue
       out.push({
         workshopId: String(item.publishedfileid),
         name: String(item.title || 'Unknown Mod'),
@@ -82,6 +84,7 @@ export async function fetchModDetails(ids: string[]): Promise<WorkshopDetails[]>
 // Returns the children if this is a collection, otherwise null.
 // filetype 2 on a child means it's a collection itself
 async function fetchCollection(id: string): Promise<Array<{ id: string; collection: boolean }> | null> {
+  if (!isWorkshopId(id)) return null
   const raw = await httpsPost(
     'https://api.steampowered.com/ISteamRemoteStorage/GetCollectionDetails/v1/',
     `collectioncount=1&publishedfileids[0]=${id}`
@@ -90,6 +93,7 @@ async function fetchCollection(id: string): Promise<Array<{ id: string; collecti
   if (!entry || entry.result !== 1 || !Array.isArray(entry.children)) return null
   return (entry.children as Array<{ publishedfileid: string; filetype?: number }>)
     .map(c => ({ id: String(c.publishedfileid), collection: Number(c.filetype) === 2 }))
+    .filter(c => isWorkshopId(c.id))
 }
 
 async function fetchCollectionChildren(id: string): Promise<string[] | null> {
@@ -112,7 +116,7 @@ export async function fetchRequiredItems(ids: string[], apiKey: string): Promise
         const d = byId.get(id)
         if (!d || Number(d.result) !== 1) { out[id] = null; continue }
         const children = Array.isArray(d.children) ? (d.children as Array<{ publishedfileid: string }>) : []
-        out[id] = children.map(c => String(c.publishedfileid))
+        out[id] = children.map(c => String(c.publishedfileid)).filter(isWorkshopId)
       }
     } catch {
       batch.forEach(id => { out[id] = null })
@@ -145,7 +149,7 @@ export async function resolveModPack(ids: string[], withDeps: boolean) {
   // children say whether they're collections, so normal items don't cost an API call
   const knownItems = new Set<string>()
   const apiKey = loadSettings().steamApiKey?.trim()
-  const pack = await resolvePack(ids, {
+  const pack = await resolvePack((Array.isArray(ids) ? ids : []).filter(isWorkshopId), {
     collectionChildren: async (id) => {
       if (knownItems.has(id)) return null
       const children = await fetchCollection(id)
@@ -311,7 +315,8 @@ export function setupModHandlers() {
     try {
       const contentDir = workshopContentDir(serverInstallPath)
       const found: Record<string, ModInfo[]> = {}
-      await Promise.all(workshopIds.map(async (id) => {
+      // each id is a folder name under the workshop folder, so numbers only (no ..\)
+      await Promise.all((Array.isArray(workshopIds) ? workshopIds : []).filter(isWorkshopId).map(async (id) => {
         const itemDir = join(contentDir, id)
         if (existsSync(itemDir)) found[id] = await scanWorkshopItem(itemDir)
       }))

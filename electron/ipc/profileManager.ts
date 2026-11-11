@@ -3,7 +3,7 @@ import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { randomBytes, randomUUID } from 'crypto'
 import { loadSettings } from './appSettings'
-import type { ModInfo, ModSnapshot } from '../../shared/modCore'
+import { withValidWorkshopIds, type ModInfo, type ModSnapshot } from '../../shared/modCore'
 import { dropOldSandboxDefaults, SANDBOX_SETTINGS_VERSION } from '../../shared/profileMigrations'
 import type { SettingsTree } from '../../shared/gameConfig'
 
@@ -177,6 +177,9 @@ function loadProfiles(): ServerProfile[] {
   } catch {
     return []
   }
+  // a workshop id that isn't a number never came from Steam (an import from before ids were
+  // checked, a hand edit), and it would end up on SteamCMD's command line
+  for (const p of profiles) if (Array.isArray(p.mods)) p.mods = withValidWorkshopIds(p.mods)
   // once per profile: clear out the sandbox values older versions filled in for everyone
   const stale = profiles.filter(p => (p.sandboxSettingsVersion || 1) < SANDBOX_SETTINGS_VERSION)
   if (stale.length > 0) {
@@ -245,6 +248,7 @@ export function setupProfileHandlers() {
 
   ipcMain.handle('profiles:save', async (_event, profile: ServerProfile) => {
     const profiles = loadProfiles()
+    if (Array.isArray(profile.mods)) profile = { ...profile, mods: withValidWorkshopIds(profile.mods) }
     const now = new Date().toISOString()
 
     // Always deep-merge defaults so the stored profile has a COMPLETE settings set.

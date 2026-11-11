@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { spawn, exec, execFile, ChildProcess } from 'child_process'
+import { spawn, execFile, ChildProcess } from 'child_process'
 import { join } from 'path'
 import { existsSync, writeFileSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync, unlinkSync, readdirSync } from 'fs'
 import { cp, rm } from 'fs/promises'
@@ -13,7 +13,7 @@ import { rconCommand } from './rcon'
 import { knownPlayers } from './playerDb'
 import { isServerInstalled, checkServerUpdate } from './steamcmd'
 import { workshopContentDir, scanWorkshopItem, fetchModDetails, PZ_APP_ID } from './modManager'
-import { formatModIds, orderModIds, buildMapLine, enabledIds, wrongBuildMods, type ModSnapshot } from '../../shared/modCore'
+import { formatModIds, orderModIds, buildMapLine, enabledIds, wrongBuildMods, isWorkshopId, type ModSnapshot } from '../../shared/modCore'
 import { loadSettings } from './appSettings'
 import { ensurePlayitRunning, PLAYIT_INTEGRATION } from './playit'
 import { firewallStatus } from './network'
@@ -86,7 +86,7 @@ export function iniSettingsFor(profile: ServerProfile): Record<string, unknown> 
     UDPPort: profile.udpPort,
     MaxPlayers: profile.maxPlayers,
     Password: profile.serverPassword || '',
-    WorkshopItems: profile.mods.map(m => m.workshopId).filter(Boolean).join(';'),
+    WorkshopItems: profile.mods.map(m => m.workshopId).filter(isWorkshopId).join(';'),
     Mods: formatModIds(orderModIds(profile.mods).order, profile.buildVersion),
     Map: mapLine(profile),
   }
@@ -220,7 +220,8 @@ function findLauncherWindowPid(javaPid: number): Promise<number | null> {
 
 function killProcessTree(pid: number): Promise<void> {
   return new Promise((resolve) => {
-    exec(`taskkill /PID ${pid} /T /F`, { timeout: 10000, windowsHide: true }, () => resolve())
+    if (!Number.isInteger(pid) || pid <= 0) return resolve()
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 10000, windowsHide: true }, () => resolve())
   })
 }
 

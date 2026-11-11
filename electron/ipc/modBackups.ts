@@ -7,7 +7,7 @@ import { loadSettings, saveSettings } from './appSettings'
 import { workshopContentDir, scanModFolders, listDirs } from './modManager'
 import { resolveDataPath } from './serverManager'
 import { folderSize, forgetFolderSize } from './folderSize'
-import type { ModInfo } from '../../shared/modCore'
+import { isWorkshopId, type ModInfo } from '../../shared/modCore'
 
 // Mod backups: a copy of every Workshop mod the server downloads, in one folder. If a mod
 // gets pulled from the Workshop, or an update breaks something, the saved copy can be put
@@ -38,6 +38,8 @@ async function stamp(dir: string): Promise<string> {
 }
 
 function versions(workshopId: string): Array<BackupMeta & { dir: string }> {
+  // the id is a folder name in here, so numbers only (no ..\)
+  if (!isWorkshopId(workshopId)) return []
   const itemDir = join(backupDir(), workshopId)
   if (!existsSync(itemDir)) return []
   const out: Array<BackupMeta & { dir: string }> = []
@@ -55,8 +57,9 @@ let queue: Promise<unknown> = Promise.resolve()
 
 export function backupItem(workshopId: string, name?: string): Promise<'saved' | 'same' | 'missing'> {
   const job = queue.then(async () => {
+    if (!isWorkshopId(workshopId)) return 'missing' as const
     const src = join(workshopContentDir(loadSettings().serverInstallPath), workshopId)
-    if (!/^\d+$/.test(workshopId) || !existsSync(src)) return 'missing' as const
+    if (!existsSync(src)) return 'missing' as const
     const s = await stamp(src)
     const have = versions(workshopId)
     if (have[0]?.stamp === s) return 'same' as const
@@ -83,7 +86,7 @@ export function listBackups(): Record<string, { name?: string; savedAt: string; 
   const dir = backupDir()
   const out: Record<string, { name?: string; savedAt: string; versions: number }> = {}
   if (!existsSync(dir)) return out
-  for (const id of readdirSync(dir).filter(n => /^\d+$/.test(n))) {
+  for (const id of readdirSync(dir).filter(isWorkshopId)) {
     const v = versions(id)
     if (v.length) out[id] = { name: v[0].name, savedAt: v[0].savedAt, versions: v.length }
   }

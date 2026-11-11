@@ -5,7 +5,7 @@ import { getProfile, patchProfile } from './profileManager'
 import { scanModFolders, fetchModDetails } from './modManager'
 import { resolveDataPath } from './serverManager'
 import { loadSettings } from './appSettings'
-import { enabledIds } from '../../shared/modCore'
+import { enabledIds, isWorkshopId } from '../../shared/modCore'
 import { buildWorkshopTxt, readWorkshopId, cantUploadReason } from '../../shared/workshopItem'
 
 // ---------------------------------------------------------------------------
@@ -82,6 +82,7 @@ export async function uploadStatus(profileId: string, modId: string) {
 // Put the Workshop item in place of the local copy in the server's mod list.
 // Same mod id, so load order and requirements don't change
 export async function useWorkshopCopy(profileId: string, modId: string, workshopId: string) {
+  if (!isWorkshopId(workshopId)) throw new Error(`"${String(workshopId)}" isn't a Workshop item id.`)
   const { profile, entry, folder } = await findLocalMod(profileId, modId)
   // the game writes an id even when the upload fails (it tried to update an item that
   // isn't yours), so don't trust it blindly

@@ -2,7 +2,7 @@
 // in one file the host can send (later: fetched by a short code). Pure logic only,
 // the Electron side does the file reading / hashing / writing.
 
-import type { Build } from './modCore'
+import { isWorkshopId, type Build } from './modCore'
 
 export const PACK_FORMAT = 'pzm-server-pack'
 export const PACK_VERSION = 1
@@ -87,7 +87,8 @@ function hostErrors(h: unknown, localFolders: PackLocalMod[]): string[] {
   const host = h as Partial<PackHost>
   if (!host || typeof host !== 'object') return ["The pack's server settings aren't valid."]
   const errors: string[] = []
-  if (!Array.isArray(host.mods) || !host.mods.every(m => m && typeof m.name === 'string' && typeof m.modId === 'string' && /^\d*$/.test(String(m.workshopId)))) {
+  // workshopId '' = a fix mod from localMods
+  if (!Array.isArray(host.mods) || !host.mods.every(m => m && typeof m.name === 'string' && typeof m.modId === 'string' && (m.workshopId === '' || isWorkshopId(m.workshopId)))) {
     errors.push("The pack's mod list for hosting isn't valid.")
   } else {
     const localIds = new Set(localFolders.map(m => m.id))
@@ -136,7 +137,7 @@ export function validatePack(raw: unknown, forHosting = false): string[] {
     return errors
   }
   for (const w of p.workshopItems) {
-    if (!w || !/^\d+$/.test(String(w.workshopId))) { errors.push('The pack has a bad Workshop item in it.'); break }
+    if (!w || !isWorkshopId(w.workshopId)) { errors.push('The pack has a bad Workshop item in it.'); break }
   }
   if (forHosting) {
     if (!p.host) errors.push("This pack only has what players need. Ask the host to make a new one with \"Include the server's settings\" ticked.")

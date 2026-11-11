@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Home, RotateCw, Search, Plus, Check, Loader, AlertTriangle, Layers, ExternalLink } from 'lucide-react'
 import { formatBytes } from '../lib/profile'
+import { isWorkshopId } from '../../shared/modCore'
 
 // The real Steam Workshop in a webview. We don't scrape anything to find mods any more:
 // the user browses Steam normally and we watch which item page they're on, then use
@@ -175,7 +176,7 @@ export default function WorkshopBrowser({ addedIds, buildVersion, onAdd, searchR
         requiredIds = await wv()?.executeJavaScript(REQUIRED_SCRIPT).catch(() => []) || []
         if (requiredIds.length === 0 && tries >= 2) break
       }
-      requiredIds = requiredIds.filter(r => r !== id)
+      requiredIds = (Array.isArray(requiredIds) ? requiredIds : []).filter(r => isWorkshopId(r) && r !== id)
       if (requiredIds.length > 0) {
         const req = await window.electronAPI.mods.getDetails(requiredIds)
         setItem(prev => (prev && prev.id === id ? { ...prev, required: req.mods } : prev))
@@ -224,6 +225,8 @@ export default function WorkshopBrowser({ addedIds, buildVersion, onAdd, searchR
       if (!e.message.startsWith(MSG_PREFIX)) return
       try {
         const msg = JSON.parse(e.message.slice(MSG_PREFIX.length))
+        // anything on the page can log this, so only take a real workshop id from it
+        if (!isWorkshopId(msg.id)) return
         if (msg.type === 'add') quickAdd(msg.id)
         if (msg.type === 'open') view.loadURL(`https://steamcommunity.com/sharedfiles/filedetails/?id=${msg.id}`)
       } catch { /* not ours */ }

@@ -26,6 +26,18 @@ export interface ModLike {
   maps?: string[]
 }
 
+// Workshop ids are plain numbers (Steam's are 64-bit, so 20 digits at most). They end up on
+// SteamCMD's command line, in folder names and in the .ini, so anything else gets turned away
+export function isWorkshopId(id: unknown): id is string {
+  return typeof id === 'string' && /^\d{1,20}$/.test(id)
+}
+
+// Drop list entries whose workshop id isn't one (a hand-edited profile, an odd import).
+// Local mods have no workshop id, those stay
+export function withValidWorkshopIds<T extends { workshopId?: unknown }>(mods: T[]): T[] {
+  return mods.filter(m => !m.workshopId || isWorkshopId(m.workshopId))
+}
+
 export function stripId(id: string): string {
   return id.trim().replace(/^\\+/, '')
 }
@@ -256,12 +268,38 @@ export function parseWorkshopIds(text: string): string[] {
   for (const line of text.split(/\r?\n/)) {
     const t = line.trim()
     if (/^WorkshopItems\s*=/i.test(t)) {
-      for (const id of t.split('=').slice(1).join('=').split(';').map(s => s.trim())) if (/^\d+$/.test(id) && !ids.includes(id)) ids.push(id)
+      for (const id of t.split('=').slice(1).join('=').split(';').map(s => s.trim())) if (isWorkshopId(id) && !ids.includes(id)) ids.push(id)
     }
   }
   if (ids.length > 0) return ids
   for (const m of text.matchAll(/(?:id=)?(\d{8,12})/g)) if (!ids.includes(m[1])) ids.push(m[1])
   return ids
+}
+
+// The Import mods box: WorkshopItems= and Mods= lines from someone's server .ini, or a bare
+// list of ids / workshop links. skipped = WorkshopItems entries that weren't workshop ids
+export function parseModLines(text: string): { workshopIds: string[]; modIds: string[]; skipped: number } {
+  const workshopIds: string[] = []
+  const modIds: string[] = []
+  let skipped = 0
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim()
+    const val = t.split('=').slice(1).join('=').trim()
+    if (/^WorkshopItems\s*=/i.test(t) && val) {
+      for (const id of val.split(';').map(s => s.trim()).filter(Boolean)) {
+        if (isWorkshopId(id)) workshopIds.push(id)
+        else skipped++
+      }
+    }
+    // B42 ini files put a \ in front of each id, we store them without it
+    if (/^Mods\s*=/i.test(t) && val) modIds.push(...val.split(';').map(s => s.trim().replace(/^\\+/, '')).filter(Boolean))
+  }
+  // a bare list of ids or workshop links works too (not when there was a WorkshopItems= line
+  // with junk in it: numbers inside the junk aren't a mod list)
+  if (workshopIds.length === 0 && skipped === 0) {
+    for (const m of text.matchAll(/(?:id=)?(\d{8,12})/g)) if (!workshopIds.includes(m[1])) workshopIds.push(m[1])
+  }
+  return { workshopIds, modIds, skipped }
 }
 
 // Walk collections (and collections inside collections), then required items of every mod,
