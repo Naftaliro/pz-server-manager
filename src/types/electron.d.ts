@@ -226,7 +226,8 @@ interface ElectronAPI {
     state: () => Promise<{ success: boolean; message?: string; gameFound?: boolean; gameDir?: string; dataDir?: string; workshopDownloaded?: string[] }>
     searchDrives: () => Promise<{ success: boolean; message?: string; found?: string[] }>
     useGameDir: (dir: string) => Promise<{ success: boolean; message?: string; gameDir?: string }>
-    listServers: () => Promise<{ success: boolean; message?: string; gameDir?: string; servers?: PlayServerInfo[] }>
+    // game: the player's installed build and Steam branch, null if it couldn't be read
+    listServers: () => Promise<{ success: boolean; message?: string; gameDir?: string; servers?: PlayServerInfo[]; game?: import('../../shared/gameVersion').ClientGame | null }>
     openPack: () => Promise<{ success: boolean; message?: string; cancelled?: boolean; saved?: { id: string } }>
     removeServer: (id: string) => Promise<{ success: boolean; message?: string }>
     setAccount: (id: string, account: { username: string; password: string }) => Promise<{ success: boolean; message?: string }>

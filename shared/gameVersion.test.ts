@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   parseVdf, parseBranches, branchFor, branchArgs, buildOfBranch, branchLabel, versionOf, worldVersionOf,
   versionFromLog, worldVersionFromMapT, serverVersionState, isBranchName, steamSwitchSteps, openBranches,
+  parseAppManifest, playerVersionCheck,
 } from './gameVersion'
 
 // trimmed from a real `+app_info_print 380870` on 2026-11-10, SteamCMD's chatter included
@@ -133,6 +134,40 @@ describe('version names', () => {
   it('says what players do in Steam', () => {
     expect(steamSwitchSteps('42.21')).toBe('In Steam: right-click Project Zomboid → Properties → Game Versions & Betas → pick 42.21.')
     expect(steamSwitchSteps('public')).toMatch(/"None"/)
+  })
+})
+
+describe("the player's game", () => {
+  const acf = (mounted: string | null, user: string | null) => `"AppState"
+{
+	"appid"		"108600"
+	"buildid"		"26486631"
+	${user === null ? '' : `"UserConfig"\n\t{\n\t\t"language"\t\t"english"\n\t\t"BetaKey"\t\t"${user}"\n\t}`}
+	${mounted === null ? '' : `"MountedConfig"\n\t{\n\t\t"language"\t\t"english"\n\t\t"BetaKey"\t\t"${mounted}"\n\t}`}
+}`
+
+  it('reads the build and branch from appmanifest_108600.acf', () => {
+    expect(parseAppManifest(acf('42.21', '42.21'))).toEqual({ buildId: '26486631', branch: '42.21', pendingBranch: undefined })
+    // the normal version has no BetaKey, or an empty one
+    expect(parseAppManifest(acf(null, null))).toEqual({ buildId: '26486631', branch: 'public', pendingBranch: undefined })
+    expect(parseAppManifest(acf('', ''))).toMatchObject({ branch: 'public' })
+  })
+
+  it('notices a branch picked in Steam that is still downloading', () => {
+    expect(parseAppManifest(acf('', '42.21'))).toMatchObject({ branch: 'public', pendingBranch: '42.21' })
+  })
+
+  it('tells the player exactly what to pick, never that the app does it', () => {
+    expect(playerVersionCheck({ branch: '42.21' }, { branch: 'public' })).toEqual({
+      kind: 'switch', branch: '42.21', steps: 'In Steam: right-click Project Zomboid → Properties → Game Versions & Betas → pick 42.21.',
+    })
+    expect(playerVersionCheck({ branch: 'public' }, { branch: '42.21' })).toMatchObject({ kind: 'switch', branch: 'public' })
+    expect(playerVersionCheck({ branch: '42.21' }, { branch: '42.21' })).toEqual({ kind: 'ok' })
+    expect(playerVersionCheck({ branch: '42.21' }, { branch: 'public', pendingBranch: '42.21' })).toEqual({ kind: 'downloading', branch: '42.21' })
+    // switched away and Steam hasn't caught up
+    expect(playerVersionCheck({ branch: '42.21' }, { branch: '42.21', pendingBranch: 'public' })).toMatchObject({ kind: 'switch' })
+    expect(playerVersionCheck(undefined, { branch: 'public' })).toEqual({ kind: 'unknown' })
+    expect(playerVersionCheck({ branch: 'public' }, null)).toEqual({ kind: 'unknown' })
   })
 })
 

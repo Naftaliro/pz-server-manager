@@ -3,7 +3,9 @@ import { join, dirname } from 'path'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync, renameSync } from 'fs'
 import { readdir, readFile, stat } from 'fs/promises'
-import { steamLibraries } from './steamcmd'
+import { steamLibraries, installedBuild, cachedBranches } from './steamcmd'
+import { learnedBuilds } from './gameBuilds'
+import { parseAppManifest, versionOf, shortVersion, type ClientGame } from '../../shared/gameVersion'
 import { scanModFolders, PZ_APP_ID } from './modManager'
 import { getProfile, getServerName, type ServerProfile } from './profileManager'
 import { resolveDataPath } from './serverManager'
@@ -13,7 +15,7 @@ import { parseIni, parseSandbox, deepMerge, type SettingsTree } from '../../shar
 import { steamImageUrl } from '../../shared/workshopItem'
 import {
   PACK_FORMAT, PACK_VERSION, PACK_MAX_BYTES, validatePack, cleanHostSettings, checkPack, modFingerprint, launchUrl, isSafeRelPath, accountProblem, parseJoinAddress, publicIni,
-  type ServerPack, type PackLocalMod, type PackHost, type ClientState,
+  packGameErrors, type ServerPack, type PackLocalMod, type PackHost, type ClientState, type PackGame,
 } from '../../shared/serverPack'
 
 // ---------------------------------------------------------------------------
@@ -138,6 +140,27 @@ function hostSection(profile: ServerProfile): PackHost {
   }
 }
 
+// The Steam branch and version the host's server runs, so players can check theirs matches
+function hostGame(profile: ServerProfile): PackGame | undefined {
+  const inst = installedBuild(profile.serverInstallPath)
+  if (!inst.buildId) return undefined
+  const version = shortVersion(versionOf(inst.buildId, { learned: learnedBuilds(), branches: cachedBranches() }))
+  const game: PackGame = { branch: inst.branch, buildId: inst.buildId, version }
+  // only what passes the same check a player's app does on the pack
+  return packGameErrors(game).length ? { branch: inst.branch } : game
+}
+
+// The player's game: which build and Steam branch Steam installed (appmanifest_108600.acf)
+export async function clientGame(): Promise<ClientGame | null> {
+  const game = await findGame()
+  if (!game) return null
+  try {
+    return parseAppManifest(readFileSync(join(game.library, 'steamapps', `appmanifest_${PZ_APP_ID}.acf`), 'utf-8'))
+  } catch {
+    return null
+  }
+}
+
 export async function buildPack(profileId: string, opts: { address?: string; includePassword?: boolean; includeSettings?: boolean }): Promise<ServerPack> {
   const profile = getProfile(profileId)
   if (!profile) throw new Error('That server profile no longer exists.')
@@ -177,6 +200,7 @@ export async function buildPack(profileId: string, opts: { address?: string; inc
       port: joinAt.port,
       password: opts.includePassword && profile.serverPassword ? profile.serverPassword : undefined,
       build: profile.buildVersion === 'b41' ? 'b41' : 'b42',
+      game: hostGame(profile),
     },
     workshopItems: profile.mods.filter(m => m.workshopId).map(m => ({ workshopId: m.workshopId, name: m.name })),
     mods: orderModIds(profile.mods).order,
@@ -306,7 +330,7 @@ export function setupClientHandlers(mainWindow: BrowserWindow | null) {
   ipcMain.handle('client:listServers', wrap(async () => {
     const saved = loadSaved()
     const state = await clientState(saved.flatMap(s => s.pack.localMods.map(m => m.folder)))
-    return { servers: saved.map(s => ({ ...s, check: checkPack(s.pack, state) })), gameDir: state.gameDir }
+    return { servers: saved.map(s => ({ ...s, check: checkPack(s.pack, state) })), gameDir: state.gameDir, game: await clientGame() }
   }))
 
   ipcMain.handle('client:openPack', wrap(async () => {

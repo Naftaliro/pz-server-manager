@@ -199,6 +199,44 @@ export function steamSwitchSteps(branch: string): string {
     : `In Steam: right-click Project Zomboid → Properties → Game Versions & Betas → pick ${branch}.`
 }
 
+// ── The player's own game ─────────────────────────────────────────────────────
+
+export interface ClientGame {
+  buildId?: string
+  // the branch the installed files are from ('' in Steam's file = the normal version)
+  branch: string
+  // picked in Steam but not downloaded yet
+  pendingBranch?: string
+}
+
+// Steam's appmanifest_108600.acf: "buildid", and "BetaKey" under MountedConfig (what's
+// installed) and UserConfig (what the player picked in Properties)
+export function parseAppManifest(acf: string): ClientGame {
+  const key = (section: string) => acf.match(new RegExp(`"${section}"\\s*\\{[^}]*?"BetaKey"\\s+"([^"]*)"`, 'i'))?.[1]
+  const buildId = acf.match(/"buildid"\s+"(\d+)"/i)?.[1]
+  const mounted = key('MountedConfig')
+  const picked = key('UserConfig')
+  const branch = (mounted ?? picked ?? '') || 'public'
+  const want = (picked ?? mounted ?? '') || 'public'
+  return { buildId: isBuildId(buildId) ? buildId : undefined, branch, pendingBranch: want !== branch ? want : undefined }
+}
+
+export type PlayerVersionCheck =
+  | { kind: 'ok' }
+  // the pack doesn't say (older app) or the game wasn't found
+  | { kind: 'unknown' }
+  // Steam is already getting the right one
+  | { kind: 'downloading'; branch: string }
+  | { kind: 'switch'; branch: string; steps: string }
+
+/** Is the player on the same game version (Steam branch) as the host's server? */
+export function playerVersionCheck(host: { branch?: string } | undefined, player: ClientGame | null): PlayerVersionCheck {
+  if (!host?.branch || !player) return { kind: 'unknown' }
+  if (player.branch === host.branch && (!player.pendingBranch || player.pendingBranch === host.branch)) return { kind: 'ok' }
+  if (player.pendingBranch === host.branch) return { kind: 'downloading', branch: host.branch }
+  return { kind: 'switch', branch: host.branch, steps: steamSwitchSteps(host.branch) }
+}
+
 // ── Has the server fallen behind? ─────────────────────────────────────────────
 
 export interface ServerVersionState {

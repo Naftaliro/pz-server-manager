@@ -4,6 +4,7 @@
 
 import { isWorkshopId, type Build } from './modCore'
 import { isSettingKey } from './gameConfig'
+import { isBranchName, isBuildId } from './gameVersion'
 
 export const PACK_FORMAT = 'pzm-server-pack'
 export const PACK_VERSION = 1
@@ -36,6 +37,10 @@ export interface ServerPack {
     port: number
     password?: string
     build: Build
+    // the host's game server: Steam branch, server build id and game version. Optional,
+    // packs from older versions don't have it. The build id is the dedicated server's, which
+    // isn't the same number as the game's, so players are compared by branch
+    game?: PackGame
   }
   workshopItems: Array<{ workshopId: string; name: string }>
   // Mods= order the server uses
@@ -45,6 +50,24 @@ export interface ServerPack {
   // everything needed to host a copy of the server. Optional, so packs without it (and
   // apps that don't know about it) still work for players
   host?: PackHost
+}
+
+export interface PackGame {
+  branch?: string
+  buildId?: string
+  version?: string
+}
+
+// a game version as people write it: 42.21, 42.22.2, 41.78.21
+const isVersion = (v: unknown) => typeof v === 'string' && /^\d{1,3}\.\d{1,4}(\.\d{1,4})?$/.test(v)
+
+export function packGameErrors(game: unknown): string[] {
+  if (game === undefined) return []
+  const g = game as Record<string, unknown>
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return ["The game version in this pack isn't valid."]
+  const ok = (g.branch === undefined || isBranchName(g.branch)) && (g.buildId === undefined || isBuildId(g.buildId)) && (g.version === undefined || isVersion(g.version))
+  const extra = Object.keys(g).some(k => !['branch', 'buildId', 'version'].includes(k))
+  return ok && !extra ? [] : ["The game version in this pack isn't valid."]
 }
 
 export interface PackHost {
@@ -175,6 +198,8 @@ export function validatePack(raw: unknown, forHosting = false): string[] {
     if (address !== undefined && (typeof address !== 'string' || !/^[A-Za-z0-9.-]{1,253}$/.test(address))) errors.push("The server address in this pack isn't valid.")
     if (!Number.isInteger(port) || port < 1 || port > 65535) errors.push("The server port in this pack isn't valid.")
     if (password !== undefined && (typeof password !== 'string' || /[\s+]/.test(password) || password.startsWith('-'))) errors.push("The server password in this pack can't be used (no spaces or + allowed).")
+    // shown to the player and put in Steam instructions, so only plain names and numbers
+    errors.push(...packGameErrors(p.server.game))
   }
   if (!Array.isArray(p.workshopItems) || !Array.isArray(p.mods) || !Array.isArray(p.localMods) || !Array.isArray(p.maps)) {
     errors.push('The pack is missing its mod list.')

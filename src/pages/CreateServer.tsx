@@ -67,7 +67,24 @@ export default function CreateServer() {
     if (!r.success) { setPackError(r.message || "Couldn't open that pack."); return }
     if (r.cancelled || !r.pack?.host || !r.path) return
     if (r.droppedSettings?.length) { setLeftOut({ pack: r.pack, path: r.path, dropped: r.droppedSettings }); return }
-    await hostCopy(r.pack, r.path)
+    await checkVersion(r.pack, r.path)
+  }
+
+  // their server on another game version than this PC's server install: say so before making
+  // a copy that can't load their world or that their players can't join
+  const [versionWarn, setVersionWarn] = useState<{ pack: ServerPack; path: string; text: string } | null>(null)
+  const checkVersion = async (pack: ServerPack, path: string) => {
+    const theirs = pack.server.game?.branch
+    const mine = theirs ? await window.electronAPI.steamcmd.checkUpdate(settings?.serverInstallPath || 'C:\\PZServer').catch(() => null) : null
+    if (theirs && mine?.installed && mine.branch !== theirs) {
+      const name = (b: string) => (b === 'public' ? 'the normal version' : `the "${b}" version`)
+      setVersionWarn({
+        pack, path,
+        text: `Their server runs ${pack.server.game?.version ? `game ${pack.server.game.version}, ` : ''}${name(theirs)}. Your game server is on ${name(mine.branch)}. To match, pick it in App settings → Advanced → Game version and update the server, before or after making the copy.`,
+      })
+      return
+    }
+    await hostCopy(pack, path)
   }
 
   const hostCopy = async (pack: ServerPack, path: string) => {
@@ -238,8 +255,16 @@ export default function CreateServer() {
                 title="Some settings were left out"
                 message={leftOut ? `${leftOut.dropped.length} setting${leftOut.dropped.length === 1 ? '' : 's'} in this pack ${leftOut.dropped.length === 1 ? "isn't" : "aren't"} a normal server setting, so ${leftOut.dropped.length === 1 ? "it won't" : "they won't"} be copied: ${leftOut.dropped.slice(0, 5).join(', ')}${leftOut.dropped.length > 5 ? ', ...' : ''}. Only use packs from people you trust.` : ''}
                 confirmLabel="Host it without those"
-                onConfirm={() => { const l = leftOut; setLeftOut(null); if (l) void hostCopy(l.pack, l.path) }}
+                onConfirm={() => { const l = leftOut; setLeftOut(null); if (l) void checkVersion(l.pack, l.path) }}
                 onCancel={() => setLeftOut(null)}
+              />
+              <ConfirmDialog
+                isOpen={!!versionWarn}
+                title="Different game version"
+                message={versionWarn?.text || ''}
+                confirmLabel="Make the copy anyway"
+                onConfirm={() => { const v = versionWarn; setVersionWarn(null); if (v) void hostCopy(v.pack, v.path) }}
+                onCancel={() => setVersionWarn(null)}
               />
             </div>
           </div>

@@ -4,6 +4,7 @@ import {
   FileUp, Wrench, Info, ChevronDown, ChevronRight, Copy, RefreshCw, User,
 } from 'lucide-react'
 import { accountProblem, suggestPassword } from '../../shared/serverPack'
+import { playerVersionCheck, type ClientGame } from '../../shared/gameVersion'
 
 // Play mode: join a friend's server with the same mods. The host sends a server pack
 // (made in their Mods tab), this page compares it with this PC, installs the host's
@@ -11,6 +12,7 @@ import { accountProblem, suggestPassword } from '../../shared/serverPack'
 export default function Play() {
   const [servers, setServers] = useState<PlayServer[]>([])
   const [gameDir, setGameDir] = useState<string | undefined>()
+  const [game, setGame] = useState<ClientGame | null>(null)
   const [loading, setLoading] = useState(true)
   const [searching, setSearching] = useState(false)
   const [found, setFound] = useState<string[] | null>(null)
@@ -18,7 +20,7 @@ export default function Play() {
 
   const refresh = async () => {
     const r = await window.electronAPI.client.listServers()
-    if (r.success) { setServers(r.servers || []); setGameDir(r.gameDir) }
+    if (r.success) { setServers(r.servers || []); setGameDir(r.gameDir); setGame(r.game || null) }
     else setMsg({ tone: 'error', text: r.message || "Couldn't read your servers." })
     setLoading(false)
   }
@@ -65,7 +67,15 @@ export default function Play() {
           {loading ? (
             <p className="text-sm text-pz-muted flex items-center gap-2"><Loader size={14} className="animate-spin" /> Looking for Project Zomboid...</p>
           ) : gameDir ? (
-            <p className="text-sm text-pz-green flex items-center gap-2"><CheckCircle size={14} /> Found it: <span className="text-pz-subtext truncate">{gameDir}</span></p>
+            <>
+              <p className="text-sm text-pz-green flex items-center gap-2"><CheckCircle size={14} /> Found it: <span className="text-pz-subtext truncate">{gameDir}</span></p>
+              {game && (
+                <p className="text-xs text-pz-subtext">
+                  Version: {game.branch === 'public' ? 'the normal one' : <>the "{game.branch}" branch</>}
+                  {game.pendingBranch && <span className="text-pz-yellow"> (Steam is switching it to {game.pendingBranch === 'public' ? 'the normal one' : `"${game.pendingBranch}"`}, let it finish downloading)</span>}
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-sm text-pz-yellow flex items-center gap-2"><AlertTriangle size={14} /> Couldn't find Project Zomboid through Steam.</p>
           )}
@@ -103,7 +113,7 @@ export default function Play() {
               <p className="text-xs text-pz-muted">They make it in Knox Launcher: their server → Mods → Import / Export → Share with players.</p>
             </div>
           )}
-          {servers.map(s => <ServerCard key={s.id} server={s} gameFound={!!gameDir} onChange={refresh} />)}
+          {servers.map(s => <ServerCard key={s.id} server={s} gameFound={!!gameDir} game={game} onChange={refresh} />)}
         </div>
 
         <p className="text-xs text-pz-muted flex items-start gap-1.5">
@@ -115,8 +125,12 @@ export default function Play() {
   )
 }
 
-function ServerCard({ server, gameFound, onChange }: { server: PlayServer; gameFound: boolean; onChange: () => void }) {
+function ServerCard({ server, gameFound, game, onChange }: { server: PlayServer; gameFound: boolean; game: ClientGame | null; onChange: () => void }) {
   const { pack, check } = server
+  // same Steam branch as the host? Only Steam can switch it, the card says how
+  const version = playerVersionCheck(pack.server.game, gameFound ? game : null)
+  const hostVersion = pack.server.game?.version || (pack.server.game?.branch && pack.server.game.branch !== 'public' ? pack.server.game.branch : '')
+  const [stepsCopied, setStepsCopied] = useState(false)
   const [busy, setBusy] = useState<'' | 'install' | 'launch'>('')
   const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   const [open, setOpen] = useState(false)
@@ -178,7 +192,7 @@ function ServerCard({ server, gameFound, onChange }: { server: PlayServer; gameF
                 {address} <Copy size={10} /> {copied && <span className="text-pz-green">copied</span>}
               </button>
             ) : <span>No address in the pack, ask the host for it</span>}
-            <span>· {pack.server.build.toUpperCase()}</span>
+            <span>· {hostVersion ? `game ${hostVersion}` : pack.server.build.toUpperCase()}{pack.server.game?.branch && pack.server.game.branch !== 'public' ? ` (${pack.server.game.branch} branch)` : ''}</span>
             <span>· {pack.workshopItems.length} Workshop mods, {pack.localMods.length} fix{pack.localMods.length === 1 ? '' : 'es'}</span>
             {pack.server.password && <span>· password saved</span>}
           </div>
@@ -190,6 +204,30 @@ function ServerCard({ server, gameFound, onChange }: { server: PlayServer; gameF
           <Trash2 size={12} />
         </button>
       </div>
+
+      {version.kind === 'switch' && (
+        <div className="text-sm bg-pz-yellow/10 border border-pz-yellow/30 rounded-md px-3 py-2 space-y-1.5">
+          <p className="text-pz-text flex items-start gap-2">
+            <AlertTriangle size={14} className="text-pz-yellow flex-shrink-0 mt-0.5" />
+            <span>
+              This server runs {version.branch === 'public' ? 'the normal version of the game' : <>game {hostVersion || version.branch} (the "{version.branch}" version)</>},
+              and your game is on {game?.branch === 'public' ? 'the normal version' : `"${game?.branch}"`}. You can't join until they match.
+            </span>
+          </p>
+          <div className="flex items-start gap-2 bg-pz-darker border border-pz-border rounded-md px-3 py-1.5">
+            <span className="text-xs text-pz-text flex-1 select-text">{version.steps} Steam then downloads it.</span>
+            <button
+              onClick={async () => { await navigator.clipboard.writeText(version.steps); setStepsCopied(true); setTimeout(() => setStepsCopied(false), 1500) }}
+              className="text-pz-muted hover:text-pz-text flex-shrink-0" title="Copy"
+            >
+              {stepsCopied ? <CheckCircle size={12} className="text-pz-green" /> : <Copy size={12} />}
+            </button>
+          </div>
+        </div>
+      )}
+      {version.kind === 'downloading' && (
+        <p className="text-xs text-pz-yellow flex items-center gap-1.5"><Download size={12} /> Steam is getting the "{version.branch}" version this server runs. Let it finish downloading, then you can join.</p>
+      )}
 
       {needFixes.length > 0 ? (
         <div className="flex items-center gap-3 text-sm bg-pz-yellow/10 border border-pz-yellow/30 rounded-md px-3 py-2">

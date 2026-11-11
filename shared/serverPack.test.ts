@@ -214,3 +214,22 @@ describe('private settings in a pack', () => {
     expect(r.dropped).toEqual([])
   })
 })
+
+describe("the host's game version in a pack", () => {
+  const withGame = (game: unknown) => pack({ server: { name: 'VAN', address: '1.2.3.4', port: 16261, build: 'b42', game } as ServerPack['server'] })
+
+  it('is optional, older packs stay fine', () => {
+    expect(validatePack(pack())).toEqual([])
+    expect(validatePack(withGame({ branch: '42.21', buildId: '25485538', version: '42.21' }))).toEqual([])
+    expect(validatePack(withGame({ branch: 'public' }))).toEqual([])
+  })
+
+  it('turns away anything that could end up somewhere it should not', () => {
+    for (const bad of [
+      'public', ['public'], { branch: 'x +quit' }, { branch: '-beta' }, { buildId: '1 & calc' }, { version: '42.21 & del' },
+      { version: '<b>42</b>' }, { branch: 'public', extra: 'x' },
+    ]) {
+      expect(validatePack(withGame(bad))).toEqual(["The game version in this pack isn't valid."])
+    }
+  })
+})
