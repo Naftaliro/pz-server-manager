@@ -345,9 +345,18 @@ function tailLog(profileId: string, srv: ServerProcess) {
       srv.lastLineAt = Date.now()
       if (isProgressLine(line)) srv.lastNote = line
       if (srv.status === 'starting' && !srv.failed) {
-        if (READY_PATTERN.test(line)) markRunning(profileId, srv)
+        // another running server writes this same log ("Start anyway" on a shared data folder):
+        // its lines don't say which server they're from, so "SERVER STARTED" or "Server
+        // Terminated." could be the other one's. Then only this server's own signs count (its
+        // RCON answering, its java process going away), never a line that could be someone else's
+        const shared = [...runningServers].some(([id, s]) => id !== profileId && sameFolder(s.logPath, srv.logPath))
+        if (READY_PATTERN.test(line) && !shared) markRunning(profileId, srv)
         const failure = srv.watch.feed(line)
-        if (failure) void failStart(profileId, srv, { failure })
+        if (failure && !shared) void failStart(profileId, srv, { failure })
+        else if (failure) {
+          srv.watch = new StartWatch()
+          emitConsoleOutput(profileId, `[Knox] The log says a server gave up, but another server writes to the same log, so this one keeps going until it answers or its own process stops.`)
+        }
       }
       const required = requiredModHint(line, srv.modIds)
       if (required) {
