@@ -10,6 +10,7 @@ import {
 } from './steamcmd'
 import { loadSettings, steamcmdExe } from './appSettings'
 import { learnedBuilds, learnBuild } from './gameBuilds'
+import { isServerName } from './allowedPaths'
 import { folderSize, forgetFolderSize } from './folderSize'
 import {
   createBackup, listBackups, deleteBackup, restoreBackup, diskMap, usageOf, readWorldVersion, recoverInterrupted, worldDir, backupsDir,
@@ -29,8 +30,12 @@ let mainWindowRef: BrowserWindow | null = null
 
 const DEFAULT_EVERY_MINUTES = 30
 
+// the world is Saves\Multiplayer\<name>: an empty or odd name would make that the whole
+// Multiplayer folder (and a restore would replace it), so it has to be a plain server name
 function filesOf(profile: ServerProfile): ServerFiles {
-  return { dataDir: resolveDataPath(profile.worldSavePath), serverName: getServerName(profile) }
+  const serverName = getServerName(profile)
+  if (!isServerName(serverName)) throw new Error(`"${profile.name}" doesn't have a server name the game can use. Give it one on its Settings tab.`)
+  return { dataDir: resolveDataPath(profile.worldSavePath), serverName }
 }
 
 const say = (profileId: string, line: string) => emitConsoleOutput(profileId, `[Knox] ${line}`)
