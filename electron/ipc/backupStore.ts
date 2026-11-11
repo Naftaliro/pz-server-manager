@@ -361,6 +361,63 @@ export async function createBackup(f: ServerFiles, opts: CreateOptions): Promise
   return { manifest: { ...manifest, dir: join(root, id) }, linked, copied, linksUnsupported: !linksWork }
 }
 
+// ── Moving them ───────────────────────────────────────────────────────────────
+
+/**
+ * Copy a server's backups folder to another place (its own data folder). A plain copy would
+ * turn every hard link into a file of its own: 40 backups of a 1 GB world that share almost
+ * everything would take 40 GB. Here each file on disk is copied once, the first time it shows
+ * up (oldest backup first), and linked from there after that, so the copies share the same
+ * way the originals do. The file lists get the new copies' file ids.
+ */
+export async function copyBackupsFolder(src: string, dst: string, opsIn: Partial<FsOps> = {}): Promise<{ copied: number; linked: number }> {
+  const ops = { ...realOps, ...opsIn }
+  await fsp.mkdir(dst, { recursive: true })
+  // backup ids start with the time they were made, so by name is oldest first
+  const entries = (await fsp.readdir(src, { withFileTypes: true })).filter(e => !e.name.endsWith('.partial')).sort((a, b) => (a.name < b.name ? -1 : 1))
+  const firstCopy = new Map<string, string>()
+  let linksWork = true
+  let copied = 0, linked = 0
+  for (const e of entries) {
+    const from = join(src, e.name)
+    const to = join(dst, e.name)
+    if (e.isFile()) { await ops.copyFile(from, to); copied++; continue }
+    if (!e.isDirectory()) continue
+    const { files, dirs } = await walk(from)
+    await fsp.mkdir(to, { recursive: true })
+    for (const d of dirs) await fsp.mkdir(toPath(to, d), { recursive: true })
+    await pool(files, 16, async rel => {
+      const s = await fsp.stat(toPath(from, rel), { bigint: true })
+      const key = s.ino ? `${s.dev}:${s.ino}` : ''
+      const earlier = key && firstCopy.get(key)
+      if (earlier && linksWork) {
+        try {
+          await ops.link(earlier, toPath(to, rel))
+          linked++
+          return
+        } catch (err) {
+          if (NO_LINKS.has((err as NodeJS.ErrnoException).code || '')) linksWork = false
+          else throw err
+        }
+      }
+      await ops.copyFile(toPath(from, rel), toPath(to, rel))
+      copied++
+      if (key && !firstCopy.has(key)) firstCopy.set(key, toPath(to, rel))
+    })
+    // the file list says which file on disk each one is, those are the new ones now
+    const index = await readIndex(to)
+    if (index.size) {
+      const lines: string[] = []
+      for (const [rel, ent] of index) {
+        const now = await statOrNull(toPath(to, rel))
+        lines.push(`${rel}\t${ent.size}\t${ent.mtimeNs}\t${now ? now.dev : ent.dev}\t${now ? now.ino : ent.ino}`)
+      }
+      await fsp.writeFile(join(to, 'files.tsv'), lines.join('\n'), 'utf-8')
+    }
+  }
+  return { copied, linked }
+}
+
 // ── Restoring ─────────────────────────────────────────────────────────────────
 
 async function copyTree(src: string, dst: string, ops: FsOps) {

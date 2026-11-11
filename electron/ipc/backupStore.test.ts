@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSy
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
-  createBackup, listBackups, diskUsage, deleteBackup, restoreBackup, recoverInterrupted, readWorldVersion,
+  createBackup, listBackups, diskUsage, deleteBackup, restoreBackup, recoverInterrupted, readWorldVersion, copyBackupsFolder,
   worldDir, dbFile, configDir, backupsDir, type ServerFiles,
 } from './backupStore'
 
@@ -182,6 +182,56 @@ describe('listing and space used', () => {
     const dbs = Buffer.byteLength('accounts v1') + Buffer.byteLength('world players')
     expect(await diskUsage(list)).toBe(one.manifest.sizeBytes + changed + dbs)
     expect(await diskUsage(list.slice(0, 1))).toBe(list[0].sizeBytes)
+  })
+})
+
+describe('moving the backups to another folder', () => {
+  it('keeps the files the backups share as one file on disk, and the space they take', async () => {
+    await createBackup(f, opts(0))
+    writeFileSync(join(worldDir(f), 'map', '12', '35.bin'), 'chunk 12 35 changed!')
+    await createBackup(f, opts(30))
+    await createBackup(f, opts(60))
+    // an old full copy from 1.5.1 too
+    write('map/12/34.bin', 'old chunk', join(backupsDir(f), '2026-10-21_19-04-33', 'world'))
+    const to = join(base, 'Own', 'pzm-backups', 'Test')
+    const r = await copyBackupsFolder(backupsDir(f), to)
+    expect(r.linked).toBeGreaterThan(0)
+
+    const g = { dataDir: join(base, 'Own'), serverName: 'Test' }
+    const before = await listBackups(f)
+    const after = await listBackups(g)
+    expect(after.map(b => b.id)).toEqual(before.map(b => b.id))
+    // an unchanged chunk is the same file in all three new copies, and not the original's
+    const chunk = (dir: string) => join(dir, 'world', 'map', '12', '34.bin')
+    const news = after.filter(b => !b.legacy)
+    expect(new Set(news.map(b => ino(chunk(b.dir)))).size).toBe(1)
+    expect(ino(chunk(news[0].dir))).not.toBe(ino(chunk(before.find(b => !b.legacy)!.dir)))
+    // the changed one is shared by the last two only
+    const changed = (dir: string) => join(dir, 'world', 'map', '12', '35.bin')
+    expect(ino(changed(news[0].dir))).toBe(ino(changed(news[1].dir)))
+    expect(ino(changed(news[1].dir))).not.toBe(ino(changed(news[2].dir)))
+    // the old one is its own copy, nothing to share
+    expect(readFileSync(chunk(after.find(b => b.legacy)!.dir), 'utf-8')).toBe('old chunk')
+    // the file lists point at the new copies, so the space used adds up the same
+    expect(await diskUsage(after)).toBe(await diskUsage(before))
+    const tsv = readFileSync(join(news[0].dir, 'files.tsv'), 'utf-8')
+    expect(tsv).toContain(`\t${ino(chunk(news[0].dir))}`)
+    // and the next backup there links to them (the world moved along, same times)
+    const { renameSync } = await import('fs')
+    mkdirSync(join(g.dataDir, 'Saves'), { recursive: true })
+    renameSync(join(f.dataDir, 'Saves', 'Multiplayer'), join(g.dataDir, 'Saves', 'Multiplayer'))
+    const next = (await createBackup(g, opts(90)))!
+    expect(next.linked).toBeGreaterThan(0)
+  })
+
+  it('copies everything when the drive has no hard links', async () => {
+    await createBackup(f, opts(0))
+    await createBackup(f, opts(30))
+    const to = join(base, 'Fat', 'pzm-backups', 'Test')
+    const link = async () => { throw Object.assign(new Error('not supported'), { code: 'EPERM' }) }
+    const r = await copyBackupsFolder(backupsDir(f), to, { link })
+    expect(r.linked).toBe(0)
+    expect((await listBackups({ dataDir: join(base, 'Fat'), serverName: 'Test' })).length).toBe(2)
   })
 })
 

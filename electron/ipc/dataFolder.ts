@@ -4,6 +4,7 @@ import { existsSync, readdirSync, statSync } from 'fs'
 import { cp, mkdir, rm } from 'fs/promises'
 import { getProfile, listProfiles, patchProfile, getServerName } from './profileManager'
 import { folderSize } from './folderSize'
+import { copyBackupsFolder } from './backupStore'
 import { expandDataPath, ownDataFolder, sameFolder, sharingWith, serverFiles } from '../../shared/dataFolder'
 
 // Each server's data folder (see shared/dataFolder.ts for why new servers get their own)
@@ -45,10 +46,13 @@ export async function useOwnDataFolder(profileId: string, isRunning: (id: string
   }
 
   const items = serverFiles(serverName).filter(rel => existsSync(join(from, rel)))
+  const backups = `pzm-backups\\${serverName}`
   try {
     for (const rel of items) {
       await mkdir(dirname(join(to, rel)), { recursive: true })
-      await cp(join(from, rel), join(to, rel), { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true })
+      // backups share their unchanged files as hard links, a plain copy would make each one full size
+      if (rel === backups) await copyBackupsFolder(join(from, rel), join(to, rel))
+      else await cp(join(from, rel), join(to, rel), { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true })
     }
     for (const rel of items) {
       const [a, b] = await Promise.all([sizeOf(join(from, rel)), sizeOf(join(to, rel))])
