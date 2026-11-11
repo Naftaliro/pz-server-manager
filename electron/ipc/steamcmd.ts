@@ -11,6 +11,7 @@ import { backupAfterDownload } from './modBackups'
 import { isWorkshopId } from '../../shared/modCore'
 import { expandArchiveScript } from './winScripts'
 import { redirectTarget } from './httpsOnly'
+import { followFile } from './logTail'
 
 const STEAMCMD_URL = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 const PZ_SERVER_APP_ID = '380870'
@@ -275,12 +276,22 @@ function runServerInstall(
 
       const output: string[] = []
       const onLine = (line: string) => { output.push(line); if (output.length > 300) output.shift(); sendProgress(line) }
-      let code = await runSteamCmd(steamcmdPath, args, onLine)
-      // steamcmd exits 7 when it updated itself instead of doing the job (a SteamCMD folder from
-      // before the app bootstrapped it, or an update Valve pushed since): run it again, once
-      if (code === 7 && !isServerInstalled(installDir)) {
-        sendProgress('SteamCMD updated itself, starting the download again...')
+      // piped, SteamCMD holds its output back until it's done, so the "Update state ...
+      // progress: 42.17 (3003 / 7124 bytes)" lines only show up in its own console log (every 2 s)
+      const progress = followFile(join(dirname(steamcmdPath), 'logs', 'console_log.txt'), (line) => {
+        if (/Update state \(0x[0-9a-f]+\)/i.test(line)) sendProgress(line.replace(/^\[[^\]]*\]\s*/, ''))
+      })
+      let code: number | null
+      try {
         code = await runSteamCmd(steamcmdPath, args, onLine)
+        // steamcmd exits 7 when it updated itself instead of doing the job (a SteamCMD folder from
+        // before the app bootstrapped it, or an update Valve pushed since): run it again, once
+        if (code === 7 && !isServerInstalled(installDir)) {
+          sendProgress('SteamCMD updated itself, starting the download again...')
+          code = await runSteamCmd(steamcmdPath, args, onLine)
+        }
+      } finally {
+        progress.stop()
       }
 
       // steamcmd exits 7 after a successful self-update, so trust the files over the exit code
