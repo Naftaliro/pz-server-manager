@@ -302,10 +302,12 @@ function serversOn(installDir: string): ServerProfile[] {
 const hookSkips = new Set<string>()
 
 // before SteamCMD touches an install: every server on it is stopped and backed up, or it doesn't happen
-async function beforeServerUpdate(installDir: string) {
-  const servers = serversOn(installDir).filter(p => !hookSkips.has(p.id))
-  const running = servers.filter(p => serverStatus(p.id) !== 'stopped')
+function noneRunning(installDir: string) {
+  const running = serversOn(installDir).filter(p => !hookSkips.has(p.id) && serverStatus(p.id) !== 'stopped')
   if (running.length) throw new Error(`Stop ${running.map(p => `"${p.name}"`).join(', ')} first, the game server can't update while ${running.length === 1 ? 'it runs' : 'they run'}.`)
+}
+
+async function backUpFor(servers: ServerProfile[]): Promise<string[]> {
   for (const p of servers) {
     try {
       await takeBackup(p.id, 'before-game-update')
@@ -313,6 +315,21 @@ async function beforeServerUpdate(installDir: string) {
       throw new Error(`Couldn't back up "${p.name}" before the update, so nothing was updated: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
+  return servers.map(p => p.id)
+}
+
+const updateGuard = {
+  prepare: async (installDir: string) => {
+    noneRunning(installDir)
+    return backUpFor(serversOn(installDir).filter(p => !hookSkips.has(p.id)))
+  },
+  // it's SteamCMD's turn now: no server is allowed to start on it from the moment the update
+  // was asked for (busy.ts), but one could have been picked back up, or a server added
+  check: async (installDir: string, backedUp: string[]) => {
+    noneRunning(installDir)
+    await backUpFor(serversOn(installDir).filter(p => !hookSkips.has(p.id) && !backedUp.includes(p.id)))
+    noneRunning(installDir)
+  },
 }
 
 // Players get a warning in chat (like a planned restart) if anyone's on, then it stops
@@ -547,7 +564,7 @@ function summaryOf(b: StoredBackup) {
 
 export function setupBackupHandlers(mainWindow: BrowserWindow | null) {
   mainWindowRef = mainWindow
-  onBeforeServerUpdate(beforeServerUpdate)
+  onBeforeServerUpdate(updateGuard)
 
   // what's busy (busy.ts): Start buttons say why they're off, and a page that comes back to a
   // game update or rollback still going shows it instead of starting over

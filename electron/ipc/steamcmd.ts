@@ -76,10 +76,17 @@ function knownInstall(dir: unknown): string {
 }
 
 // Before an update or branch switch touches an install (backups.ts makes a backup of every
-// server on it). Throwing stops the update
-let beforeUpdate: ((installDir: string) => Promise<void>) | null = null
-export function onBeforeServerUpdate(fn: (installDir: string) => Promise<void>) {
-  beforeUpdate = fn
+// server on it). Throwing stops the update.
+//  prepare: when it's asked for: every server on it is stopped and backed up. Says which got a backup
+//  check:   once it's SteamCMD's turn (it can wait behind mod downloads): still nothing running
+//           on it, and every server on it now has its backup (one added meanwhile gets it here)
+export interface UpdateGuard {
+  prepare: (installDir: string) => Promise<string[]>
+  check: (installDir: string, backedUp: string[]) => Promise<void>
+}
+let updateGuard: UpdateGuard | null = null
+export function onBeforeServerUpdate(guard: UpdateGuard) {
+  updateGuard = guard
 }
 
 export function workshopDownloadArgs(installDir: string, workshopIds: string[]): string[] {
@@ -433,8 +440,11 @@ async function installNow(
     const mine = installedBuild(installDir)
     const target = branchFor({ chosen: branch || chosenBranch(installDir), installed: mine.buildId ? mine.branch : null, build: buildVersion })
     const args = installArgs(installDir, target)
-    if (isUpdate || isServerInstalled(installDir)) await beforeUpdate?.(installDir)
+    const guarded = (isUpdate || isServerInstalled(installDir)) && !!updateGuard
+    const backedUp = guarded ? await updateGuard!.prepare(installDir) : []
     return await exclusive(async () => {
+      // it may have waited a while for its turn: checked again right before SteamCMD starts
+      if (guarded) await updateGuard!.check(installDir, backedUp)
       onStart()
       if (!existsSync(installDir)) mkdirSync(installDir, { recursive: true })
 

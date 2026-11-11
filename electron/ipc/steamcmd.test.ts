@@ -3,7 +3,93 @@ import { tmpdir } from 'os'
 
 vi.mock('electron', () => ({ ipcMain: { handle: () => undefined }, app: { getPath: () => tmpdir(), isPackaged: false } }))
 
-const { installArgs, workshopDownloadArgs, downloadMods, installFailureMessage, worthRetrying } = await import('./steamcmd')
+const { installArgs, workshopDownloadArgs, downloadMods, installFailureMessage, worthRetrying, runServerInstall, onBeforeServerUpdate } = await import('./steamcmd')
+const { installJob } = await import('./busy')
+
+// A stand-in steamcmd.exe: a copy of node.exe that runs fake-steamcmd.js first (NODE_OPTIONS).
+// Each run takes the next step of the plan: the exit code, and the build and branch it leaves
+// in the install's appmanifest (none = it didn't touch the install)
+type Step = { code: number; build?: string; branch?: string; say?: string }
+const FAKE = `
+const fs = require('fs'), path = require('path')
+const plan = JSON.parse(fs.readFileSync(process.env.FAKE_STEAM_PLAN, 'utf-8'))
+const runs = path.join(path.dirname(process.env.FAKE_STEAM_PLAN), 'runs.txt')
+const n = fs.existsSync(runs) ? fs.readFileSync(runs, 'utf-8').split('\\n').filter(Boolean).length : 0
+fs.appendFileSync(runs, process.argv.slice(1).join(' ') + '\\n')
+const step = plan[Math.min(n, plan.length - 1)]
+const dir = process.argv[process.argv.indexOf('+force_install_dir') + 1]
+if (step.build) {
+  fs.mkdirSync(path.join(dir, 'steamapps'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'StartServer64.bat'), 'rem')
+  fs.writeFileSync(path.join(dir, 'steamapps', 'appmanifest_380870.acf'), '"AppState"\\n{\\n\\t"buildid"\\t\\t"' + step.build + '"\\n' + (step.branch && step.branch !== 'public' ? '\\t"UserConfig"\\n\\t{\\n\\t\\t"BetaKey"\\t\\t"' + step.branch + '"\\n\\t}\\n' : '') + '}\\n')
+}
+if (step.say) console.log(step.say)
+process.exit(step.code)
+`
+let fakeDir = ''
+async function fakeSteam(plan: Step[], installed?: { build: string; branch?: string }) {
+  const { mkdtempSync, writeFileSync, copyFileSync, mkdirSync, existsSync } = await import('fs')
+  const { join } = await import('path')
+  if (!fakeDir || !existsSync(join(fakeDir, 'steamcmd.exe'))) {
+    fakeDir = mkdtempSync(join(tmpdir(), 'pzm-fakesteam-'))
+    copyFileSync(process.execPath, join(fakeDir, 'steamcmd.exe'))
+    writeFileSync(join(fakeDir, 'fake-steamcmd.js'), FAKE)
+  }
+  const work = mkdtempSync(join(tmpdir(), 'pzm-fakerun-'))
+  writeFileSync(join(work, 'plan.json'), JSON.stringify(plan))
+  const installDir = join(work, 'server')
+  if (installed) {
+    mkdirSync(join(installDir, 'steamapps'), { recursive: true })
+    writeFileSync(join(installDir, 'StartServer64.bat'), 'rem')
+    writeFileSync(join(installDir, 'steamapps', 'appmanifest_380870.acf'), `"AppState"\n{\n\t"buildid"\t\t"${installed.build}"\n${installed.branch && installed.branch !== 'public' ? `\t"UserConfig"\n\t{\n\t\t"BetaKey"\t\t"${installed.branch}"\n\t}\n` : ''}}\n`)
+  }
+  process.env.FAKE_STEAM_PLAN = join(work, 'plan.json')
+  process.env.NODE_OPTIONS = `--require ${join(fakeDir, 'fake-steamcmd.js')}`
+  const { readFileSync } = await import('fs')
+  const runs = () => { try { return readFileSync(join(work, 'runs.txt'), 'utf-8').split('\n').filter(Boolean).length } catch { return 0 } }
+  return { exe: join(fakeDir, 'steamcmd.exe'), installDir, runs }
+}
+
+describe.runIf(process.platform === 'win32')('updating a server install', () => {
+  const restoreEnv = { ...process.env }
+  const done = () => { process.env.NODE_OPTIONS = restoreEnv.NODE_OPTIONS || ''; if (!restoreEnv.NODE_OPTIONS) delete process.env.NODE_OPTIONS }
+
+  it("checks again that nothing runs on it once it's SteamCMD's turn, and stops if something does", async () => {
+    const f = await fakeSteam([{ code: 0, build: '200' }], { build: '100' })
+    const order: string[] = []
+    let running = false
+    onBeforeServerUpdate({
+      prepare: async (dir) => { order.push('prepare'); expect(installJob(dir)).toBeTruthy(); return ['a'] },
+      check: async (_dir, backedUp) => {
+        order.push(`check:${backedUp.join(',')}`)
+        if (running) throw new Error('Stop "Friday" first, the game server can\'t update while it runs.')
+      },
+    })
+    try {
+      // something got going on it while the update waited
+      running = true
+      const lines: string[] = []
+      const r = await runServerInstall(f.exe, f.installDir, l => lines.push(l), true)
+      expect(r).toEqual({ success: false, message: 'Stop "Friday" first, the game server can\'t update while it runs.' })
+      expect(order).toEqual(['prepare', 'check:a'])
+      expect(f.runs()).toBe(0)
+      expect(installJob(f.installDir)).toBeUndefined()
+
+      // two in a row: the second one checks when its turn comes, after the first is done
+      running = false
+      order.length = 0
+      const g = await fakeSteam([{ code: 0, build: '200' }], { build: '100' })
+      const one = runServerInstall(g.exe, g.installDir, l => { if (/Starting server update/.test(l)) order.push('run') }, true)
+      const two = runServerInstall(g.exe, g.installDir, l => { if (/Starting server update/.test(l)) order.push('run') }, true)
+      await Promise.all([one, two])
+      expect(order).toEqual(['prepare', 'prepare', 'check:a', 'run', 'check:a', 'run'])
+      expect(g.runs()).toBe(2)
+    } finally {
+      onBeforeServerUpdate({ prepare: async () => [], check: async () => undefined })
+      done()
+    }
+  }, 60000)
+})
 
 describe('installFailureMessage', () => {
   it("doesn't blame the internet for SteamCMD restarting after its own update", () => {
