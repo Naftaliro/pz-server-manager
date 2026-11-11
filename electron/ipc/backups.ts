@@ -183,9 +183,11 @@ function backupUsage(profile: ServerProfile): Promise<number> {
 /**
  * Right before a start: a backup of the world as the last run left it. If the game build
  * changed since then, this is the last chance to keep the world as the old version wrote it
- * (the new one converts it on load, for good), so that one is made even with backups off.
+ * (the new one converts it on load, for good), so that one is made even with backups off,
+ * and when it fails the start stops there (a message to show, null = go ahead) unless
+ * withoutBackup says the user wants it anyway. Any other backup failing is only a warning.
  */
-export async function backupBeforeStart(profile: ServerProfile): Promise<void> {
+export async function backupBeforeStart(profile: ServerProfile, opts: { withoutBackup?: boolean } = {}): Promise<string | null> {
   // in the queue: a rollback or restore still going finishes first (its own backup would
   // count as "fresh" below), and this never tidies up after one that's half way
   await oneAtATime(profile.id, async () => {
@@ -199,13 +201,22 @@ export async function backupBeforeStart(profile: ServerProfile): Promise<void> {
       if (gameChanged) say(profile.id, `The game server changed version since this world last ran, backing it up first.`)
       await takeBackup(profile.id, gameChanged ? 'before-game-update' : 'start')
     } catch (e) {
-      say(profile.id, `⚠ Backup failed: ${e instanceof Error ? e.message : String(e)}`)
+      const why = e instanceof Error ? e.message : String(e)
+      say(profile.id, `⚠ Backup failed: ${why}`)
+      if (gameChanged && !opts.withoutBackup) {
+        const learned = learnedBuilds()
+        const was = shortVersion(profile.lastRunGame?.version || versionOf(profile.lastRunGame?.buildId, { learned, branches: cachedBranches() }))
+        const now = shortVersion(versionOf(inst.buildId, { learned, branches: cachedBranches() }))
+        return `Couldn't back up the world before ${now ? `game ${now}` : 'the new game version'} runs it for the first time (${why.replace(/\.$/, '')}). `
+          + `It converts the world${was ? ` from ${was}` : ''} for good, so without this backup it can't go back. Free up some space and start again, or start anyway without a backup.`
+      }
     }
   }
   // from here on this build is the one that last touched the world
   lastLaunchAt.set(profile.id, Date.now())
   const version = versionOf(inst.buildId, { learned: learnedBuilds(), branches: cachedBranches() })
   if (inst.buildId) patchProfile(profile.id, { lastRunGame: { buildId: inst.buildId, branch: inst.branch, version } })
+  return null
 }
 
 const timers = new Map<string, NodeJS.Timeout>()

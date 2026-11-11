@@ -99,7 +99,8 @@ interface ElectronAPI {
     }>
   }
   server: {
-    start: (profileId: string) => Promise<{ success: boolean; message: string }>
+    // needsConfirm: the backup before a game version change failed, withoutBackup starts anyway
+    start: (profileId: string, opts?: { withoutBackup?: boolean }) => Promise<{ success: boolean; message: string; needsConfirm?: 'no-backup' }>
     stop: (profileId: string) => Promise<{ success: boolean; message: string }>
     restart: (profileId: string) => Promise<{ success: boolean; message: string }>
     getStatus: (profileId: string) => Promise<string>

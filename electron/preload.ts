@@ -88,7 +88,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Server management
   server: {
-    start: (profileId: string) => ipcRenderer.invoke('server:start', profileId),
+    start: (profileId: string, opts?: { withoutBackup?: boolean }) => ipcRenderer.invoke('server:start', profileId, opts),
     stop: (profileId: string) => ipcRenderer.invoke('server:stop', profileId),
     restart: (profileId: string) => ipcRenderer.invoke('server:restart', profileId),
     getStatus: (profileId: string) => ipcRenderer.invoke('server:getStatus', profileId),

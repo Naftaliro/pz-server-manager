@@ -16,21 +16,28 @@ export default function StartButton({ profile, className = '', big = false }: { 
   // its game files are updating or its world is being rolled back: not now, and why
   const { blocked } = useBusyFor(profile)
 
-  const start = async (force = false) => {
+  // the backup before a new game version converts the world failed: Start anyway means without it
+  const [noBackup, setNoBackup] = useState(false)
+
+  const start = async (force = false, withoutBackup = false) => {
     setBusy(true)
     setError('')
     try {
       if (!force) {
         const found = await window.electronAPI.server.preflight(profile.id)
         if (found.some(i => i.level === 'error')) {
+          setNoBackup(false)
           setIssues(found)
           return
         }
       }
       setIssues(null)
       clearProblems(profile.id)
-      const result = await window.electronAPI.server.start(profile.id)
-      if (!result.success) setError(result.message)
+      const result = await window.electronAPI.server.start(profile.id, withoutBackup ? { withoutBackup: true } : undefined)
+      if (result.needsConfirm === 'no-backup') {
+        setNoBackup(true)
+        setIssues([{ level: 'error', message: result.message }])
+      } else if (!result.success) setError(result.message)
     } finally {
       setBusy(false)
     }
@@ -89,8 +96,8 @@ export default function StartButton({ profile, className = '', big = false }: { 
             <div className="flex items-start gap-3 mb-4">
               <div className="w-10 h-10 rounded-full bg-pz-red/20 text-pz-red flex items-center justify-center flex-shrink-0"><AlertTriangle size={20} /></div>
               <div className="flex-1">
-                <h3 className="font-semibold text-pz-text">Hold on, this server won't start properly yet</h3>
-                <p className="text-sm text-pz-subtext mt-1">Fix these first:</p>
+                <h3 className="font-semibold text-pz-text">{noBackup ? "The world couldn't be backed up" : "Hold on, this server won't start properly yet"}</h3>
+                <p className="text-sm text-pz-subtext mt-1">{noBackup ? 'So it was left off:' : 'Fix these first:'}</p>
               </div>
               <button onClick={() => setIssues(null)} className="text-pz-muted hover:text-pz-text"><X size={16} /></button>
             </div>
@@ -104,7 +111,7 @@ export default function StartButton({ profile, className = '', big = false }: { 
               ))}
             </div>
             <div className="flex justify-end gap-2">
-              <button onClick={() => start(true)} className="btn-ghost text-xs">Start anyway</button>
+              <button onClick={() => start(true, noBackup)} className="btn-ghost text-xs">Start anyway</button>
               <button onClick={() => setIssues(null)} className="btn-primary">OK</button>
             </div>
           </div>

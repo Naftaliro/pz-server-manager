@@ -930,7 +930,8 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
 // ---------------------------------------------------------------------------
 // Start / stop
 // ---------------------------------------------------------------------------
-async function startServer(profileId: string): Promise<{ success: boolean; message: string }> {
+// withoutBackup: the user said to start even though the backup before a game version change failed
+async function startServer(profileId: string, opts: { withoutBackup?: boolean } = {}): Promise<{ success: boolean; message: string; needsConfirm?: 'no-backup' }> {
   try {
     const existing = runningServers.get(profileId)
     if (existing && existing.status !== 'stopped') {
@@ -1018,8 +1019,13 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
       serverName, serverDir, startBat: startBatName, adminPassword, cacheDir: dataPath,
     }))
 
-    // before this game build gets its hands on the world (it converts older worlds for good)
-    await backupBeforeStart(profile)
+    // before this game build gets its hands on the world (it converts older worlds for good).
+    // No backup before a version change: not without the user saying so
+    const noBackup = await backupBeforeStart(profile, { withoutBackup: opts.withoutBackup })
+    if (noBackup) {
+      emitConsoleOutput(profileId, `[Knox] Didn't start: ${noBackup}`)
+      return { success: false, message: noBackup, needsConfirm: 'no-backup' }
+    }
 
     // last session's log is still sitting there and has its own "SERVER STARTED" in it,
     // so clear it (PZ makes a fresh one) or skip past it if something has it locked
@@ -1192,7 +1198,7 @@ function getLanIps(): string[] {
 export function setupServerHandlers(mainWindow: BrowserWindow | null) {
   mainWindowRef = mainWindow
 
-  ipcMain.handle('server:start', async (_event, profileId: string) => startServer(profileId))
+  ipcMain.handle('server:start', async (_event, profileId: string, opts?: { withoutBackup?: unknown }) => startServer(profileId, { withoutBackup: opts?.withoutBackup === true }))
   ipcMain.handle('server:stop', async (_event, profileId: string) => stopServer(profileId))
 
   ipcMain.handle('server:restart', async (_event, profileId: string) => {
