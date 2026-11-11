@@ -166,7 +166,7 @@ describe('listing and space used', () => {
     mkdirSync(join(backupsDir(f), 'random folder'), { recursive: true })
     await createBackup(f, opts(0))
     const list = await listBackups(f)
-    expect(list.map(b => b.reason)).toEqual(['scheduled', 'imported-legacy'])
+    expect(list.map(b => b.reason)).toEqual(['scheduled', 'manual'])
     expect(list[1]).toMatchObject({ legacy: true, hasPlayersDb: true, game: { worldVersion: 249 } })
     // half-made ones are cleaned up by the next backup
     expect(existsSync(join(backupsDir(f), '2026-11-10_11-00-00_start.partial'))).toBe(false)

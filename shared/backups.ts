@@ -124,13 +124,17 @@ export function stampDate(id: string): Date | null {
   return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : null
 }
 
+// what 1.5.1 and older put after the time in a backup's folder name ("" for a start backup)
+const LEGACY_REASONS: Record<string, BackupReason> = { manual: 'manual', 'before-restore': 'before-restore' }
+
 /** A backup from before manifests (world/ + players.db), described from its folder name */
 export function legacyManifest(id: string, serverName: string, extra: Partial<Pick<BackupManifest, 'sizeBytes' | 'hasPlayersDb'>> & { worldVersion?: number } = {}): BackupManifest | null {
   const at = isBackupId(id) ? stampDate(id) : null
   if (!at) return null
+  const label = id.match(/^[\d-]+_[\d-]+_(.+)$/)?.[1] || ''
   return {
     format: MANIFEST_FORMAT, version: MANIFEST_VERSION, id, createdAt: at.toISOString(),
-    reason: 'imported-legacy', serverName, game: { worldVersion: extra.worldVersion }, mods: [], configFiles: [],
+    reason: LEGACY_REASONS[label] || 'imported-legacy', serverName, game: { worldVersion: extra.worldVersion }, mods: [], configFiles: [],
     hasPlayersDb: !!extra.hasPlayersDb, sizeBytes: extra.sizeBytes || 0, newBytes: extra.sizeBytes || 0, files: 0, legacy: true,
   }
 }
@@ -142,6 +146,8 @@ export interface RetentionItem {
   // ms
   createdAt: number
   reason: BackupReason
+  // a world-only backup from 1.5.1 or older
+  legacy?: boolean
 }
 
 export interface RetentionOptions {
@@ -172,13 +178,18 @@ function bucket(ms: number, size: 'hour' | 'day' | 'week'): string {
  * made, the newest 3 from before a game update, the newest one from before a rollback (what
  * "Undo" goes back to) and the newest backup of all. Then, with a disk limit, the oldest of
  * the rest go until it fits.
+ *
+ * Backups from 1.5.1 and older are kept until the user deletes them: that version already
+ * kept only the last few (5 by default, 20 at most), so they're a handful the user counted on
+ * that were on the disk before. They don't count towards the disk limit either, or a big
+ * old world would squeeze out every new backup
  */
 export function planRetention(items: RetentionItem[], opts: RetentionOptions): { keep: string[]; remove: string[] } {
   const sorted = [...items].sort((a, b) => b.createdAt - a.createdAt)
   const kept = new Set<string>()
   const protectedIds = new Set<string>()
   if (sorted[0]) protectedIds.add(sorted[0].id)
-  for (const it of sorted) if (it.reason === 'manual') protectedIds.add(it.id)
+  for (const it of sorted) if (it.reason === 'manual' || it.legacy) protectedIds.add(it.id)
   sorted.filter(it => it.reason === 'before-game-update').slice(0, 3).forEach(it => protectedIds.add(it.id))
   const undo = sorted.find(it => it.reason === 'before-rollback' || it.reason === 'before-restore')
   if (undo) protectedIds.add(undo.id)
@@ -200,8 +211,9 @@ export function planRetention(items: RetentionItem[], opts: RetentionOptions): {
   if (opts.capBytes && opts.capBytes > 0 && opts.usage) {
     // oldest first, never the protected ones
     const removable = sorted.filter(it => kept.has(it.id) && !protectedIds.has(it.id)).reverse()
+    const legacy = new Set(sorted.filter(it => it.legacy).map(it => it.id))
     for (const it of removable) {
-      if (opts.usage([...kept]) <= opts.capBytes) break
+      if (opts.usage([...kept].filter(id => !legacy.has(id))) <= opts.capBytes) break
       kept.delete(it.id)
     }
   }

@@ -160,7 +160,7 @@ async function prune(profileId: string) {
     const chrono = [...list].reverse()
     usage = (ids) => usageOf(chrono.filter(b => ids.includes(b.id)).map(b => maps.get(b.id)!))
   }
-  const plan = planRetention(list.map(b => ({ id: b.id, createdAt: Date.parse(b.createdAt), reason: b.reason })), { now: Date.now(), capBytes, usage })
+  const plan = planRetention(list.map(b => ({ id: b.id, createdAt: Date.parse(b.createdAt), reason: b.reason, legacy: !!b.legacy })), { now: Date.now(), capBytes, usage })
   for (const id of plan.remove) await deleteBackup(filesOf(profile), id)
 }
 

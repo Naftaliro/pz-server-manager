@@ -84,6 +84,32 @@ describe('retention', () => {
     // a limit it can't reach still keeps the protected ones
     expect(planRetention(items, { now: NOW, capBytes: 1, usage }).keep).toEqual(['1h-scheduled', '5h-manual'])
   })
+
+  // 1.5.1 named them <stamp>, <stamp>_manual and <stamp>_before-restore and kept the last few
+  const fromOldVersion = (ids: string[]): RetentionItem[] => ids.map(id => {
+    const m = legacyManifest(id, 'S')!
+    return { id, createdAt: Date.parse(m.createdAt), reason: m.reason, legacy: true }
+  })
+
+  it('keeps every backup from 1.5.1 after the update, the ones made by hand too', () => {
+    const now = new Date(2026, 10, 11, 12, 0, 0).getTime()
+    const old = ['2026-11-08_10-00-00', '2026-11-08_10-30-00_manual', '2026-11-08_11-00-00', '2026-10-02_09-00-00_manual', '2026-11-08_09-00-00_before-restore', '2026-09-01_08-00-00']
+    const items = fromOldVersion(old)
+    expect(items.map(i => i.reason)).toEqual(['imported-legacy', 'manual', 'imported-legacy', 'manual', 'before-restore', 'imported-legacy'])
+    // the first 1.6 backups, then weeks of them
+    items.push({ id: '2026-11-11_12-00-00_start', createdAt: now, reason: 'start' })
+    expect(planRetention(items, { now }).remove).toEqual([])
+    expect(planRetention(items, { now: now + 60 * DAY }).remove).toEqual([])
+  })
+
+  it("doesn't count backups from 1.5.1 towards the disk limit", () => {
+    const items = [...fromOldVersion(['2026-11-01_10-00-00', '2026-11-02_10-00-00']), item(1), item(2), item(3)]
+    // the old ones are full copies of 100 bytes, the new ones 10 each
+    const usage = (ids: string[]) => ids.reduce((n, id) => n + (id.startsWith('2026') ? 100 : 10), 0)
+    const r = planRetention(items, { now: NOW, capBytes: 20, usage })
+    expect(r.keep).toEqual(['1h-scheduled', '2h-scheduled', '2026-11-02_10-00-00', '2026-11-01_10-00-00'])
+    expect(r.remove).toEqual(['3h-scheduled'])
+  })
 })
 
 describe('quick picks', () => {
@@ -160,7 +186,9 @@ describe('manifest', () => {
   it('describes old world-only backups from their folder name', () => {
     const m = legacyManifest('2026-10-21_19-04-33_manual', 'Test', { sizeBytes: 5, worldVersion: 249 })!
     expect(m.legacy).toBe(true)
-    expect(m.reason).toBe('imported-legacy')
+    expect(m.reason).toBe('manual')
+    expect(legacyManifest('2026-10-21_19-04-33_before-restore', 'Test')!.reason).toBe('before-restore')
+    expect(legacyManifest('2026-10-21_19-04-33', 'Test')!.reason).toBe('imported-legacy')
     expect(new Date(m.createdAt).getHours()).toBe(19)
     expect(m.game.worldVersion).toBe(249)
     expect(legacyManifest('not-a-backup', 'Test')).toBeNull()
