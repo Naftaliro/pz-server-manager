@@ -586,7 +586,7 @@ export function setupBackupHandlers(mainWindow: BrowserWindow | null) {
   ipcMain.handle('server:backupNow', async (_event, profileId: string) => {
     try {
       const made = await takeBackup(profileId, 'manual')
-      return made ? { success: true, message: 'Backup made.' } : { success: false, message: 'No world to back up yet.' }
+      return made ? { success: true, message: 'Backup made.' } : { success: false, noWorld: true, message: 'No world to back up yet.' }
     } catch (e) {
       return { success: false, message: e instanceof Error ? e.message : String(e) }
     }

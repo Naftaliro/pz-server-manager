@@ -212,7 +212,16 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
         message="Everything built, looted and explored is gone and players start over as new characters. Settings and mods stay. A backup is made first, just in case."
         confirmLabel="Wipe it"
         danger
-        onConfirm={async () => { await window.electronAPI.server.backupNow(profile.id); await wipe() }}
+        onConfirm={async () => {
+          // the dialog promises a backup first: no backup, no wipe (unless there's no world to back up)
+          const backup = await window.electronAPI.server.backupNow(profile.id)
+          if (!backup.success && !backup.noWorld) {
+            setWipeOpen(false)
+            say(`Nothing was wiped, because the backup before wiping didn't work: ${backup.message}`)
+            return
+          }
+          await wipe()
+        }}
         onCancel={() => setWipeOpen(false)}
       />
     </div>

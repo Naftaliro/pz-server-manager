@@ -111,7 +111,7 @@ interface ElectronAPI {
     knownPlayers: (profileId: string) => Promise<{ success: boolean; message?: string; players?: Array<{ username: string; lastSeen?: string; role?: string; banned: boolean; banReason?: string }> }>
     restartWithWarning: (profileId: string, minutes: number) => Promise<{ success: boolean; message?: string }>
     listBackups: (profileId: string) => Promise<BackupInfo[]>
-    backupNow: (profileId: string) => Promise<{ success: boolean; message: string }>
+    backupNow: (profileId: string) => Promise<{ success: boolean; message: string; noWorld?: boolean }>
     restoreBackup: (profileId: string, name: string) => Promise<{ success: boolean; message: string }>
     openBackups: (profileId: string) => Promise<string>
     // where the server keeps its world, settings, players and log, and who else uses that folder
