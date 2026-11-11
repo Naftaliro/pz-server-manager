@@ -309,7 +309,7 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
 // Zomboid folder; this moves one into a folder of its own (a copy, checked, then switched to)
 function DataFolderCard({ profile, running }: { profile: ServerProfile; running: boolean }) {
   const { setProfiles } = useAppStore()
-  const [info, setInfo] = useState<{ path: string; shared: boolean; sharedWith: string[] } | null>(null)
+  const [info, setInfo] = useState<{ path: string; exists: boolean; shared: boolean; sharedWith: string[] } | null>(null)
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
@@ -335,7 +335,7 @@ function DataFolderCard({ profile, running }: { profile: ServerProfile; running:
       <p className="text-xs text-pz-subtext -mt-1">Where this server keeps its world, settings, players and log.</p>
       <div className="flex items-center gap-2">
         <code className="text-xs text-pz-text bg-pz-darker border border-pz-border rounded-md px-3 py-1.5 flex-1 truncate select-text" title={info.path}>{info.path}</code>
-        <button onClick={() => window.electronAPI.shell.openPath(info.path)} className="btn-outline text-xs flex-shrink-0"><FolderOpen size={12} /> Open folder</button>
+        {info.exists && <button onClick={() => window.electronAPI.shell.openPath(info.path)} className="btn-outline text-xs flex-shrink-0"><FolderOpen size={12} /> Open folder</button>}
       </div>
       {shares && (
         <div className="text-xs text-pz-subtext space-y-2">

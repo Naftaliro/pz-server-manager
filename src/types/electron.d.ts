@@ -110,7 +110,7 @@ interface ElectronAPI {
     restoreBackup: (profileId: string, name: string) => Promise<{ success: boolean; message: string }>
     openBackups: (profileId: string) => Promise<string>
     // where the server keeps its world, settings, players and log, and who else uses that folder
-    dataFolder: (profileId: string) => Promise<{ path: string; shared: boolean; sharedWith: string[] } | null>
+    dataFolder: (profileId: string) => Promise<{ path: string; exists: boolean; shared: boolean; sharedWith: string[] } | null>
     // copy its files into a folder of its own, check them, then switch to it
     useOwnDataFolder: (profileId: string) => Promise<{ success: boolean; message: string; worldSavePath?: string }>
     onModUpdates: (callback: (profileId: string, names: string[]) => void) => () => void

@@ -18,6 +18,8 @@ export function dataFolderInfo(profileId: string) {
   if (!profile) return null
   return {
     path: resolveDataPath(profile.worldSavePath),
+    // made by the game on the first start
+    exists: existsSync(resolveDataPath(profile.worldSavePath)),
     shared: sameFolder(resolveDataPath(profile.worldSavePath), resolveDataPath()),
     sharedWith: sharingWith(profile, listProfiles(), process.env).map(p => p.name),
   }
