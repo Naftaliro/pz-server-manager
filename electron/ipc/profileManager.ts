@@ -354,6 +354,10 @@ export function setupProfileHandlers() {
       updatedAt: now,
       lastStarted: undefined,
       lastStartedMods: undefined,
+      // nothing has run or been rolled back in the new world yet, and it only starts when asked
+      lastRunGame: undefined,
+      lastRollback: undefined,
+      startWithApp: false,
       iniSettings: {
         ...original.iniSettings,
         DefaultPort: port,

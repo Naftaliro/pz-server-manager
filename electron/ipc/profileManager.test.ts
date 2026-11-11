@@ -84,4 +84,18 @@ describe('Make a copy', () => {
     expect(a.worldSavePath).not.toBe(b.worldSavePath)
     expect(a.iniSettings.RCONPassword).not.toBe(base.iniSettings.RCONPassword)
   })
+
+  it("starts fresh: no rollback to undo, no game that ran its world, doesn't start with the app", async () => {
+    const base = await save({
+      id: '', name: 'Dup History', mods: [], port: 26361, iniSettings: {}, startWithApp: true,
+      lastRunGame: { buildId: '25485538', branch: 'public', version: '42.21.0' },
+      lastRollback: { at: new Date().toISOString(), backupId: '2026-11-10_11-00-00_start', beforeId: '2026-11-10_12-00-00_before-rollback' },
+    })
+    expect(base.startWithApp).toBe(true)
+    expect(base.lastRollback).toBeTruthy()
+    const copy = await duplicate(base.id)
+    expect(copy.startWithApp).toBe(false)
+    expect(copy.lastRollback).toBeUndefined()
+    expect(copy.lastRunGame).toBeUndefined()
+  })
 })
