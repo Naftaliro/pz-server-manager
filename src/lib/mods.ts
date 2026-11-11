@@ -1,7 +1,7 @@
 import { useAppStore } from '../store/useAppStore'
 import type { ModEntry, ModFileEntry, ServerProfile } from '../store/useAppStore'
 import { patchProfile } from './profile'
-import { enabledIds, orderModIds, wrongBuildMods, isListSorted, isWorkshopId, type OrderProblem } from '../../shared/modCore'
+import { enabledIds, orderModIds, wrongBuildMods, isListSorted, isWorkshopId, sortModList, type OrderProblem } from '../../shared/modCore'
 
 export { enabledIds }
 
@@ -104,8 +104,9 @@ export function toModEntry(d: WorkshopModDetails): ModEntry {
   }
 }
 
-// Add workshop items to a profile (skipping ones already there), then download + scan them
-export async function addModsToProfile(profileId: string, items: WorkshopModDetails[]): Promise<number> {
+// Add workshop items to a profile (skipping ones already there), then download + scan them.
+// wait: resolve once the downloads are done and read (for a modpack import that sorts after)
+export async function addModsToProfile(profileId: string, items: WorkshopModDetails[], opts: { wait?: boolean } = {}): Promise<number> {
   const profile = useAppStore.getState().profiles.find(p => p.id === profileId)
   if (!profile) return 0
   const existing = new Set(profile.mods.map(m => m.workshopId))
@@ -115,8 +116,29 @@ export async function addModsToProfile(profileId: string, items: WorkshopModDeta
   await patchProfile(profileId, p => ({
     mods: [...p.mods, ...fresh.filter(d => !p.mods.some(m => m.workshopId === d.workshopId)).map(toModEntry)],
   }))
-  void downloadAndScan(profileId, fresh.map(d => d.workshopId))
+  const job = downloadAndScan(profileId, fresh.map(d => d.workshopId))
+  if (opts.wait) await job.catch(() => undefined)
   return fresh.length
+}
+
+// After a modpack's downloads: put the list in load order (the same sort as "Sort
+// automatically") and say what still needs a look among the mods that were just added
+export async function finishImport(profileId: string, addedIds: string[]): Promise<{ moved: number; wrongBuild: string[]; needChoice: number; failed: number }> {
+  let moved = 0
+  const saved = await patchProfile(profileId, p => {
+    const { sorted, moves } = sortModList(p.mods)
+    moved = moves.length
+    return { mods: sorted }
+  })
+  const mods = (saved?.mods || []).filter(m => addedIds.includes(m.workshopId))
+  const build = saved?.buildVersion === 'b41' ? 'b41' : 'b42'
+  const downloads = useAppStore.getState().modDownloads
+  return {
+    moved,
+    wrongBuild: [...new Set(wrongBuildMods(mods, build).map(w => mods.find(m => enabledIds(m).includes(w.id) || m.infos?.some(i => i.id === w.id))?.workshopId || ''))].filter(Boolean),
+    needChoice: mods.filter(needsChoice).length,
+    failed: addedIds.filter(id => downloads[id]?.state === 'failed').length,
+  }
 }
 
 // Read mod.info for whatever is already on disk and update the profile

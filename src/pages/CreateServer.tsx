@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, Lock, Users, Skull, Package, Play, Loader, Wrench, FileUp } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Lock, Users, Skull, Package, Play, Loader, FileUp } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import { PRESETS, loadPresets } from '../lib/presets'
 import type { PresetKey } from '../lib/presets'
-import type { SettingsTree } from '../../shared/gameConfig'
-import { DEV_PRESETS } from '../lib/devPresets'
+import { deepMerge, type SettingsTree } from '../../shared/gameConfig'
+import { MODDED_PRESETS, presetProfileMods } from '../lib/modPresets'
 import { saveProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
 import { downloadAndScan } from '../lib/mods'
 import { suggestPassword, publicIni, type ServerPack } from '../../shared/serverPack'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { steamImageUrl } from '../../shared/workshopItem'
 import { freeGamePort, freeRconPort } from '../../shared/ports'
+import { ModdedPresetList, ReadyToBuild } from '../components/ModdedPresets'
 
 type Step = 0 | 1 | 2
 
@@ -26,9 +27,15 @@ export default function CreateServer() {
   // the game's own preset files, from the server install
   const [presets, setPresets] = useState<Partial<Record<PresetKey, SettingsTree>>>({})
   useEffect(() => { loadPresets(settings?.serverInstallPath).then(setPresets) }, [settings?.serverInstallPath])
-  // a developer preset brings its own sandbox and mods, and replaces the difficulty pick
-  const [devKey, setDevKey] = useState<string | null>(null)
-  const devPreset = DEV_PRESETS.find(p => p.key === devKey)
+  // a ready-made modded server brings its mods and settings; its sandbox goes on top of the difficulty
+  const [moddedKey, setModdedKey] = useState<string | null>(null)
+  const modded = MODDED_PRESETS.find(p => p.key === moddedKey)
+  // the server install's build, to compare with the build the presets were checked on
+  const [serverBuild, setServerBuild] = useState<string | null>(null)
+  useEffect(() => {
+    if (!settings?.serverInstallPath) return
+    window.electronAPI.mods.serverBuild(settings.serverInstallPath).then(r => setServerBuild(r.buildId || null)).catch(() => undefined)
+  }, [settings?.serverInstallPath])
   const [pvp, setPvp] = useState(false)
   const [creating, setCreating] = useState(false)
   const [memory, setMemory] = useState(RECOMMENDED_MEMORY_MB)
@@ -128,15 +135,21 @@ export default function CreateServer() {
     }
   }
 
+  const [createError, setCreateError] = useState('')
   const create = async (thenMods: boolean) => {
     setCreating(true)
+    setCreateError('')
     try {
       const port = nextPort()
+      // the difficulty picked on the step before, from the game's own files (none found: the
+      // game uses its defaults, which is Apocalypse), with the preset's few changes on top
+      const difficulty = (presets[preset] || {}) as SettingsTree
+      const sandbox = modded ? deepMerge(difficulty, modded.sandboxSettings as SettingsTree) : difficulty
       const saved = await saveProfile({
         id: '',
         name: name.trim(),
-        description: devPreset ? devPreset.description : '',
-        buildVersion: devPreset?.buildVersion || settings?.buildVersion || 'b42',
+        description: modded ? `${modded.label}: ${modded.tagline}` : '',
+        buildVersion: modded?.buildVersion || settings?.buildVersion || 'b42',
         serverInstallPath: settings?.serverInstallPath || 'C:\\PZServer',
         worldSavePath: '',
         port,
@@ -145,10 +158,10 @@ export default function CreateServer() {
         adminPassword: suggestPassword(),
         serverPassword: password,
         maxPlayers,
-        mods: devPreset ? devPreset.mods : [],
+        mods: modded ? presetProfileMods(modded) : [],
         launchMode: 'managed',
         iniSettings: {
-          ...(devPreset?.iniSettings || {}),
+          ...(modded?.iniSettings || {}),
           // what was asked on the first page wins over the preset
           PVP: pvp,
           PublicName: name.trim(),
@@ -156,17 +169,26 @@ export default function CreateServer() {
           // each server gets its own RCON port so two can run side by side
           RCONPort: nextRconPort(),
         },
-        // no preset file found: the game uses its own defaults (Apocalypse)
-        sandboxSettings: devPreset ? devPreset.sandboxSettings : presets[preset] || {},
+        sandboxSettings: sandbox,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       })
-      if (devPreset) {
-        // if this fails, the pre-start check names the missing local mod when Start is pressed
-        if (devPreset.localMods.length > 0) await window.electronAPI.mods.installLocal(devPreset.localMods)
-        void downloadAndScan(saved.id, devPreset.mods.map(m => m.workshopId).filter(Boolean))
+      if (modded) {
+        // keep a copy of every mod as it downloads (App settings → Mod backups), so a known-good
+        // version is there if a mod gets pulled or an update breaks it. Turned on before the
+        // downloads start, the copies are made right after each one
+        const backups = await window.electronAPI.modBackups.status().catch(() => null)
+        if (backups?.success && !backups.enabled) {
+          await window.electronAPI.modBackups.configure({ enabled: true })
+          if (settings) useAppStore.getState().setSettings({ ...settings, modBackups: true })
+        }
+        // if this fails, the pre-start check names the missing fix mod when Start is pressed
+        if (modded.localMods.length > 0) await window.electronAPI.mods.installLocal(modded.localMods, saved.worldSavePath)
+        void downloadAndScan(saved.id, modded.mods.map(m => m.workshopId).filter(Boolean))
       }
-      openServer(saved.id, thenMods || devPreset ? 'mods' : 'overview')
+      openServer(saved.id, thenMods || modded ? 'mods' : 'overview')
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : String(e))
     } finally {
       setCreating(false)
     }
@@ -274,8 +296,8 @@ export default function CreateServer() {
               {(Object.keys(PRESETS) as PresetKey[]).filter(k => presets[k]).map(key => (
                 <button
                   key={key}
-                  onClick={() => { setPreset(key); setDevKey(null) }}
-                  className={`card p-4 text-left transition-all ${!devPreset && preset === key ? 'border-pz-green bg-pz-green/10' : 'hover:border-pz-text/40'}`}
+                  onClick={() => setPreset(key)}
+                  className={`card p-4 text-left transition-all ${preset === key ? 'border-pz-green bg-pz-green/10' : 'hover:border-pz-text/40'}`}
                 >
                   <div className="flex items-center gap-2 mb-1">
                     <Skull size={14} className={preset === key ? 'text-pz-green' : 'text-pz-muted'} />
@@ -286,28 +308,6 @@ export default function CreateServer() {
                 </button>
               ))}
             </div>
-            {DEV_PRESETS.length > 0 && (
-              <div className="space-y-2">
-                <div>
-                  <h2 className="text-sm font-semibold text-pz-text flex items-center gap-1.5"><Wrench size={13} /> Developer presets</h2>
-                  <p className="text-xs text-pz-subtext">Complete setups the developer plays on: mods, settings and sandbox all included.</p>
-                </div>
-                {DEV_PRESETS.map(p => (
-                  <button
-                    key={p.key}
-                    onClick={() => setDevKey(p.key)}
-                    className={`card p-4 text-left w-full transition-all ${devKey === p.key ? 'border-pz-green bg-pz-green/10' : 'hover:border-pz-text/40'}`}
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <Package size={14} className={devKey === p.key ? 'text-pz-green' : 'text-pz-muted'} />
-                      <span className="font-semibold text-pz-text">{p.label}</span>
-                      <span className="text-xs text-pz-muted ml-auto">{p.mods.length} mods</span>
-                    </div>
-                    <p className="text-xs text-pz-subtext">{p.description}</p>
-                  </button>
-                ))}
-              </div>
-            )}
             <div className="flex justify-between">
               <button onClick={() => setStep(0)} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
               <button onClick={() => setStep(2)} className="btn-primary">Next <ArrowRight size={14} /></button>
@@ -315,29 +315,20 @@ export default function CreateServer() {
           </div>
         )}
 
-        {step === 2 && devPreset && (
-          <div className="space-y-5">
-            <div>
-              <h1 className="text-xl font-semibold text-pz-text">Ready to build "{devPreset.label}"</h1>
-              <p className="text-sm text-pz-subtext mt-1">
-                {devPreset.mods.length} mods get downloaded in the background, which can take a while the first time.
-                {devPreset.localMods.length > 0 && ' The fix mods it needs are installed into your Zomboid\\mods folder. Friends joining need them too: see local-mods\\README.md in the project.'}
-              </p>
-            </div>
-            <button onClick={() => create(true)} disabled={creating} className="card p-5 text-left w-full hover:border-pz-green transition-all flex items-center gap-4">
-              <Play size={24} className="text-pz-green flex-shrink-0" />
-              <div className="flex-1">
-                <div className="font-semibold text-pz-text">Create the server</div>
-                <div className="text-xs text-pz-subtext">Opens the Mods tab so you can watch the downloads</div>
-              </div>
-              <ArrowRight size={16} className="text-pz-muted" />
-            </button>
-            {creating && <p className="text-sm text-pz-muted flex items-center gap-2"><Loader size={14} className="animate-spin" /> Creating your server...</p>}
-            <button onClick={() => setStep(1)} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
-          </div>
+        {step === 2 && modded && (
+          <ReadyToBuild
+            preset={modded}
+            difficulty={presets[preset] ? PRESETS[preset].label : undefined}
+            serverBuild={serverBuild}
+            backupsOn={!!settings?.modBackups}
+            creating={creating}
+            error={createError}
+            onCreate={() => create(true)}
+            onBack={() => setModdedKey(null)}
+          />
         )}
 
-        {step === 2 && !devPreset && (
+        {step === 2 && !modded && (
           <div className="space-y-5">
             <div>
               <h1 className="text-xl font-semibold text-pz-text">Want any mods?</h1>
@@ -345,11 +336,12 @@ export default function CreateServer() {
                 Mods get downloaded automatically, and your friends' games grab them when they join. You can always add or remove them later.
               </p>
             </div>
+            <ModdedPresetList presets={MODDED_PRESETS} serverBuild={serverBuild} onPick={setModdedKey} />
             <div className="grid grid-cols-1 gap-3">
               <button onClick={() => create(true)} disabled={creating} className="card p-5 text-left hover:border-pz-green transition-all flex items-center gap-4">
                 <Package size={24} className="text-pz-green flex-shrink-0" />
                 <div className="flex-1">
-                  <div className="font-semibold text-pz-text">Yes, let me pick some</div>
+                  <div className="font-semibold text-pz-text">I'll pick my own mods</div>
                   <div className="text-xs text-pz-subtext">Opens the Steam Workshop right here in the app</div>
                 </div>
                 <ArrowRight size={16} className="text-pz-muted" />
@@ -357,13 +349,14 @@ export default function CreateServer() {
               <button onClick={() => create(false)} disabled={creating} className="card p-5 text-left hover:border-pz-green transition-all flex items-center gap-4">
                 <Play size={24} className="text-pz-green flex-shrink-0" />
                 <div className="flex-1">
-                  <div className="font-semibold text-pz-text">No, just the normal game</div>
+                  <div className="font-semibold text-pz-text">No mods, just the normal game</div>
                   <div className="text-xs text-pz-subtext">Your server is ready to start right away</div>
                 </div>
                 <ArrowRight size={16} className="text-pz-muted" />
               </button>
             </div>
             {creating && <p className="text-sm text-pz-muted flex items-center gap-2"><Loader size={14} className="animate-spin" /> Creating your server...</p>}
+            {createError && <p className="text-sm text-pz-red">{createError}</p>}
             <button onClick={() => setStep(1)} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
           </div>
         )}

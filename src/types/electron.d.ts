@@ -209,6 +209,8 @@ interface ElectronAPI {
       missing: string[]
       message?: string
     }>
+    // the server install's Steam build id (null when it isn't installed there)
+    serverBuild: (installDir: string) => Promise<{ success: boolean; buildId: string | null; branch?: string; message?: string }>
   }
   workshop: {
     prepare: (profileId: string, modId: string) => Promise<{ success: boolean; message?: string; itemDir?: string; folder?: string; title?: string; workshopId?: string | null }>

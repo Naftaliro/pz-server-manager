@@ -1,0 +1,1096 @@
+{
+  "vanilla-plus": {
+    "mods": [
+      {
+        "workshopId": "2313387159",
+        "modId": "BetterSortCC",
+        "name": "Better Sorting",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/16772822583472605211/D95CB3CD91A8350380A3613B70E87C31F9F37DC6/",
+        "fileSize": 1823379,
+        "infos": [
+          {
+            "id": "BetterSortCC",
+            "name": "Better Sorting",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "2544353492",
+        "modId": "P4HasBeenRead",
+        "name": "Has Been Read",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/17549172646925789/53181618A273C24338C373CE6B4C1DF6F5408C8E/",
+        "fileSize": 1322250,
+        "infos": [
+          {
+            "id": "P4HasBeenRead",
+            "name": "Has Been Read",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3716522633",
+        "modId": "VHSSkillNameInTooltip",
+        "name": "[B41,B42] Show VHS skills in tooltip",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/12718555607319080629/7EA4A6C57777519A8AB844EFF9A9B69A094F2A06/",
+        "fileSize": 116018,
+        "infos": [
+          {
+            "id": "VHSSkillNameInTooltip",
+            "name": "[B42] Show VHS skills in tooltip",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "2847184718",
+        "modId": "ProximityInventory",
+        "name": "Proximity Inventory B42.20+ | We are so back",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/1731090662166032115/3230EC9CA60AD855DBBBAF75DCCA1DE11E9109C6/",
+        "fileSize": 702341,
+        "infos": [
+          {
+            "id": "ProximityInventory",
+            "name": "Proximity Inventory B42",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "2650547917",
+        "modId": "manageContainers",
+        "name": "Manage Containers",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/1792990424214317761/A2B9EF8490087581A464B7811D258306AB158306/",
+        "fileSize": 1316026,
+        "infos": [
+          {
+            "id": "manageContainers",
+            "name": "Manage Containers",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "2866258937",
+        "modId": "MiniHealthPanel",
+        "name": "Mini Health Panel",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/47948470137919175/F65D54EB204CE32EE49D15FADF9A07CD8863BAF2/",
+        "fileSize": 1477846,
+        "infos": [
+          {
+            "id": "MiniHealthPanel",
+            "name": "Mini Health Panel",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "2553809727",
+        "modId": "KillCount",
+        "name": "KillCount",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/47948305646416013/15D13A1C81305ECE5F4BB41B082ABCAE1B8B2AD5/",
+        "fileSize": 450255,
+        "infos": [
+          {
+            "id": "KillCount",
+            "name": "KillCount",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3755993986",
+        "modId": "GasPumpIndicator",
+        "name": "Gas Pump Indicator",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/10817087992756869080/CC7F72C30E477FB9C44970F15D0B4172F967191A/",
+        "fileSize": 191709,
+        "infos": [
+          {
+            "id": "GasPumpIndicator",
+            "name": "Gas Pump Indicator",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "2920899878",
+        "modId": "ReloadAllMagazines",
+        "name": "[B41 / B42] Load All Magazines",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/2035098222691143786/1A361225932A063E90D7F76500CBF7DF39A5B711/",
+        "fileSize": 164335,
+        "infos": [
+          {
+            "id": "ReloadAllMagazines",
+            "name": "Reload All Magazines",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [
+              "GunsOfMarz",
+              "SWMG"
+            ],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "2584112711",
+        "modId": "FasterHoodOpening",
+        "name": "[B41/B42] Faster Hood Opening",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/32187155757263029/130812CCDBEE85D8B8A06FBFC3C394143177CC97/",
+        "fileSize": 50826,
+        "infos": [
+          {
+            "id": "FasterHoodOpening",
+            "name": "Faster Hood Opening",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "2734705913",
+        "modId": "MapSymbolSizeSlider",
+        "name": "Map Symbol Size Slider",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/1833529903252537067/E82226841ADC68FA8D4723373C3AA1E2DAF02267/",
+        "fileSize": 258981,
+        "infos": [
+          {
+            "id": "MapSymbolSizeSlider",
+            "name": "Map Symbol Size Slider",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      }
+    ],
+    "downloadBytes": 7873966,
+    "verified": {
+      "gameVersion": "42.22.2",
+      "buildId": "26486687",
+      "date": "2026-11-11",
+      "ok": true
+    }
+  },
+  "road-trip": {
+    "mods": [
+      {
+        "workshopId": "3171167894",
+        "modId": "damnlib",
+        "name": "that DAMN Library",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/2440458973134780877/3CB9696BBB8A945AD8A2470A158E6B478085ED5E/",
+        "fileSize": 42357348,
+        "infos": [
+          {
+            "id": "damnlib",
+            "name": "that DAMN Library",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          },
+          {
+            "id": "damnlibGlass",
+            "name": "that DAMN Glass",
+            "requires": [
+              "damnlib"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3543229299",
+        "modId": "PROJECTRVInterior42",
+        "name": "[B42]Project RV Interior",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/10515830746446180728/EE1FF20A2D2F434A445958416F9953050970EA3D/",
+        "fileSize": 21486987,
+        "infos": [
+          {
+            "id": "PROJECTRVInterior42",
+            "name": "[B42]PROJECT RV Interior",
+            "requires": [],
+            "maps": [
+              "map_distanciado"
+            ],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": [
+          "map_distanciado"
+        ]
+      },
+      {
+        "workshopId": "3618427553",
+        "modId": "RVInteriorExpansion",
+        "name": "RV Interior Expansion [B42]",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/13835814683215296210/81A44670988015F3337A432FAF1074CD62900EC2/",
+        "fileSize": 72214715,
+        "infos": [
+          {
+            "id": "RVInteriorExpansion",
+            "name": "RV Interior Expansion",
+            "requires": [
+              "PROJECTRVInterior42"
+            ],
+            "maps": [
+              "rvupdate"
+            ],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [
+          "PROJECTRVInterior42"
+        ],
+        "maps": [
+          "rvupdate"
+        ]
+      },
+      {
+        "workshopId": "3799732653",
+        "modId": "83gmcGseriesVans;83gmcVanduraATeam",
+        "name": "'83 GMC G-Series Vans",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/16715858832086306915/02578E2AAF0C7C0921FD124D3D329065DB35F592/",
+        "fileSize": 12776862,
+        "infos": [
+          {
+            "id": "83gmcGseriesVans",
+            "name": "'83 GMC G-Series Vans",
+            "requires": [
+              "damnlib"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          },
+          {
+            "id": "83gmcVanduraATeam",
+            "name": "'83 GMC Vandura A-Team Van",
+            "requires": [
+              "83gmcGseriesVans"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [
+          "damnlib",
+          "83gmcGseriesVans"
+        ],
+        "maps": []
+      },
+      {
+        "workshopId": "",
+        "modId": "RVInteriorGMCVans",
+        "name": "RV Interior - '83 GMC Vans (fix)",
+        "infos": [
+          {
+            "id": "RVInteriorGMCVans",
+            "name": "RV Interior - '83 GMC Vans",
+            "requires": [
+              "PROJECTRVInterior42",
+              "83gmcGseriesVans"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [
+          "PROJECTRVInterior42",
+          "83gmcGseriesVans"
+        ],
+        "maps": []
+      },
+      {
+        "workshopId": "2870394916",
+        "modId": "86fordE150;86fordE150expanded;86fordE150dnd;86fordE150mm;86fordE150pd",
+        "name": "'86 Ford Econoline E-150 + Pop Culture vans",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/1772753397114425735/6B5692F131ECA05580BCA78611CC8E8A387DD600/",
+        "fileSize": 56479405,
+        "infos": [
+          {
+            "id": "86fordE150",
+            "name": "'86 Ford Econoline E150",
+            "requires": [
+              "damnlib"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          },
+          {
+            "id": "86fordE150dnd",
+            "name": "'86 Ford Econoline E150 Mutt Cutts van",
+            "requires": [
+              "86fordE150"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          },
+          {
+            "id": "86fordE150expanded",
+            "name": "'86 Ford Econoline E150 Expanded",
+            "requires": [
+              "86fordE150"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          },
+          {
+            "id": "86fordE150mm",
+            "name": "'86 Ford Econoline E150 Mystery Machine",
+            "requires": [
+              "86fordE150"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          },
+          {
+            "id": "86fordE150pd",
+            "name": "'86 Ford Econoline E150 Payday Escape Van",
+            "requires": [
+              "86fordE150"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [
+          "damnlib",
+          "86fordE150"
+        ],
+        "maps": []
+      },
+      {
+        "workshopId": "3614034284",
+        "modId": "85chevyStepVan;85chevyStepVanexpanded",
+        "name": "'85 Chevrolet Step-Van",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/13786117600799927718/6FA3922C60C29B9A9E1248BEF490E0C31A5AB7CC/",
+        "fileSize": 28373857,
+        "infos": [
+          {
+            "id": "85chevyStepVan",
+            "name": "'85 Chevrolet Step-Van",
+            "requires": [
+              "damnlib"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          },
+          {
+            "id": "85chevyStepVanexpanded",
+            "name": "'85 Chevrolet Step-Van Expanded",
+            "requires": [
+              "85chevyStepVan"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [
+          "damnlib",
+          "85chevyStepVan"
+        ],
+        "maps": []
+      },
+      {
+        "workshopId": "3670064951",
+        "modId": "KI5campers",
+        "name": "Campers!",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/15738427441569989522/8787D3A498FE25C83194CABE7D652B2491DC57B8/",
+        "fileSize": 28114112,
+        "infos": [
+          {
+            "id": "KI5campers",
+            "name": "Campers!",
+            "requires": [
+              "damnlib"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [
+          "damnlib"
+        ],
+        "maps": []
+      },
+      {
+        "workshopId": "3330403100",
+        "modId": "KI5trailers",
+        "name": "Trailers!",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/2414581210971649312/966E337BD80E0DD9190A1E27FB948B5678A60F13/",
+        "fileSize": 11786296,
+        "infos": [
+          {
+            "id": "KI5trailers",
+            "name": "Trailers!",
+            "requires": [
+              "damnlib"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [
+          "damnlib"
+        ],
+        "maps": []
+      },
+      {
+        "workshopId": "3570973322",
+        "modId": "89defender",
+        "name": "'89 LAND ROVER Defender",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/9421608761060861158/91073526BA5C31AFBE05F2807FBD4E1DE984257E/",
+        "fileSize": 29078075,
+        "infos": [
+          {
+            "id": "89defender",
+            "name": "'89 LAND ROVER Defender",
+            "requires": [
+              "damnlib"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [
+          "damnlib"
+        ],
+        "maps": []
+      },
+      {
+        "workshopId": "2256623447",
+        "modId": "firearmmod",
+        "name": "Firearms",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/1839154947063938735/592EEBF78D5C17BDA0606DC281084044E8F23CC7/",
+        "fileSize": 167827553,
+        "infos": [
+          {
+            "id": "firearmmod",
+            "name": "Firearms B42",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [
+              "firearmmodbeta",
+              "firearmmodvanilla"
+            ],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          },
+          {
+            "id": "firearmmodbeta",
+            "name": "Firearms B42 Beta",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [
+              "ammocraftbeta"
+            ],
+            "incompatible": [
+              "firearmmod",
+              "firearmmodvanilla",
+              "B42RainsFirearmsAndGunParts"
+            ],
+            "builds": [
+              "b42"
+            ]
+          },
+          {
+            "id": "firearmmodvanilla",
+            "name": "Firearms B42 - Models Only",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [
+              "firearmmod",
+              "firearmmodbeta"
+            ],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3268487204",
+        "modId": "Bandits2",
+        "name": "[B42] Bandits NPC",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/11347244464204683767/B476146CBD89A95C3D2172DDA92BC1106E757E30/",
+        "fileSize": 168239418,
+        "infos": [
+          {
+            "id": "Bandits2",
+            "name": "Bandits",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [
+              "BetterFPS_B42",
+              "TrueCrawlStealth",
+              "TrueCrawl",
+              "BanditsAddOptions",
+              "TheStar42"
+            ],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3796483217",
+        "modId": "NPCBases",
+        "name": "NPC Bases (Bandits Settlements)",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/10975994789886826513/1ADDB6701F7001404D16A98C85426EEF5A2643B5/",
+        "fileSize": 4334362,
+        "infos": [
+          {
+            "id": "NPCBases",
+            "name": "NPC Bases (Bandits Settlements)",
+            "requires": [
+              "Bandits2"
+            ],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [
+          "Bandits2"
+        ],
+        "maps": []
+      },
+      {
+        "workshopId": "3798146388",
+        "modId": "GanydeBielovzki's Frockin Backstage!",
+        "name": "[B42MP] Frockin Backstage!",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/13750759269597300944/C47BF03C6EDE71C50BFEF382DBD981D908608724/",
+        "fileSize": 12806757,
+        "infos": [
+          {
+            "id": "GanydeBielovzki's Frockin Backstage!",
+            "name": "Frockin Backstage!",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [
+              "GanydeBielovzki's Frockin Splendor!",
+              "GanydeBielovzki's Frockin Splendor! Vol.2",
+              "GanydeBielovzki's Frockin Splendor! Vol.3",
+              "GanydeBielovzki's Frockin Splendor! Vol.4",
+              "GanydeBielovzki's Frockin Shirts n Ties",
+              "GanydeBielovzki's Frockin Wiseguys!",
+              "GanydeBielovzki's Frockin Splendor! Vol.5",
+              "GanydeBielovzki's Frockin Stompers!",
+              "GanydeBielovzki's Frockin Splendor! Vol.6"
+            ],
+            "incompatible": [
+              "Retrad_'s Kinky Clothes"
+            ],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3307376332",
+        "modId": "GanydeBielovzki's Frockin Splendor!",
+        "name": "[B42MP] Frockin Splendor! Vol.1",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/11709285596979010168/4FA90BDC721E8D4BC90EE479DE93863DE8535385/",
+        "fileSize": 87694600,
+        "infos": [
+          {
+            "id": "GanydeBielovzki's Frockin Splendor!",
+            "name": "Frockin Splendor!",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      }
+    ],
+    "downloadBytes": 743570347,
+    "verified": {
+      "gameVersion": "42.22.2",
+      "buildId": "26486687",
+      "date": "2026-11-11",
+      "ok": true
+    }
+  },
+  "homestead": {
+    "mods": [
+      {
+        "workshopId": "3794207681",
+        "modId": "FittedSheets",
+        "name": "Fitted Sheets",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/11949640646152024147/951BB1502A99B420FCCDB378A7B50001792AD437/",
+        "fileSize": 995262,
+        "infos": [
+          {
+            "id": "FittedSheets",
+            "name": "Fitted Sheets",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3785740658",
+        "modId": "FenceSheets",
+        "name": "Fence Sheets",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/11810053326347896396/BAC2DE2B8B6F5579A4F5F0C02DC1D365FFE78DA5/",
+        "fileSize": 1509895,
+        "infos": [
+          {
+            "id": "FenceSheets",
+            "name": "Fence Sheets",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3795414660",
+        "modId": "FittedBarricades",
+        "name": "Fitted Barricades",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/15679859386331631812/AF71E75C204D75228538052D3EF9AFBF96E816CB/",
+        "fileSize": 11713961,
+        "infos": [
+          {
+            "id": "FittedBarricades",
+            "name": "Fitted Barricades",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3734639991",
+        "modId": "SeedSeasonIndicator",
+        "name": "Seed Season Indicator",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/17909047641604900035/F27E930D1F8F325645F0682F01431ED40F121767/",
+        "fileSize": 100921,
+        "infos": [
+          {
+            "id": "SeedSeasonIndicator",
+            "name": "Seed Season Indicator",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3783623999",
+        "modId": "LivestockPanelPlus",
+        "name": "Livestock Panel Plus",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/14663019751732654961/DE955E350D3FC5F200B5935A67DFED9CF475214C/",
+        "fileSize": 525104,
+        "infos": [
+          {
+            "id": "LivestockPanelPlus",
+            "name": "Livestock Panel Plus",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3721829036",
+        "modId": "STA_BetterHutches",
+        "name": "ST Additions - Better Hutches",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/18180673127610600282/CB85376918135F33339ABF15CED2350E8BC5849B/",
+        "fileSize": 106311,
+        "infos": [
+          {
+            "id": "STA_BetterHutches",
+            "name": "StarkTruffle Additions - Better Hutches",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3763470184",
+        "modId": "PropaneExchangeCabinet",
+        "name": "Propane Exchange Cabinets",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/11979352097250095589/1EE433700FB5A7C46B21C9F93445A7AE7B408142/",
+        "fileSize": 1640689,
+        "infos": [
+          {
+            "id": "PropaneExchangeCabinet",
+            "name": "Propane Exchange Cabinet",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b41",
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3778868211",
+        "modId": "NicksTurnOffFridges",
+        "name": "Nick's Turn Off Fridges",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/14622978137527780079/5A2617E08EB2EA65CD5398EC8073E6CF62A0676A/",
+        "fileSize": 150384,
+        "infos": [
+          {
+            "id": "NicksTurnOffFridges",
+            "name": "Nick's Turn Off Fridges",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3782929173",
+        "modId": "ProjectDirtroad",
+        "name": "Project Dirtroad - Create your own dirt roads/paths through use [B42]",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/16962128530473921200/EC32F59FD07EADA744A39BEAF05FE1F581C33138/",
+        "fileSize": 232795,
+        "infos": [
+          {
+            "id": "ProjectDirtroad",
+            "name": "Project Dirtroad",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      },
+      {
+        "workshopId": "3761218629",
+        "modId": "DismantleAllAtOnce",
+        "name": "Dismantle All at Once",
+        "thumbnailUrl": "https://images.steamusercontent.com/ugc/11792596140624529608/7BD66A457F895B145C1AC99A40BEDBA22E6754BD/",
+        "fileSize": 409055,
+        "infos": [
+          {
+            "id": "DismantleAllAtOnce",
+            "name": "Dismantle All at Once",
+            "requires": [],
+            "maps": [],
+            "loadAfter": [],
+            "loadBefore": [],
+            "incompatible": [],
+            "builds": [
+              "b42"
+            ]
+          }
+        ],
+        "requires": [],
+        "maps": []
+      }
+    ],
+    "downloadBytes": 17384377,
+    "verified": {
+      "gameVersion": "42.22.2",
+      "buildId": "26486687",
+      "date": "2026-11-11",
+      "ok": true
+    }
+  }
+}
