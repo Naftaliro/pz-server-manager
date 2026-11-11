@@ -2,6 +2,7 @@
 // No Electron in here, so the tests can check it.
 
 import { win32 } from 'path'
+import { APP_EXE_NAMES } from './winScripts'
 
 // what Windows passes when it starts the app at login
 export const STARTUP_ARG = '--started-with-windows'
@@ -47,16 +48,25 @@ const inside = (p: string, dir: string) => !!dir && win32.normalize(p).toLowerCa
  * What's there now, for this copy of the app (exe = the running exe):
  *  on:      it starts this exe with Windows
  *  migrate: an old-style value starts this copy (this exe, or the exe it had before it was
- *           renamed, in the same folder) or an exe that's gone: write it again under the new name
+ *           renamed, in the same folder) or an exe that's gone: write it again under the new name.
+ *           Same for our own value when it starts the exe this copy had before a rename (the
+ *           other app exe name in this folder) or an exe that's gone
  *  remove:  old-style values to delete once that's done
  */
 export function runKeyPlan(values: RunValue[], exe: string, exists: (p: string) => boolean): { on: boolean; migrate: boolean; remove: string[] } {
-  const on = values.some(v => v.name === RUN_VALUE && samePath(commandExe(v.command), exe))
+  const current = values.filter(v => v.name === RUN_VALUE)
+  const on = current.some(v => samePath(commandExe(v.command), exe))
+  const renamed = (target: string) => samePath(win32.dirname(target), win32.dirname(exe))
+    && APP_EXE_NAMES.some(n => n.toLowerCase() === win32.basename(target).toLowerCase())
+  const stale = !on && current.some(v => {
+    const target = commandExe(v.command)
+    return renamed(target) || !exists(target)
+  })
   const ours = values.filter(v => OLD_RUN_VALUES.includes(v.name)).filter(v => {
     const target = commandExe(v.command)
     return samePath(win32.dirname(target), win32.dirname(exe)) || !exists(target)
   })
-  return { on: on || ours.length > 0, migrate: ours.length > 0, remove: ours.map(v => v.name) }
+  return { on: on || stale || ours.length > 0, migrate: stale || ours.length > 0, remove: ours.map(v => v.name) }
 }
 
 // Run from inside a zip in Explorer (it unpacks to a temp folder) or some other temp folder:

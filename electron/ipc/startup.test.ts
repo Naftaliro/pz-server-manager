@@ -58,3 +58,30 @@ describe('secondLaunch', () => {
     expect(secondLaunch(['C:\\Apps\\Knox Launcher.exe', '--started-with-windows'])).toBe('ignore')
   })
 })
+
+describe('the Run value after a later exe rename', () => {
+  const dir = 'C:\\Users\\me\\AppData\\Local\\Programs\\Knox Launcher'
+  const old = `${dir}\\PZ Server Manager.exe`
+  const now = `${dir}\\Knox Launcher.exe`
+
+  it('moves a value that starts the old exe name in the same folder to the new one', () => {
+    const values = [{ name: RUN_VALUE, command: runCommand(old) }]
+    // the update deleted the old exe
+    expect(runKeyPlan(values, now, p => p !== old)).toEqual({ on: true, migrate: true, remove: [] })
+    // or it's still lying around
+    expect(runKeyPlan(values, now, () => true)).toEqual({ on: true, migrate: true, remove: [] })
+  })
+
+  it('moves a value whose exe is gone', () => {
+    const values = [{ name: RUN_VALUE, command: runCommand('E:\\Old place\\Knox Launcher.exe') }]
+    expect(runKeyPlan(values, now, () => false)).toEqual({ on: true, migrate: true, remove: [] })
+  })
+
+  it("leaves another copy's value alone while that copy is still there", () => {
+    const values = [{ name: RUN_VALUE, command: runCommand('D:\\Portable\\Knox Launcher.exe') }]
+    expect(runKeyPlan(values, now, () => true)).toEqual({ on: false, migrate: false, remove: [] })
+    // something else in this folder isn't us
+    const other = [{ name: RUN_VALUE, command: runCommand(`${dir}\\Uninstall Knox Launcher.exe`) }]
+    expect(runKeyPlan(other, now, () => true)).toEqual({ on: false, migrate: false, remove: [] })
+  })
+})
