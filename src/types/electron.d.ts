@@ -26,6 +26,8 @@ interface ElectronAPI {
     info: () => Promise<{ totalMemMb: number; platform: string }>
     // no argument: read the current setting
     startWithWindows: (on?: boolean) => Promise<boolean>
+    // why this copy can't start with Windows (it's running from a temp folder), null when it can
+    startupProblem: () => Promise<string | null>
   }
   discord: {
     test: (url: string, serverName: string) => Promise<{ success: boolean; message?: string }>

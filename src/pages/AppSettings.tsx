@@ -252,13 +252,18 @@ export default function AppSettings() {
 function StartupCard() {
   const { profiles, openServer } = useAppStore()
   const [on, setOn] = useState<boolean | null>(null)
-  useEffect(() => { window.electronAPI.system.startWithWindows().then(setOn).catch(() => undefined) }, [])
+  // a copy running from a temp folder can't start with Windows (it's gone next login)
+  const [problem, setProblem] = useState<string | null>(null)
+  useEffect(() => {
+    window.electronAPI.system.startWithWindows().then(setOn).catch(() => undefined)
+    window.electronAPI.system.startupProblem().then(setProblem).catch(() => undefined)
+  }, [])
   const autoServers = profiles.filter(p => p.startWithApp)
 
   return (
     <div className="card p-5 space-y-3">
       <h3 className="section-title flex items-center gap-2"><Power size={14} /> Startup</h3>
-      <button onClick={async () => setOn(await window.electronAPI.system.startWithWindows(!on))} disabled={on === null} className="w-full flex items-center gap-3 text-left">
+      <button onClick={async () => setOn(await window.electronAPI.system.startWithWindows(!on))} disabled={on === null || (!!problem && !on)} className="w-full flex items-center gap-3 text-left disabled:opacity-60">
         <div className={`w-10 h-5 rounded-full relative transition-colors flex-shrink-0 ${on ? 'bg-pz-green' : 'bg-pz-border'}`}>
           <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-pz-text transition-transform ${on ? 'translate-x-5' : 'translate-x-0.5'}`} />
         </div>
@@ -267,6 +272,7 @@ function StartupCard() {
           <div className="text-xs text-pz-muted">It opens minimized when you log in. Daily restarts and mod update restarts only happen while the app is open.</div>
         </div>
       </button>
+      {problem && !on && <p className="text-xs text-pz-yellow">{problem}</p>}
       <p className="text-xs text-pz-subtext">
         {autoServers.length > 0
           ? <>Starts by itself when the app opens: {autoServers.map((p, i) => <span key={p.id}>{i > 0 && ', '}<button onClick={() => openServer(p.id, 'settings')} className="text-pz-green underline">{p.name}</button></span>)}.</>

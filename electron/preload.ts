@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   system: {
     info: () => ipcRenderer.invoke('system:info'),
     startWithWindows: (on?: boolean) => ipcRenderer.invoke('app:startWithWindows', on),
+    startupProblem: () => ipcRenderer.invoke('app:startupProblem'),
   },
 
   discord: {
