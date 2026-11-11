@@ -504,7 +504,9 @@ export function setupUpdaterHandlers() {
   })
 
   // ── Open release page in browser (manual fallback) ───────────────────────────
+  // only this repo's pages: openExternal hands anything else (file:, other app protocols) to Windows
   ipcMain.handle('updater:openReleasePage', async (_event, url: string) => {
+    if (typeof url !== 'string' || !url.startsWith(`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/`)) return { success: false }
     shell.openExternal(url)
     return { success: true }
   })

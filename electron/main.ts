@@ -18,6 +18,8 @@ import { setupPlayitHandlers } from './ipc/playit'
 import { setupNetworkHandlers, firewallStatus } from './ipc/network'
 import { setupDiagnosticsHandlers } from './ipc/diagnostics'
 import { setupDiscordHandlers } from './ipc/discord'
+import { allowedFile, allowedFolder, localPath } from './ipc/allowedPaths'
+import { configFolders, appFolders } from './ipc/appFolders'
 
 // vite-plugin-electron passes the dev server address when running `npm run dev`
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
@@ -87,6 +89,16 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+}
+
+// Files the user picked in an Open or Save dialog this session, which the window may then
+// read or write wherever they are
+const pickedFiles = new Set<string>()
+function pick(p: string | undefined): string | null {
+  if (!p) return null
+  const full = localPath(p)
+  if (full) pickedFiles.add(full.toLowerCase())
+  return p
 }
 
 // Only steamcommunity.com is allowed inside the workshop webview, and it never gets node or a preload
@@ -184,9 +196,12 @@ app.whenReady().then(() => {
     return { totalMemMb: Math.floor(os.totalmem() / 1024 / 1024), platform: process.platform }
   })
 
-  // Open a folder in Explorer (env vars like %USERPROFILE% allowed)
+  // Open a folder in Explorer (env vars like %USERPROFILE% allowed). Only the app's own
+  // folders, and never a file: a file would open with whatever program it belongs to
   ipcMain.handle('shell:openPath', async (_event, p: string) => {
-    return shell.openPath(p.replace(/%([^%]+)%/g, (_, name) => process.env[name] || `%${name}%`))
+    const folder = allowedFolder(p, appFolders())
+    if (!folder) return "That isn't one of the app's folders."
+    return shell.openPath(folder)
   })
 
   // Open folder dialog
@@ -197,25 +212,22 @@ app.whenReady().then(() => {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  // Open file dialog (for .ini import)
+  // Open file dialog (for .ini import). The file picked can be read with fs:readFile after
   ipcMain.handle('dialog:openFile', async (_event, filters?: Electron.FileFilter[]) => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       properties: ['openFile'],
       filters: filters || [{ name: 'All Files', extensions: ['*'] }],
     })
-    return result.canceled ? null : result.filePaths[0]
+    return result.canceled ? null : pick(result.filePaths[0])
   })
 
-  // Expand Windows environment variables in a path (%USERPROFILE%, %APPDATA%, etc.)
-  function expandEnvVars(p: string): string {
-    return p.replace(/%([^%]+)%/g, (_, name) => process.env[name] || `%${name}%`)
-  }
-
-  // Read a file from disk and return its text content
+  // Read a file from disk and return its text content. Only the servers' config files and
+  // files the user picked in a dialog (see allowedFile)
   ipcMain.handle('fs:readFile', async (_event, filePath: string) => {
     try {
       const { readFileSync } = await import('fs')
-      const resolved = expandEnvVars(filePath)
+      const resolved = allowedFile(filePath, configFolders(), pickedFiles)
+      if (!resolved) return { success: false, message: "The app can't open that file." }
       const content = readFileSync(resolved, 'utf-8')
       return { success: true, content }
     } catch (error: unknown) {
@@ -224,14 +236,15 @@ app.whenReady().then(() => {
     }
   })
 
-  // Write text content to a file (creates parent directories if needed)
+  // Write text content to a file (creates parent directories if needed). Same files as fs:readFile
   ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string) => {
     try {
       const { writeFileSync, mkdirSync } = await import('fs')
       const { dirname } = await import('path')
-      const resolved = expandEnvVars(filePath)
+      const resolved = allowedFile(filePath, configFolders(), pickedFiles)
+      if (!resolved) return { success: false, message: "The app can't save to that file." }
       mkdirSync(dirname(resolved), { recursive: true })
-      writeFileSync(resolved, content, 'utf-8')
+      writeFileSync(resolved, String(content), 'utf-8')
       return { success: true }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error)
@@ -280,7 +293,7 @@ app.whenReady().then(() => {
       defaultPath: defaultName,
       filters: filters || [{ name: 'All Files', extensions: ['*'] }],
     })
-    return result.canceled ? null : result.filePath
+    return result.canceled || !result.filePath ? null : pick(result.filePath)
   })
 
   app.on('activate', () => {

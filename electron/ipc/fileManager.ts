@@ -4,6 +4,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { mergeIni, mergeSandbox, isGameWritten, type SettingsTree } from '../../shared/gameConfig'
 import { getProfile, listProfiles, getServerName, type ServerProfile } from './profileManager'
 import { loadSettings } from './appSettings'
+import { knownDataFolder } from './appFolders'
+import { isServerName } from './allowedPaths'
 
 function getServerDataPath(dataPath: string): string {
   // Expand %USERPROFILE% and other env vars on Windows
@@ -16,6 +18,14 @@ function getServerDir(dataPath: string): string {
 
 function profileServerDir(p: Pick<ServerProfile, 'worldSavePath'>): string {
   return getServerDir(p.worldSavePath?.replace(/\\$/, '') || '%USERPROFILE%\\Zomboid')
+}
+
+// The window names the server and its data folder: only one of the servers' own folders, and
+// a plain server name (no ..\ to write the file somewhere else)
+function checkedServerDir(serverName: string, dataPath: string): string {
+  const dir = knownDataFolder(dataPath)
+  if (!dir || !isServerName(serverName)) throw new Error("That isn't one of the servers' config folders.")
+  return join(dir, 'Server')
 }
 
 const readIfThere = (file: string) => (existsSync(file) ? readFileSync(file, 'utf-8') : undefined)
@@ -76,7 +86,7 @@ export function setupFileHandlers() {
   // Write .ini file: preserves comments and existing lines, only updates changed keys
   ipcMain.handle('config:writeIni', async (_event, serverName: string, dataPath: string, settings: Record<string, unknown>) => {
     try {
-      const serverDir = getServerDir(dataPath)
+      const serverDir = checkedServerDir(serverName, dataPath)
       if (!existsSync(serverDir)) mkdirSync(serverDir, { recursive: true })
       const iniPath = join(serverDir, `${serverName}.ini`)
       writeFileSync(iniPath, mergeIni(readIfThere(iniPath) || '', settings), 'utf-8')
@@ -89,7 +99,7 @@ export function setupFileHandlers() {
   // Write SandboxVars.lua: same, settings go into their own section
   ipcMain.handle('config:writeSandbox', async (_event, serverName: string, dataPath: string, settings: SettingsTree) => {
     try {
-      const serverDir = getServerDir(dataPath)
+      const serverDir = checkedServerDir(serverName, dataPath)
       if (!existsSync(serverDir)) mkdirSync(serverDir, { recursive: true })
       const luaPath = join(serverDir, `${serverName}_SandboxVars.lua`)
       const existing = readIfThere(luaPath) || ''

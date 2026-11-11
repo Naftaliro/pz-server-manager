@@ -3,12 +3,19 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { rm } from 'fs/promises'
 import { folderSize, forgetFolderSize } from './folderSize'
+import { knownDataFolder } from './appFolders'
+import { isServerName } from './allowedPaths'
 
+// One of the servers' own data folders, and a plain server name: a wipe deletes this folder,
+// so nothing the window sends can point it anywhere else (..\..\ or another drive)
 function getServerDataPath(dataPath: string): string {
-  return dataPath.replace('%USERPROFILE%', process.env.USERPROFILE || process.env.HOME || '')
+  const dir = knownDataFolder(dataPath)
+  if (!dir) throw new Error("That isn't one of the servers' data folders.")
+  return dir
 }
 
 function getWorldSavePath(serverName: string, dataPath: string): string {
+  if (!isServerName(serverName)) throw new Error(`"${String(serverName)}" isn't a server name.`)
   return join(getServerDataPath(dataPath), 'Saves', 'Multiplayer', serverName)
 }
 

@@ -5,6 +5,7 @@ import { getProfile, patchProfile } from './profileManager'
 import { scanModFolders, fetchModDetails } from './modManager'
 import { resolveDataPath } from './serverManager'
 import { loadSettings } from './appSettings'
+import { allowedFolder } from './allowedPaths'
 import { enabledIds, isWorkshopId } from '../../shared/modCore'
 import { buildWorkshopTxt, readWorkshopId, cantUploadReason } from '../../shared/workshopItem'
 
@@ -125,8 +126,10 @@ export function setupWorkshopHandlers() {
   ipcMain.handle('workshop:status', wrap((profileId: string, modId: string) => uploadStatus(profileId, modId)))
   ipcMain.handle('workshop:useWorkshopCopy', wrap((profileId: string, modId: string, workshopId: string) => useWorkshopCopy(profileId, modId, workshopId)))
   ipcMain.handle('workshop:openFolder', wrap(async (dir: string) => {
-    if (!dir.startsWith(workshopRoot())) throw new Error('Not a Workshop folder.')
-    await shell.openPath(dir)
+    // a folder inside Zomboid\Workshop, for real: not ..\ out of it, not a file
+    const folder = allowedFolder(dir, [workshopRoot()])
+    if (!folder) throw new Error('Not a Workshop folder.')
+    await shell.openPath(folder)
     return {}
   }))
 }
