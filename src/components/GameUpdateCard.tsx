@@ -29,15 +29,26 @@ export default function GameUpdateCard({ profile, update, onUpdated }: { profile
   useNavHold(working)
   // one this card didn't start just finished: what's installed now says how it went
   const [seen, setSeen] = useState<number | null>(null)
+  // so the card doesn't just vanish when that job ends
+  const [finished, setFinished] = useState(false)
   useEffect(() => {
-    if (install) setSeen(install.id)
-    else if (seen !== null) { setSeen(null); if (phase !== 'working') onUpdated() }
+    if (install) { setSeen(install.id); setFinished(false) }
+    else if (seen !== null) { setSeen(null); if (phase !== 'working') { setFinished(true); onUpdated() } }
   }, [install?.id])
 
   if (install && phase !== 'working') {
     return (
       <Box tone="yellow" icon={<Loader size={14} className="animate-spin" />}>
         <p className="flex-1">{install.progress || 'The game server is updating...'} <span className="text-pz-muted">Servers on these game files can start again when it's done.</span></p>
+      </Box>
+    )
+  }
+
+  if (finished && phase === 'idle') {
+    return (
+      <Box tone="green" icon={<CheckCircle size={14} />}>
+        <p className="flex-1">The game server update finished. Servers on these game files can start again, and the version they're on now is shown above.</p>
+        <button onClick={() => setFinished(false)} className="text-pz-muted hover:text-pz-text"><X size={14} /></button>
       </Box>
     )
   }
