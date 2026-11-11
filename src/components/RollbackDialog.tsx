@@ -47,6 +47,8 @@ export default function RollbackDialog({ profile, startWith, undo, onClose }: {
     let result: RollbackResult
     try { result = await go() } catch (e) { result = { success: false, message: e instanceof Error ? e.message : String(e) } }
     setStep({ kind: 'done', result, undo: isUndo })
+    // the game version may have changed with it
+    load()
   }
 
   useEffect(() => {

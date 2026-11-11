@@ -39,8 +39,9 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
 
   useEffect(() => {
     window.electronAPI.server.networkInfo().then(setNet).catch(() => setNet({ publicIp: null, lanIps: [] }))
-    void checkUpdate()
   }, [profile.id])
+  // again after every start and stop: a rollback or update in between can change the game version
+  useEffect(() => { void checkUpdate() }, [profile.id, status])
 
   const loadWorld = () => {
     window.electronAPI.world.getSize(getServerName(profile), dataPath(profile)).then(r => {

@@ -109,7 +109,8 @@ export default function AppSettings() {
           {serverUpdate?.installed && (
             <p className="text-xs text-pz-subtext">
               Game version <b className="text-pz-text">{shortVersion(serverUpdate.installedVersion) || `build ${serverUpdate.installed}`}</b>
-              {' · '}{serverUpdate.branch === 'public' ? 'the normal version' : <span className="text-pz-blue">{serverUpdate.branchLabel}</span>}
+              {' · '}{serverUpdate.branch === 'public' ? 'the normal version'
+                : <span className="text-pz-blue">{serverUpdate.branchLabel.startsWith(shortVersion(serverUpdate.installedVersion) || '-') ? serverUpdate.branchLabel.replace(/^\S+\s*/, '') || serverUpdate.branchLabel : serverUpdate.branchLabel}</span>}
               <span className="text-pz-muted"> (Steam branch {serverUpdate.branch}, build {serverUpdate.installed})</span>
             </p>
           )}
@@ -131,7 +132,9 @@ export default function AppSettings() {
             </p>
           )}
           {serverUpdate?.chosenBranch && (
-            <p className="text-xs text-pz-yellow flex items-center gap-1"><AlertCircle size={12} /> "Update server" switches it to {branches?.find(b => b.name === serverUpdate.chosenBranch)?.label || serverUpdate.chosenBranch}.</p>
+            <p className="text-xs text-pz-yellow flex items-center gap-1">
+              <AlertCircle size={12} /> "Update server" switches it to {serverUpdate.chosenBranch === 'public' ? 'the normal version' : branches?.find(b => b.name === serverUpdate.chosenBranch)?.label || serverUpdate.chosenBranch}.
+            </p>
           )}
           <button onClick={() => update({ askBeforeServerUpdate: settings?.askBeforeServerUpdate === false })} className="w-full flex items-center gap-3 text-left">
             <div className={`w-10 h-5 rounded-full relative transition-colors flex-shrink-0 ${settings?.askBeforeServerUpdate !== false ? 'bg-pz-green' : 'bg-pz-border'}`}>
