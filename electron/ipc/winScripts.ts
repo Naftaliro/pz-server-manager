@@ -73,18 +73,31 @@ export function launcherScript(o: LauncherOptions): string {
   ].join('\r\n')
 }
 
+// The app's exe. 1.6 renamed it from "PZ Server Manager.exe" to "Knox Launcher.exe", and a
+// copy can be running under either name (installed or unzipped before the rename), so the
+// updater and the installer check look for both. The new name first
+export const APP_EXE_NAMES = ['Knox Launcher.exe', 'PZ Server Manager.exe']
+
 export interface UpdateScriptOptions {
   // the unpacked update, already checked (the app's exe and its signature are in it)
   sourceDir: string
   // the running app's exe, which gets replaced and started again
   appExe: string
+  // the exe's file name in the update, when it isn't the running one's (the 1.6 rename):
+  // that one gets started, and the old one is deleted once the new files are in
+  newExeName?: string
 }
 
 // What runs after the app quits to put a downloaded update in place. The app unpacks the
 // update and checks its signature before this is written, so this only copies it over
 export function updateScript(o: UpdateScriptOptions): string {
-  const exe = batText(win32.basename(o.appExe))
+  const oldName = win32.basename(o.appExe)
+  const newName = o.newExeName || oldName
+  const renamed = newName.toLowerCase() !== oldName.toLowerCase()
+  const exe = batText(newName)
   const appDir = batText(win32.dirname(o.appExe))
+  // the name it's running under, and the new one
+  const waitFor = [...new Set([oldName, newName].map(n => batText(n)))]
   return [
     '@echo off',
     UTF8,
@@ -97,8 +110,12 @@ export function updateScript(o: UpdateScriptOptions): string {
     // files stay locked until every app process is gone, so wait for that (up to ~30s)
     'set /a TRIES=0',
     ':waitloop',
-    `tasklist /FI "IMAGENAME eq ${exe}" /NH | find /I "${exe}" > nul`,
-    'if errorlevel 1 goto closed',
+    ...waitFor.flatMap(name => [
+      `tasklist /FI "IMAGENAME eq ${name}" /NH | find /I "${name}" > nul`,
+      'if not errorlevel 1 goto stillopen',
+    ]),
+    'goto closed',
+    ':stillopen',
     'set /a TRIES+=1',
     'if %TRIES% geq 30 goto closed',
     'timeout /t 1 /nobreak > nul',
@@ -116,11 +133,14 @@ export function updateScript(o: UpdateScriptOptions): string {
     `xcopy /E /Y /I "%SRC%\\*" "${appDir}\\" > nul`,
     'if errorlevel 1 goto failed',
     ':copied',
+    // the exe got a new name: the old one is the previous version, it would start the old
+    // Electron with the new files
+    ...(renamed ? [`if exist "${appDir}\\${exe}" del /f /q "${batText(o.appExe)}" > nul 2> nul`] : []),
     '',
     'echo.',
     'echo Update complete! Relaunching Knox Launcher...',
     'timeout /t 2 /nobreak > nul',
-    `start "" "${batText(o.appExe)}"`,
+    `start "" "${appDir}\\${exe}"`,
     ':: clean up this batch file',
     'del "%~f0"',
     'exit /b 0',
@@ -249,10 +269,17 @@ export function firewallState(needed: FirewallEntry[], rules: FirewallRuleInfo[]
 
 // The installed (NSIS) copy has electron-builder's uninstaller next to the exe, named after
 // the exe ("Uninstall ${productFilename}.exe", and productFilename comes from executableName,
-// so here "Uninstall PZ Server Manager.exe"). The portable zip doesn't have one
+// so here "Uninstall Knox Launcher.exe"). The portable zip doesn't have one
 export function uninstallerFor(appExe: string): string {
   const name = win32.basename(appExe).replace(/\.exe$/i, '')
   return win32.join(win32.dirname(appExe), `Uninstall ${name}.exe`)
+}
+
+// Every uninstaller an installed copy could have: its own name's, and the other names' (a copy
+// installed as "PZ Server Manager" that a pre-1.6 zip update put the new exe next to)
+export function uninstallersFor(appExe: string): string[] {
+  const dir = win32.dirname(appExe)
+  return [...new Set([uninstallerFor(appExe), ...APP_EXE_NAMES.map(n => uninstallerFor(win32.join(dir, n)))])]
 }
 
 // electron-builder's NSIS switches: silent, an update (waits for the app to close and skips

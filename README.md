@@ -42,7 +42,7 @@ a windows app for playing project zomboid (b42) with your friends. host a server
 
 ## install
 
-grab `Knox-Launcher-Setup-x.x.x.exe` from [releases](https://github.com/Naftaliro/pz-server-manager/releases/latest) and run it. it installs, puts a shortcut on your desktop and opens. prefer portable? grab the zip instead and run `PZ Server Manager.exe` from the extracted folder (the exe kept its old name).
+grab `Knox-Launcher-Setup-x.x.x.exe` from [releases](https://github.com/Naftaliro/pz-server-manager/releases/latest) and run it. it installs, puts a shortcut on your desktop and opens. prefer portable? grab the zip instead and run `Knox Launcher.exe` from the extracted folder (before 1.6 it was called `PZ Server Manager.exe`).
 
 the app is signed, so windows shows the publisher as **Mitchell Berg**. for a while after a new release windows might still say it "protected your pc", because it wants to see enough downloads first. click **more info**, check the publisher says Mitchell Berg, then **run anyway**.
 
