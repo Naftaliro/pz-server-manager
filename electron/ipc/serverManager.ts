@@ -818,7 +818,8 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
   // out of date = nobody on the current game version can join
   try {
     const upd = await updateCheck
-    if (upd?.updateAvailable) {
+    // not while the update is already running (the Overview shows that one instead)
+    if (upd?.updateAvailable && !startBlocker(profile)) {
       issues.push({
         level: 'warning',
         message: upd.steamManaged
@@ -916,25 +917,8 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
     })
   }
 
-  // a world saved by a newer game than the one installed: the game can't load it. Happens to
-  // the other servers on these game files when one of them was rolled back to an older version
-  try {
-    const inst = installedBuild(profile.serverInstallPath)
-    const learned = learnedBuilds()
-    const worldVersion = await readWorldVersion(join(resolveDataPath(profile.worldSavePath), 'Saves', 'Multiplayer', getServerName(profile)))
-    const versionOfWorld = (wv?: number) => Object.values({ ...KNOWN_BUILDS, ...learned }).find(b => b.worldVersion === wv)?.version
-    const switchedBy = listProfiles()
-      .filter(p => p.id !== profile.id && p.lastRollback?.branchAfter === inst.branch && sameInstall(p.serverInstallPath, profile.serverInstallPath))
-      .sort((a, b) => Date.parse(b.lastRollback!.at) - Date.parse(a.lastRollback!.at))[0]
-    const problem = newerWorldProblem({
-      worldVersion,
-      gameWorldVersion: worldVersionOf(inst.buildId, learned),
-      savedBy: shortVersion(profile.lastRunGame?.version) || shortVersion(versionOfWorld(worldVersion)),
-      installed: shortVersion(versionOf(inst.buildId, { learned, branches: cachedBranches() })),
-      rolledBackBy: switchedBy?.name,
-    })
-    if (problem) issues.push({ level: 'error', message: problem, fix: 'update-server' })
-  } catch { /* nothing to compare */ }
+  const newer = await newerWorldCheck(profile)
+  if (newer) issues.push({ level: 'error', message: newer, fix: 'update-server' })
 
   // requirements from the downloaded mod.info files (fresh scan, in case files changed)
   const fresh = new Map<string, Awaited<ReturnType<typeof scanWorkshopItem>>>()
@@ -985,6 +969,29 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
 // Start / stop
 // ---------------------------------------------------------------------------
 // withoutBackup: the user said to start even though the backup before a game version change failed
+// A world saved by a newer game than the one installed: the game can't load it. Happens to
+// the other servers on these game files when one of them was rolled back to an older version
+async function newerWorldCheck(profile: ServerProfile): Promise<string | null> {
+  try {
+    const inst = installedBuild(profile.serverInstallPath)
+    const learned = learnedBuilds()
+    const worldVersion = await readWorldVersion(join(resolveDataPath(profile.worldSavePath), 'Saves', 'Multiplayer', getServerName(profile)))
+    const versionOfWorld = (wv?: number) => Object.values({ ...KNOWN_BUILDS, ...learned }).find(b => b.worldVersion === wv)?.version
+    const switchedBy = listProfiles()
+      .filter(p => p.id !== profile.id && p.lastRollback?.branchAfter === inst.branch && sameInstall(p.serverInstallPath, profile.serverInstallPath))
+      .sort((a, b) => Date.parse(b.lastRollback!.at) - Date.parse(a.lastRollback!.at))[0]
+    return newerWorldProblem({
+      worldVersion,
+      gameWorldVersion: worldVersionOf(inst.buildId, learned),
+      savedBy: shortVersion(profile.lastRunGame?.version) || shortVersion(versionOfWorld(worldVersion)),
+      installed: shortVersion(versionOf(inst.buildId, { learned, branches: cachedBranches() })),
+      rolledBackBy: switchedBy?.name,
+    })
+  } catch {
+    return null // nothing to compare
+  }
+}
+
 async function startServer(profileId: string, opts: { withoutBackup?: boolean } = {}): Promise<{ success: boolean; message: string; needsConfirm?: 'no-backup' }> {
   try {
     const existing = runningServers.get(profileId)
@@ -998,6 +1005,11 @@ async function startServer(profileId: string, opts: { withoutBackup?: boolean } 
     // its game files or its world are being changed (busy.ts)
     const blocked = startBlocker(profile)
     if (blocked) return { success: false, message: blocked }
+
+    // the pre-start check says this too, but starts with the app, restarts and "Start anyway"
+    // don't go through it. The game would refuse the world anyway, so there's no way around it
+    const newer = await newerWorldCheck(profile)
+    if (newer) return { success: false, message: newer }
 
     // the app lost track of it (closed and reopened, a check went wrong) but it's still
     // up: reconnect. A second copy would fight it for the port, wipe its log and
