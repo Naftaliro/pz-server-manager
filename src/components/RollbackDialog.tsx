@@ -6,7 +6,7 @@ import {
 import type { ServerProfile } from '../store/useAppStore'
 import { useAppStore } from '../store/useAppStore'
 import { quickPicks, whenLabel, dayLabel, REASON_LABELS, type QuickPickKey } from '../../shared/backups'
-import { formatBytes } from '../lib/profile'
+import { formatBytes, everyMinutes } from '../lib/profile'
 
 type Check = Awaited<ReturnType<typeof window.electronAPI.backups.check>>
 
@@ -113,7 +113,14 @@ function Pick({ backups, now, current, showList, setShowList, onPick, profile, r
   const [deleting, setDeleting] = useState<string | null>(null)
   if (!backups) return <p className="text-sm text-pz-muted flex items-center gap-2 py-4"><Loader size={14} className="animate-spin" /> Looking at your backups...</p>
   if (backups.length === 0) {
-    return <p className="text-sm text-pz-subtext py-4">No backups yet. One gets made every time the server starts, and every 30 minutes while people play.</p>
+    const every = profile.backupEveryMinutes ?? 30
+    return (
+      <p className="text-sm text-pz-subtext py-4">
+        {profile.backupsEnabled !== false
+          ? `No backups yet. One gets made every time the server starts${every ? `, and ${everyMinutes(every)} while people play` : ''}.`
+          : 'No backups yet. Automatic backups are off for this server (Settings tab), so one only gets made when you press "Back up now" or before a game update changes the world.'}
+      </p>
+    )
   }
   const picks = quickPicks(
     backups.map(b => ({ id: b.name, createdAt: Date.parse(b.createdAt), reason: b.reason, game: b.game })),

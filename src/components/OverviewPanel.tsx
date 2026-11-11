@@ -10,7 +10,7 @@ import StartButton from './StartButton'
 import ConfirmDialog from './ConfirmDialog'
 import RollbackDialog from './RollbackDialog'
 import GameUpdateCard from './GameUpdateCard'
-import { getServerName, dataPath, patchProfile, formatBytes } from '../lib/profile'
+import { getServerName, dataPath, patchProfile, formatBytes, everyMinutes } from '../lib/profile'
 import { applyFix, inviteMessage, splitAddress } from '../lib/fixes'
 import { PLAYIT_INTEGRATION } from '../lib/features'
 import { steamSwitchSteps } from '../../shared/gameVersion'
@@ -488,7 +488,7 @@ function WorldCard({ profile, world, stopped, onWipe, say }: {
           <p className="text-xs text-pz-subtext">
             {world?.exists ? 'Your saved world. ' : 'No world yet, one gets made the first time you start. '}
             {profile.backupsEnabled !== false
-              ? `Backed up when the server starts${every ? ` and every ${every >= 60 ? (every === 60 ? 'hour' : `${every / 60} hours`) : `${every} minute${every === 1 ? '' : 's'}`} while people play` : ''}.`
+              ? `Backed up when the server starts${every ? ` and ${everyMinutes(every)} while people play` : ''}.`
               : 'Automatic backups are off.'}
             {count > 0 && ` ${count} backup${count === 1 ? '' : 's'}${summary?.usageBytes ? `, ${formatBytes(summary.usageBytes)} on disk` : ''}.`}
           </p>

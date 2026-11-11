@@ -21,6 +21,11 @@ export function formatBytes(bytes?: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
+// "every 30 minutes", "every hour", "every 2 hours" for the backup interval
+export function everyMinutes(every: number): string {
+  return `every ${every >= 60 ? (every === 60 ? 'hour' : `${every / 60} hours`) : `${every} minute${every === 1 ? '' : 's'}`}`
+}
+
 // B42 wants Mods=\ModA;\ModB, B41 wants Mods=ModA;ModB (shared with the backend)
 export { formatModIds } from '../../shared/modCore'
 
