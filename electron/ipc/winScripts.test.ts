@@ -9,7 +9,7 @@ import {
   firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, FIREWALL_RULE, OLD_FIREWALL_RULE,
   type FirewallRuleInfo, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller, folderSizeArgs, parseFolderSize,
   RELEASE_SIGNER, signatureQueryScript, signedByUs, type SignatureInfo,
-  ARTIFACT_SIGNING_EKU, CODE_SIGNING_EKU,
+  folderSignaturesScript, updatePackageProblem, expandArchiveScript, ARTIFACT_SIGNING_EKU, CODE_SIGNING_EKU,
 } from './winScripts'
 
 const STOCK_BAT = [
@@ -47,13 +47,13 @@ describe('patchStartBat', () => {
 
 describe('launcherScript', () => {
   const lines = launcherScript({
-    serverName: 'Main', serverDir: 'C:\\Users\\JosÃ©\\100% PZ', startBat: '_pzm_StartServer64_Main.bat',
+    serverName: 'Main', serverDir: 'C:\\Users\\José\\100% PZ', startBat: '_pzm_StartServer64_Main.bat',
     adminPassword: '50%off\\', cacheDir: 'D:\\Zomboid',
   }).split('\r\n')
 
   it('switches to UTF-8 before the first path', () => {
     expect(lines.indexOf('chcp 65001 > nul')).toBeLessThan(lines.findIndex(l => l.startsWith('cd /d')))
-    expect(lines).toContain('cd /d "C:\\Users\\JosÃ©\\100%% PZ"')
+    expect(lines).toContain('cd /d "C:\\Users\\José\\100%% PZ"')
   })
 
   it('keeps the password and data folder out of the call line', () => {
@@ -72,23 +72,30 @@ describe('launcherScript', () => {
 
 describe('updateScript', () => {
   const out = updateScript({
-    zipPath: "C:\\Users\\O'Neil 100%\\update.zip",
-    extractDir: 'C:\\Users\\Åukasz!\\extracted',
-    appExe: 'C:\\Users\\Åukasz!\\Programs\\Knox Launcher\\PZ Server Manager.exe',
+    sourceDir: "C:\\Users\\O'Neil 100%\\extracted",
+    appExe: 'C:\\Users\\Łukasz!\\Programs\\Knox Launcher\\PZ Server Manager.exe',
   })
 
   it('switches to UTF-8 before the first path and never turns on delayed expansion', () => {
-    expect(out.indexOf('chcp 65001')).toBeLessThan(out.indexOf('Åukasz'))
+    expect(out.indexOf('chcp 65001')).toBeLessThan(out.indexOf('Łukasz'))
     expect(out).not.toMatch(/delayedexpansion/i)
   })
 
-  it("escapes ' for powershell and % for cmd", () => {
-    expect(out).toContain("-LiteralPath 'C:\\Users\\O''Neil 100%%\\update.zip'")
+  it('only copies the folder the app already checked, escaping % for cmd', () => {
+    expect(out).toContain('set "SRC=C:\\Users\\O\'Neil 100%%\\extracted"')
+    expect(out).toContain('if not exist "%SRC%\\PZ Server Manager.exe" goto failed')
+    // unpacking (and the signature check) happen in the app before this runs
+    expect(out).not.toMatch(/Expand-Archive|powershell/i)
+  })
+
+  it("escapes ' for powershell when the app unpacks the zip", () => {
+    expect(expandArchiveScript("C:\\Users\\O'Neil 100%\\update.zip", 'C:\\x'))
+      .toContain("Expand-Archive -LiteralPath 'C:\\Users\\O''Neil 100%\\update.zip' -DestinationPath 'C:\\x' -Force")
   })
 
   it('waits for the right exe and stops with an error instead of claiming success', () => {
     expect(out).toContain('tasklist /FI "IMAGENAME eq PZ Server Manager.exe"')
-    expect(out).toContain('robocopy "%SRC%" "C:\\Users\\Åukasz!\\Programs\\Knox Launcher"')
+    expect(out).toContain('robocopy "%SRC%" "C:\\Users\\Łukasz!\\Programs\\Knox Launcher"')
     expect(out).toContain('if errorlevel 1 goto failed')
     expect(out.indexOf(':failed')).toBeGreaterThan(out.indexOf('exit /b 0'))
   })
@@ -193,9 +200,13 @@ describe.runIf(process.platform === 'win32')('on Windows', () => {
     const zipPath = join(work, 'Knox.Launcher-9.9.9-win.zip')
     execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
       `Compress-Archive -Path '${pkg.replace(/'/g, "''")}\\*' -DestinationPath '${zipPath.replace(/'/g, "''")}'`])
+    // the app unpacks it (and checks the signature) before writing the script
+    const extracted = join(work, 'extracted')
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', expandArchiveScript(zipPath, extracted)])
+    expect(readFileSync(join(extracted, 'resources', 'app.asar'), 'utf-8')).toBe('new')
 
     const scriptPath = join(work, 'pz-update.bat')
-    writeFileSync(scriptPath, updateScript({ zipPath, extractDir: join(work, 'extracted'), appExe: join(appDir, exe) }), 'utf-8')
+    writeFileSync(scriptPath, updateScript({ sourceDir: extracted, appExe: join(appDir, exe) }), 'utf-8')
     const restore = legacyConsole('Knox Launcher Updater')
     const cmd = updaterWindowCommand(scriptPath)
     spawn('cmd.exe', [cmd.args], {
@@ -337,6 +348,28 @@ describe('installer updates', () => {
 
   it("escapes ' in the path for powershell", () => {
     expect(signatureQueryScript("C:\\Users\\O'Brien\\setup.exe")).toContain("-LiteralPath 'C:\\Users\\O''Brien\\setup.exe'")
+    expect(folderSignaturesScript("C:\\Users\\O'Brien\\extracted")).toContain("-LiteralPath 'C:\\Users\\O''Brien\\extracted'")
+  })
+
+  // security review F6: the portable zip gets the same check as the installer
+  describe('portable update package', () => {
+    const exe = 'C:\\update\\extracted\\PZ Server Manager.exe'
+    const file = (name: string, sig: Partial<SignatureInfo>): SignatureInfo => ({ status: 'NotSigned', signer: '', ...sig, path: `C:\\update\\extracted\\${name}` })
+
+    it('goes in when the exe is ours and nothing else has a broken signature', () => {
+      expect(updatePackageProblem([file('PZ Server Manager.exe', ours), file('ffmpeg.dll', {}), file('d3dcompiler_47.dll', { status: 'Valid', signer: 'Microsoft Corporation' })], exe)).toBeNull()
+      // paths compare the way Windows does
+      expect(updatePackageProblem([{ ...ours, path: 'c:\\UPDATE\\extracted\\pz server manager.exe' }], exe)).toBeNull()
+    })
+
+    it("stops when the exe isn't there, isn't ours, or something was changed after signing", () => {
+      expect(updatePackageProblem([file('ffmpeg.dll', {})], exe)).toMatch(/doesn't have PZ Server Manager.exe/)
+      expect(updatePackageProblem([file('PZ Server Manager.exe', {})], exe)).toMatch(/isn't signed by/)
+      expect(updatePackageProblem([file('PZ Server Manager.exe', { ...ours, status: 'HashMismatch' })], exe)).toMatch(/isn't signed by/)
+      expect(updatePackageProblem([file('PZ Server Manager.exe', { ...ours, signer: 'Mallory', subject: ['CN=Mallory', 'O=Mallory'] })], exe)).toMatch(/isn't signed by/)
+      expect(updatePackageProblem([file('PZ Server Manager.exe', ours), file('libEGL.dll', { status: 'HashMismatch', signer: 'Google LLC' })], exe)).toMatch(/libEGL.dll .* broken signature \(HashMismatch\)/)
+      expect(updatePackageProblem([], exe)).not.toBeNull()
+    })
   })
 })
 
@@ -359,25 +392,57 @@ describe.runIf(process.platform === 'win32')('signatures on Windows', () => {
   }, 30000)
 
   it('reads an unsigned file in a folder with awkward characters', () => {
-    const dir = mkdtempSync(join(tmpdir(), "pzm sig it's Ã¼-"))
+    const dir = mkdtempSync(join(tmpdir(), "pzm sig it's ü-"))
     const file = join(dir, 'unsigned.ps1')
     writeFileSync(file, 'Write-Output 1\r\n')
     expect(signature(file)).toEqual({ path: file, status: 'NotSigned', signer: '', subject: [], issuer: '', timestamped: false, eku: [] })
   }, 30000)
 
   // started from PowerShell 7, the app's powershell.exe inherits a module path with 7's modules
-  // first. The check loads Windows PowerShell's own copy, so a module path like that (here a
+  // first. The checks load Windows PowerShell's own copy, so a module path like that (here a
   // stand-in copy that refuses to load) can't get in the way
   it('still works with a PowerShell 7 style module path in front', () => {
     expect(signatureQueryScript('C:\\a.exe')).toMatch(/^\$ErrorActionPreference = 'Stop'; Import-Module \(Join-Path \$PSHOME 'Modules\\Microsoft\.PowerShell\.Security'\);/)
+    expect(folderSignaturesScript('C:\\a')).toMatch(/^\$ErrorActionPreference = 'Stop'; Import-Module \(Join-Path \$PSHOME 'Modules\\Microsoft\.PowerShell\.Security'\);/)
+    expect(expandArchiveScript('C:\\a.zip', 'C:\\a')).toMatch(/^\$ErrorActionPreference = 'Stop'; Import-Module \(Join-Path \$PSHOME 'Modules\\Microsoft\.PowerShell\.Archive'\);/)
     const fake = mkdtempSync(join(tmpdir(), 'pzm-ps7-'))
-    for (const m of ['Microsoft.PowerShell.Security']) {
+    for (const m of ['Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Archive']) {
       mkdirSync(join(fake, m), { recursive: true })
       writeFileSync(join(fake, m, `${m}.psm1`), "throw 'this is PowerShell 7s copy'\r\n")
     }
     const env = { ...process.env, PSModulePath: `${fake};${process.env.PSModulePath || ''}` }
     expect(signature(process.execPath, env).status).toBe('Valid')
+    const zipDir = mkdtempSync(join(tmpdir(), 'pzm-ps7zip-'))
+    writeFileSync(join(zipDir, 'a.txt'), 'x')
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Compress-Archive -LiteralPath '${join(zipDir, 'a.txt')}' -DestinationPath '${join(zipDir, 'a.zip')}'`])
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', expandArchiveScript(join(zipDir, 'a.zip'), join(zipDir, 'out'))], { env })
+    expect(readFileSync(join(zipDir, 'out', 'a.txt'), 'utf-8')).toBe('x')
   }, 60000)
+
+  it('checks every program and library in an unpacked update, and spots one changed after signing', () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "pzm upd it's ü-")), 'app')
+    mkdirSync(join(dir, 'resources'), { recursive: true })
+    copyFileSync(process.execPath, join(dir, 'PZ Server Manager.exe'))
+    // an unsigned program, like Electron's own libraries: node.exe with its signature taken off
+    // (the security entry in the PE header cleared, the certificate table cut off the end)
+    const plain = readFileSync(process.execPath)
+    const pe = plain.readUInt32LE(0x3c)
+    const security = pe + 24 + (plain.readUInt16LE(pe + 24) === 0x20b ? 112 : 96) + 4 * 8
+    const certAt = plain.readUInt32LE(security)
+    plain.writeUInt32LE(0, security)
+    plain.writeUInt32LE(0, security + 4)
+    writeFileSync(join(dir, 'ffmpeg.dll'), plain.subarray(0, certAt))
+    writeFileSync(join(dir, 'resources', 'app.asar'), 'not checked')
+    // a signed program with one byte changed: Windows says HashMismatch
+    const tampered = readFileSync(process.execPath)
+    tampered[0x2000] ^= 0xff
+    writeFileSync(join(dir, 'resources', 'helper.exe'), tampered)
+    const sigs = run(folderSignaturesScript(dir)) as SignatureInfo[]
+    const byName = Object.fromEntries(sigs.map(s => [s.path!.slice(dir.length + 1), s.status]))
+    expect(byName).toEqual({ 'PZ Server Manager.exe': 'Valid', 'ffmpeg.dll': 'NotSigned', 'resources\\helper.exe': 'HashMismatch' })
+    // node.exe isn't ours, so this update wouldn't go in either way
+    expect(updatePackageProblem(sigs, join(dir, 'PZ Server Manager.exe'))).toMatch(/isn't signed by/)
+  }, 90000)
 })
 
 // the real thing, when a build has been made on this PC
@@ -410,7 +475,7 @@ describe('folder sizes', () => {
     '   Times :   0:00:00   0:00:00                       0:00:00   0:00:00',
     '   Ended : Monday, October 26, 2026 7:40:01 PM',
   ].join('\r\n')
-  const french = english.replace('Dirs :', 'RÃ©p. :').replace('Files :', 'Fichiers :').replace('Bytes :', 'Octets :')
+  const french = english.replace('Dirs :', 'Rép. :').replace('Files :', 'Fichiers :').replace('Bytes :', 'Octets :')
 
   it('reads the byte total in any language', () => {
     expect(parseFolderSize(english)).toBe(226865399)

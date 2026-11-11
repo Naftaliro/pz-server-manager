@@ -74,19 +74,17 @@ export function launcherScript(o: LauncherOptions): string {
 }
 
 export interface UpdateScriptOptions {
-  zipPath: string
-  extractDir: string
+  // the unpacked update, already checked (the app's exe and its signature are in it)
+  sourceDir: string
   // the running app's exe, which gets replaced and started again
   appExe: string
 }
 
-// What runs after the app quits to put a downloaded update in place
+// What runs after the app quits to put a downloaded update in place. The app unpacks the
+// update and checks its signature before this is written, so this only copies it over
 export function updateScript(o: UpdateScriptOptions): string {
   const exe = batText(win32.basename(o.appExe))
   const appDir = batText(win32.dirname(o.appExe))
-  const extractDir = batText(o.extractDir)
-  // single-quoted for powershell inside a .bat line
-  const ps = (p: string) => batText(p.replace(/'/g, "''"))
   return [
     '@echo off',
     UTF8,
@@ -107,16 +105,8 @@ export function updateScript(o: UpdateScriptOptions): string {
     'goto waitloop',
     ':closed',
     '',
-    'echo Extracting update package...',
-    `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '${ps(o.zipPath)}' -DestinationPath '${ps(o.extractDir)}' -Force"`,
-    'if errorlevel 1 goto failed',
-    '',
-    // the release zip is flat (exe at the root next to locales\ and resources\),
-    // so look for the exe instead of grabbing the first subfolder
-    'set "SRC="',
-    `if exist "${extractDir}\\${exe}" set "SRC=${extractDir}"`,
-    `if not defined SRC for /d %%i in ("${extractDir}\\*") do if not defined SRC if exist "%%i\\${exe}" set "SRC=%%i"`,
-    'if not defined SRC goto failed',
+    `set "SRC=${batText(o.sourceDir)}"`,
+    `if not exist "%SRC%\\${exe}" goto failed`,
     '',
     `echo Copying new files to "${appDir}"`,
     `robocopy "%SRC%" "${appDir}" /E /IS /IT /IM /NP /NJH /NJS > nul 2> nul`,
@@ -317,6 +307,11 @@ export function signatureQueryScript(file: string): string {
   return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security'); ${SIGNATURE_INFO}; ConvertTo-Json -Compress -Depth 4 -InputObject (PzmSig (Get-AuthenticodeSignature -LiteralPath ${psQuote(file)}) ${psQuote(file)})`
 }
 
+// The same for every program and library in a folder (an unpacked update), as a list
+export function folderSignaturesScript(dir: string): string {
+  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security'); ${SIGNATURE_INFO}; $r = @(Get-ChildItem -LiteralPath ${psQuote(dir)} -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object { PzmSig (Get-AuthenticodeSignature -LiteralPath $_.FullName) $_.FullName }); ConvertTo-Json -Compress -Depth 4 -InputObject $r`
+}
+
 export interface SignatureInfo {
   path?: string
   status: string
@@ -346,6 +341,28 @@ export function signedByUs(sig: SignatureInfo): boolean {
     && subjectField(sig, 'O') === RELEASE_SIGNER
     && typeof sig.issuer === 'string' && sig.issuer.startsWith(RELEASE_ISSUER_PREFIX)
     && Array.isArray(sig.eku) && sig.eku.includes(ARTIFACT_SIGNING_EKU) && sig.eku.includes(CODE_SIGNING_EKU)
+}
+
+/**
+ * What's wrong with an unpacked portable update, null when it can go in. The app's exe has to
+ * be signed by us, the same check as the installer. Every other program and library in it is
+ * either unsigned (Electron's own libraries are) or validly signed: a broken signature means
+ * the file was changed after it was signed.
+ */
+export function updatePackageProblem(sigs: SignatureInfo[], appExe: string): string | null {
+  const same = (a?: string) => !!a && win32.normalize(a).toLowerCase() === win32.normalize(appExe).toLowerCase()
+  const exe = sigs.find(s => same(s.path))
+  if (!exe) return `The update doesn't have ${win32.basename(appExe)} in it.`
+  if (!signedByUs(exe)) return `${win32.basename(appExe)} in the update isn't signed by ${RELEASE_SIGNER}.`
+  const broken = sigs.find(s => s.status !== 'Valid' && s.status !== 'NotSigned')
+  if (broken) return `${win32.basename(broken.path || '?')} in the update has a broken signature (${broken.status}).`
+  return null
+}
+
+// Unpacks a zip with Windows' own Expand-Archive (module from Windows PowerShell's folder, see
+// signatureQueryScript), for powershell -Command straight from the app, no cmd in between
+export function expandArchiveScript(zipPath: string, destDir: string): string {
+  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Archive'); Expand-Archive -LiteralPath ${psQuote(zipPath)} -DestinationPath ${psQuote(destDir)} -Force`
 }
 
 // ── Folder sizes ─────────────────────────────────────────────────────────────

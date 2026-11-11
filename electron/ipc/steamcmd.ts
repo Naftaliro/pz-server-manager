@@ -9,6 +9,7 @@ import { loadSettings, steamcmdExe } from './appSettings'
 import { PZ_APP_ID } from './modManager'
 import { backupAfterDownload } from './modBackups'
 import { isWorkshopId } from '../../shared/modCore'
+import { expandArchiveScript } from './winScripts'
 
 const STEAMCMD_URL = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 const PZ_SERVER_APP_ID = '380870'
@@ -196,9 +197,7 @@ async function ensureSteamCmd(targetDir: string): Promise<string> {
 
   const zipPath = join(targetDir, 'steamcmd.zip')
   await downloadFile(STEAMCMD_URL, zipPath)
-  // single-quoted for powershell, which reads nothing inside those but ''
-  const ps = (p: string) => `'${p.replace(/'/g, "''")}'`
-  await runCommand('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${ps(zipPath)} -DestinationPath ${ps(targetDir)} -Force`])
+  await runCommand('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', expandArchiveScript(zipPath, targetDir)])
   fs.unlinkSync(zipPath)
   return exe
 }

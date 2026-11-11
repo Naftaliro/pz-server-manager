@@ -9,7 +9,8 @@ import path from 'path'
 import { spawn, execFile } from 'child_process'
 import {
   updateScript, updaterWindowCommand, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller,
-  RELEASE_SIGNER, signatureQueryScript, signedByUs, type SignatureInfo,
+  RELEASE_SIGNER, signatureQueryScript, signedByUs, folderSignaturesScript, updatePackageProblem, expandArchiveScript,
+  type SignatureInfo,
 } from './winScripts'
 
 const GITHUB_OWNER = 'Naftaliro'
@@ -208,6 +209,54 @@ function readSignature(file: string): Promise<SignatureInfo | null> {
   })
 }
 
+// Every program and library in a folder, null if PowerShell couldn't tell
+function readFolderSignatures(dir: string): Promise<SignatureInfo[] | null> {
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', folderSignaturesScript(dir)], { windowsHide: true, timeout: 180000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+      if (err) return resolve(null)
+      try {
+        const list = JSON.parse(stdout)
+        resolve(Array.isArray(list) ? list : null)
+      } catch { resolve(null) }
+    })
+  })
+}
+
+function expandZip(zipPath: string, destDir: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', expandArchiveScript(zipPath, destDir)], { windowsHide: true, timeout: 300000 }, (err, _stdout, stderr) => {
+      if (err) reject(new Error(String(stderr || err.message).trim().split(/\r?\n/)[0]))
+      else resolve()
+    })
+  })
+}
+
+// The release zip is flat (exe at the root next to locales\ and resources\), but take a zip
+// with everything in one folder too
+function findUnpackedApp(extractDir: string, exeName: string): string | null {
+  if (originalFs.existsSync(path.join(extractDir, exeName))) return extractDir
+  for (const d of originalFs.readdirSync(extractDir, { withFileTypes: true })) {
+    if (d.isDirectory() && originalFs.existsSync(path.join(extractDir, d.name, exeName))) return path.join(extractDir, d.name)
+  }
+  return null
+}
+
+// Unpack the portable zip and check it the same way as the installer (updatePackageProblem).
+// sourceDir = the folder to copy over the app, only when everything checked out
+export async function unpackAndCheckUpdate(zipPath: string, extractDir: string, exeName: string): Promise<{ sourceDir: string } | { error: string }> {
+  let sourceDir: string | null
+  try {
+    await expandZip(zipPath, extractDir)
+    sourceDir = findUnpackedApp(extractDir, exeName)
+  } catch (err) {
+    return { error: `Couldn't unpack the update: ${(err as Error).message}.` }
+  }
+  if (!sourceDir) return { error: `The update doesn't have ${exeName} in it.` }
+  const sigs = await readFolderSignatures(sourceDir)
+  const problem = sigs ? updatePackageProblem(sigs, path.join(sourceDir, exeName)) : "Couldn't check the update's signature."
+  return problem ? { error: problem } : { sourceDir }
+}
+
 // ── Installed copy: run the new setup exe ─────────────────────────────────────
 //
 // Copying the zip over an installed copy worked, but Windows "Apps & features" kept
@@ -339,12 +388,13 @@ export function setupUpdaterHandlers() {
   // Strategy (the portable copy; an installed copy gets the setup exe, see installWithSetup):
   //   1. Clean any leftover temp dir from a previous attempt
   //   2. Download the zip to %LOCALAPPDATA%\pz-manager-update\
-  //   3. Verify the zip magic bytes. No signature check: only the exe in the zip is
-  //      signed, the app's own files (resources\app.asar) can't be
-  //   4. Write a .bat that: waits for the app to exit, extracts via PowerShell,
-  //      robocopy new files over the install dir (userData is never touched),
-  //      then relaunches the exe
-  //   5. Launch the bat detached, then quit the app
+  //   3. Verify the zip magic bytes
+  //   4. Unpack it next to the zip and check the signatures (updatePackageProblem): the exe
+  //      has to be signed by RELEASE_SIGNER like the installer. The app's own files
+  //      (resources\app.asar) can't carry a signature of their own
+  //   5. Write a .bat that: waits for the app to exit, robocopies the checked files over
+  //      the install dir (userData is never touched), then relaunches the exe
+  //   6. Launch the bat detached, then quit the app
   //
   // Progress is sent via safeSend() which guards against destroyed webContents.
   //
@@ -403,8 +453,21 @@ export function setupUpdaterHandlers() {
       return { success: false, message: `Failed to verify download: ${(err as Error).message}` }
     }
 
-    // ── Step 4: Write the updater batch script ───────────────────────────────────
-    const batchScript = updateScript({ zipPath, extractDir, appExe: app.getPath('exe') })
+    // ── Step 4: Unpack it here and check the signatures, before anything is replaced ──
+    // Same check as the installer: the new exe has to be signed by RELEASE_SIGNER, and nothing
+    // else in it can have a broken signature. Anything wrong (or a check that couldn't run)
+    // and the update stops, the app stays as it is
+    const appExe = app.getPath('exe')
+    safeSend('updater:progress', { stage: 'Checking the signature...', pct: 100 })
+    const checked = await unpackAndCheckUpdate(zipPath, extractDir, path.basename(appExe))
+    if ('error' in checked) {
+      cleanTempDir(tempDir)
+      return { success: false, message: `${checked.error} The update wasn't installed. Please update manually from the GitHub releases page.` }
+    }
+    const { sourceDir } = checked
+
+    // ── Step 5: Write the updater batch script ───────────────────────────────────
+    const batchScript = updateScript({ sourceDir, appExe })
 
     const batchPath = path.join(tempDir, 'pz-update.bat')
 
@@ -415,7 +478,7 @@ export function setupUpdaterHandlers() {
       return { success: false, message: `Failed to write updater script: ${(err as Error).message}` }
     }
 
-    // ── Step 5: Launch the batch detached and quit ───────────────────────────────
+    // ── Step 6: Launch the batch detached and quit ───────────────────────────────
     // Use /c (not /k) so the terminal closes automatically after the update completes.
     // The batch itself pauses on error so the user can read it, but exits cleanly on success.
     try {
