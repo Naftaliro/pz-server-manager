@@ -5,6 +5,7 @@ import { join } from 'path'
 import { parseModInfo, resolvePack, isWorkshopId, type ModInfo } from '../../shared/modCore'
 import { loadSettings } from './appSettings'
 import { steamImageUrl } from '../../shared/workshopItem'
+import { parseRequiredItems } from '../../shared/collectionImport'
 import { workshopContentDir, listDirs, scanWorkshopItem, scanModFolders, PZ_APP_ID } from './modScan'
 
 export { parseModInfo }
@@ -142,12 +143,38 @@ function httpsGetText(url: string): Promise<string> {
   })
 }
 
+// Without an API key: the "Required items" box on each item's Workshop page. A few pages at a
+// time so Steam doesn't turn us away; ids out of the page are checked like any other
+const PAGE_LOOKUPS_MAX = 300
+let pageLookups = 0
+export async function fetchRequiredItemsFromPages(ids: string[]): Promise<Record<string, string[] | null>> {
+  const out: Record<string, string[] | null> = {}
+  const list = ids.filter(isWorkshopId)
+  let next = 0
+  const worker = async () => {
+    while (next < list.length) {
+      const id = list[next++]
+      if (pageLookups >= PAGE_LOOKUPS_MAX) { out[id] = null; continue }
+      pageLookups++
+      try {
+        out[id] = parseRequiredItems(await httpsGetText(`https://steamcommunity.com/sharedfiles/filedetails/?id=${id}`))
+      } catch {
+        out[id] = null
+      }
+    }
+  }
+  await Promise.all([worker(), worker(), worker(), worker()])
+  return out
+}
+
 // Collection links (or plain mod links) -> every mod to download, with nested
-// collections expanded, plus required items when there's an API key to ask with
+// collections expanded, plus the items they require (through the API key when there is one,
+// otherwise from their Workshop pages)
 export async function resolveModPack(ids: string[], withDeps: boolean) {
   // children say whether they're collections, so normal items don't cost an API call
   const knownItems = new Set<string>()
   const apiKey = loadSettings().steamApiKey?.trim()
+  pageLookups = 0
   const pack = await resolvePack((Array.isArray(ids) ? ids : []).filter(isWorkshopId), {
     collectionChildren: async (id) => {
       if (knownItems.has(id)) return null
@@ -155,9 +182,9 @@ export async function resolveModPack(ids: string[], withDeps: boolean) {
       children?.forEach(c => { if (!c.collection) knownItems.add(c.id) })
       return children ? children.map(c => c.id) : null
     },
-    requiredItems: batch => fetchRequiredItems(batch, apiKey!),
-  }, { deps: withDeps && !!apiKey })
-  return { ...pack, depsChecked: withDeps && !!apiKey, details: await fetchModDetails(pack.mods) }
+    requiredItems: batch => (apiKey ? fetchRequiredItems(batch, apiKey) : fetchRequiredItemsFromPages(batch)),
+  }, { deps: withDeps })
+  return { ...pack, depsChecked: withDeps, details: await fetchModDetails(pack.mods) }
 }
 
 function cleanDescription(text: string): string {
