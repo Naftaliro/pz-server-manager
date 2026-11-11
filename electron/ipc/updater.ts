@@ -1,6 +1,5 @@
 import { ipcMain, app, BrowserWindow, shell } from 'electron'
 import https from 'https'
-import http from 'http'
 import fs from 'fs'
 // plain fs, without Electron's asar patching: the extracted update contains
 // resources/app.asar, which the patched fs treats as a folder and fails to delete
@@ -12,6 +11,7 @@ import {
   RELEASE_SIGNER, signatureQueryScript, signedByUs, folderSignaturesScript, updatePackageProblem, expandArchiveScript,
   type SignatureInfo,
 } from './winScripts'
+import { redirectTarget } from './httpsOnly'
 
 const GITHUB_OWNER = 'Naftaliro'
 const GITHUB_REPO = 'pz-server-manager'
@@ -77,6 +77,7 @@ interface UpdateInfo {
 function httpsGetJson(url: string, redirectCount = 0): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (redirectCount > 10) { reject(new Error('Too many redirects')); return }
+    if (!url.startsWith('https://')) { reject(new Error('Updates only come over https')); return }
 
     const options = {
       headers: {
@@ -85,10 +86,12 @@ function httpsGetJson(url: string, redirectCount = 0): Promise<unknown> {
       },
     }
 
-    const lib = url.startsWith('https') ? https : http
-    const req = (lib as typeof https).get(url, options, (res) => {
+    const req = https.get(url, options, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode || 0) && res.headers.location) {
-        httpsGetJson(res.headers.location, redirectCount + 1).then(resolve).catch(reject)
+        res.resume()
+        const next = redirectTarget(url, res.headers.location)
+        if (!next) { reject(new Error('GitHub sent the update check somewhere other than https')); return }
+        httpsGetJson(next, redirectCount + 1).then(resolve).catch(reject)
         return
       }
       if (res.statusCode !== 200) {
@@ -118,14 +121,16 @@ function downloadFile(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     if (redirectCount > 10) { reject(new Error('Too many redirects during download')); return }
+    if (!url.startsWith('https://')) { reject(new Error('Updates only come over https')); return }
 
-    const lib = url.startsWith('https') ? https : http
-    const req = (lib as typeof https).get(url, {
+    const req = https.get(url, {
       headers: { 'User-Agent': `PZServerManager/${getCurrentVersion()}` }
     }, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode || 0) && res.headers.location) {
         res.resume()
-        downloadFile(res.headers.location, destPath, onProgress, redirectCount + 1)
+        const next = redirectTarget(url, res.headers.location)
+        if (!next) { reject(new Error('the download was sent somewhere other than https')); return }
+        downloadFile(next, destPath, onProgress, redirectCount + 1)
           .then(resolve).catch(reject)
         return
       }

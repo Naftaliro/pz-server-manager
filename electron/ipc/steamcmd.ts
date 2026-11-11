@@ -10,6 +10,7 @@ import { PZ_APP_ID } from './modManager'
 import { backupAfterDownload } from './modBackups'
 import { isWorkshopId } from '../../shared/modCore'
 import { expandArchiveScript } from './winScripts'
+import { redirectTarget } from './httpsOnly'
 
 const STEAMCMD_URL = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 const PZ_SERVER_APP_ID = '380870'
@@ -344,11 +345,15 @@ export function downloadMods(
   })
 }
 
-function downloadFile(url: string, dest: string): Promise<void> {
+function downloadFile(url: string, dest: string, redirects = 0): Promise<void> {
   return new Promise((resolve, reject) => {
     https.get(url, (response) => {
       if ((response.statusCode === 301 || response.statusCode === 302) && response.headers.location) {
-        downloadFile(response.headers.location, dest).then(resolve).catch(reject)
+        response.resume()
+        // SteamCMD is a program the app runs, so https all the way
+        const next = redirectTarget(url, response.headers.location)
+        if (!next || redirects >= 10) { reject(new Error("Steam's download link went somewhere unexpected")); return }
+        downloadFile(next, dest, redirects + 1).then(resolve).catch(reject)
         return
       }
       const file = fs.createWriteStream(dest)
