@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   RotateCcw, Copy, CheckCircle, Users, Globe, Home as HomeIcon, Lock, Shield, ChevronDown, ChevronRight,
   AlertTriangle, X, FolderOpen, Trash2, Loader, Wifi, Package, MemoryStick, MessageSquare, Zap,
-  UserX, Ban, Crown, Archive, History, Radar, Download,
+  UserX, Ban, Crown, Archive, History, Radar, Download, Eye, EyeOff,
 } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile } from '../store/useAppStore'
@@ -25,6 +25,8 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
   const [notice, setNotice] = useState('')
   const [restarting, setRestarting] = useState(false)
   const [serverUpdate, setServerUpdate] = useState<{ updateAvailable: boolean; steamManaged: boolean } | null>(null)
+  // hidden until asked for, like on the Settings tab (streams, screenshots)
+  const [showAdminPw, setShowAdminPw] = useState(false)
 
   const say = (msg?: string) => { if (msg) { setNotice(msg); setTimeout(() => setNotice(''), 6000) } }
 
@@ -175,7 +177,7 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
               <p className="text-xs text-pz-subtext mb-3">Join with this username and password to get admin powers (spawn items, teleport, kick players and so on).</p>
               <div className="grid grid-cols-2 gap-2">
                 <CopyField label="Username" value="admin" />
-                <CopyField label="Password" value={profile.adminPassword || 'admin'} />
+                <CopyField label="Password" value={profile.adminPassword || 'admin'} hidden={!showAdminPw} onToggleHidden={() => setShowAdminPw(s => !s)} />
               </div>
             </div>
 
@@ -221,7 +223,10 @@ function InviteCard({ profile, net, playitOn, running }: {
   playitOn: boolean
   running: boolean
 }) {
-  const { setActiveView } = useAppStore()
+  const { setActiveView, settings, setSettings } = useAppStore()
+  // for streams and screenshots, remembered across servers and restarts
+  const hideAddress = !!settings?.hidePublicIp
+  const toggleAddress = async () => setSettings(await window.electronAPI.settings.set({ hidePublicIp: !hideAddress }))
   const [helpOpen, setHelpOpen] = useState(false)
   const [playit, setPlayit] = useState<PlayitState | null>(null)
   const [pasted, setPasted] = useState(profile.playitAddress || '')
@@ -276,6 +281,8 @@ function InviteCard({ profile, net, playitOn, running }: {
           icon={<Globe size={12} />}
           value={net === null && !usePlayit ? 'Looking up...' : address || 'Couldn\'t find it, google "what is my ip"'}
           copyable={!!address}
+          hidden={hideAddress && !!address}
+          onToggleHidden={address ? toggleAddress : undefined}
         />
         <div className="grid grid-cols-2 gap-2">
           <CopyField label="Port" value={port} />
@@ -519,13 +526,22 @@ function WorldCard({ profile, world, stopped, onWipe, say }: {
   )
 }
 
-function CopyField({ label, value, icon, copyable = true }: { label: string; value: string; icon?: React.ReactNode; copyable?: boolean }) {
+// hidden: shows dots instead (it still copies), with an eye button to flip it
+function CopyField({ label, value, icon, copyable = true, hidden, onToggleHidden }: {
+  label: string; value: string; icon?: React.ReactNode; copyable?: boolean
+  hidden?: boolean; onToggleHidden?: () => void
+}) {
   const [copied, setCopied] = useState(false)
   return (
     <div>
       <div className="text-[11px] text-pz-muted mb-0.5 flex items-center gap-1">{icon}{label}</div>
       <div className="flex items-center gap-2 bg-pz-darker border border-pz-border rounded-md px-3 py-1.5">
-        <span className="text-sm text-pz-text font-mono flex-1 truncate select-text">{value}</span>
+        <span className={`text-sm text-pz-text font-mono flex-1 truncate ${hidden ? 'select-none' : 'select-text'}`}>{hidden ? '••••••••' : value}</span>
+        {onToggleHidden && (
+          <button onClick={onToggleHidden} className="text-pz-muted hover:text-pz-text flex-shrink-0" title={hidden ? 'Show' : 'Hide'}>
+            {hidden ? <Eye size={13} /> : <EyeOff size={13} />}
+          </button>
+        )}
         {copyable && (
           <button
             onClick={() => { navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1500) }}

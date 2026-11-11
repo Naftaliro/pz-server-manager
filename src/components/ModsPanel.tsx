@@ -610,6 +610,7 @@ function SharePack({ profile }: { profile: ServerProfile }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   const fixCount = profile.mods.filter(isLocalMod).length
+  const hideAddress = !!useAppStore(s => s.settings?.hidePublicIp)
 
   useEffect(() => {
     if (address) return
@@ -638,7 +639,8 @@ function SharePack({ profile }: { profile: ServerProfile }) {
       </p>
       <div>
         <label className="label">Address friends join with</label>
-        <input value={address} onChange={e => setAddress(e.target.value)} className="input text-sm" placeholder="Your public IP or playit address" />
+        {/* dots when the Overview hides the public IP too (streams, screenshots) */}
+        <input type={hideAddress ? 'password' : 'text'} value={address} onChange={e => setAddress(e.target.value)} className="input text-sm" placeholder="Your public IP or playit address" />
       </div>
       {profile.serverPassword && (
         <label className="flex items-center gap-2 text-xs text-pz-subtext">

@@ -74,6 +74,8 @@ export interface AppSettings {
   role?: 'host' | 'player'
   modBackups?: boolean
   modBackupDir?: string
+  // the Overview shows dots instead of the public IP (streams, screenshots)
+  hidePublicIp?: boolean
 }
 
 // 'starting' = loading world/mods, 'running' = players can join

@@ -24,6 +24,8 @@ export interface AppSettings {
   // keep a copy of every Workshop mod after it downloads (modBackups.ts), and where
   modBackups?: boolean
   modBackupDir?: string
+  // the Overview shows dots instead of the public IP (streams, screenshots)
+  hidePublicIp?: boolean
 }
 
 const DEFAULTS: AppSettings = {
