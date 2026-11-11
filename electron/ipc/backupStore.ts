@@ -371,15 +371,94 @@ async function copyTree(src: string, dst: string, ops: FsOps) {
   await pool(files, 16, rel => ops.copyFile(toPath(src, rel), toPath(dst, rel)))
 }
 
+// ── The swap marker ───────────────────────────────────────────────────────────
+// A restore swaps several things in one after the other (the world, the players db, the
+// config files), each with two renames. The marker says what's being swapped and which
+// renames are done, so a restore cut off between two of them (the world is the backup's, the
+// db still the live one) is undone as a whole, never left half and half
+
+interface SwapItem {
+  live: string
+  // the copy from the backup that takes its place (none: the live file just goes, like a
+  // -journal that belongs to the db being replaced)
+  staged?: string
+  hadLive: boolean
+}
+interface SwapMarker {
+  items: SwapItem[]
+  // 'aside:<n>' = item n's live copy went to .knox-old, 'in:<n>' = its staged copy took its place
+  done: string[]
+  // every rename is done, only the old copies are left to delete
+  finished?: boolean
+}
+
+const markerFile = (f: ServerFiles) => join(backupsDir(f), 'restore.knox-swap.json')
+
+async function writeMarker(f: ServerFiles, m: SwapMarker) {
+  await fsp.mkdir(backupsDir(f), { recursive: true })
+  const tmp = markerFile(f) + '.tmp'
+  await fsp.writeFile(tmp, JSON.stringify(m), 'utf-8')
+  await fsp.rename(tmp, markerFile(f))
+}
+
+async function readMarker(f: ServerFiles): Promise<SwapMarker | null> {
+  try {
+    const m = JSON.parse(await fsp.readFile(markerFile(f), 'utf-8'))
+    if (!m || !Array.isArray(m.items) || !Array.isArray(m.done)) return null
+    // only ever the server's own files, whatever the file says
+    const ours = new Set([worldDir(f), dbFile(f), ...sideFiles(dbFile(f)), ...configNames(f).map(n => join(configDir(f), n))])
+    const items: SwapItem[] = m.items.filter((it: SwapItem) => it && typeof it.live === 'string' && ours.has(it.live))
+      .map((it: SwapItem) => ({ live: it.live, staged: it.staged === it.live + STAGING ? it.staged : undefined, hadLive: it.hadLive === true }))
+    return { items, done: m.done.filter((s: unknown) => typeof s === 'string'), finished: m.finished === true }
+  } catch {
+    return null
+  }
+}
+
+// SQLite's own files next to a db, with changes that belong to that db and no other
+const sideFiles = (db: string) => ['-journal', '-wal', '-shm'].map(s => db + s)
+
+/** Undo every step of a swap that didn't finish, or clear up after one that did */
+async function settleSwap(f: ServerFiles, m: SwapMarker): Promise<'undone' | 'finished'> {
+  const rmrf = (p: string) => fsp.rm(p, { recursive: true, force: true })
+  if (m.finished) {
+    for (const it of m.items) await rmrf(it.live + OLD)
+  } else {
+    // newest first, the way they were done
+    for (let i = m.items.length - 1; i >= 0; i--) {
+      const it = m.items[i]
+      const aside = existsSync(it.live + OLD)
+      if (it.staged) {
+        // what's in place now is the backup's copy when the live one was moved aside, or when
+        // there was none and the staged copy has moved in (the step may have happened without
+        // the marker hearing about it yet)
+        const isNew = it.hadLive ? aside : (m.done.includes(`in:${i}`) || !existsSync(it.staged))
+        if (isNew && existsSync(it.live)) await rmrf(it.live)
+      }
+      if (aside) await fsp.rename(it.live + OLD, it.live)
+      if (it.staged) await rmrf(it.staged)
+    }
+  }
+  await fsp.rm(markerFile(f), { force: true })
+  return m.finished ? 'finished' : 'undone'
+}
+
 /**
  * A restore that was cut off (power cut, the app killed) left the old world in its .knox-old
  * folder or a half-copied .knox-staging one. Put things back the way they were before it:
- * the old world wins unless the swap had already finished.
+ * the old world wins unless the swap had already finished, and the world, players db and
+ * settings always end up from the same side.
  */
 export async function recoverInterrupted(f: ServerFiles): Promise<string[]> {
   const notes: string[] = []
   const world = worldDir(f)
   const rmrf = (p: string) => fsp.rm(p, { recursive: true, force: true })
+  const marker = await readMarker(f)
+  if (marker) {
+    // a step can be done without the marker having heard of it yet
+    const touched = marker.done.length > 0 || marker.items.some(it => existsSync(it.live + OLD) || (!!it.staged && !existsSync(it.staged)))
+    if ((await settleSwap(f, marker)) === 'undone' && touched) notes.push('Put the world back the way it was before a restore that didn\'t finish.')
+  }
   if (existsSync(world + OLD)) {
     if (!existsSync(world)) { await fsp.rename(world + OLD, world); notes.push('Put the world back the way it was before a restore that didn\'t finish.') }
     else await rmrf(world + OLD)
@@ -438,31 +517,42 @@ export async function restoreBackup(f: ServerFiles, backup: StoredBackup, opts: 
     throw e
   }
 
-  // 2. swap, remembering how to undo each step
-  const undo: Array<() => Promise<void>> = []
+  // 2. swap, with the marker saying which steps are done (see settleSwap). A players db from
+  // the backup also takes the live db's -journal/-wal/-shm out of the way: the game would
+  // otherwise play the live db's last changes into the restored one
+  const items: SwapItem[] = [
+    { live: world, staged: world + STAGING, hadLive: existsSync(world) },
+    ...singles.map(s => ({ live: s.live, staged: s.staged, hadLive: existsSync(s.live) })),
+    ...(singles.some(s => s.live === dbFile(f)) ? sideFiles(dbFile(f)).filter(p => existsSync(p)).map(p => ({ live: p, hadLive: true })) : []),
+  ]
+  const marker: SwapMarker = { items, done: [] }
   try {
-    if (existsSync(world)) {
-      await ops.rename(world, world + OLD)
-      undo.push(() => fsp.rename(world + OLD, world))
-    }
-    await ops.rename(world + STAGING, world)
-    undo.push(() => fsp.rename(world, world + STAGING))
-    for (const s of singles) {
-      if (existsSync(s.live)) {
-        await ops.rename(s.live, s.live + OLD)
-        undo.push(() => fsp.rename(s.live + OLD, s.live))
-      }
-      await ops.rename(s.staged, s.live)
-      undo.push(() => fsp.rename(s.live, s.staged))
-    }
+    await writeMarker(f, marker)
   } catch (e) {
-    for (const step of undo.reverse()) await step().catch(() => undefined)
+    await recoverInterrupted(f).catch(() => undefined)
+    throw e
+  }
+  try {
+    for (const [n, it] of items.entries()) {
+      if (it.hadLive) {
+        await ops.rename(it.live, it.live + OLD)
+        marker.done.push(`aside:${n}`)
+        await writeMarker(f, marker)
+      }
+      if (it.staged) {
+        await ops.rename(it.staged, it.live)
+        marker.done.push(`in:${n}`)
+        await writeMarker(f, marker)
+      }
+    }
+    marker.finished = true
+    await writeMarker(f, marker)
+  } catch (e) {
     await recoverInterrupted(f).catch(() => undefined)
     throw e
   }
 
   // 3. the old copies can go
-  await fsp.rm(world + OLD, { recursive: true, force: true }).catch(() => undefined)
-  for (const s of singles) await fsp.rm(s.live + OLD, { force: true }).catch(() => undefined)
+  await settleSwap(f, marker).catch(() => undefined)
   return { configs: singles.filter(s => !s.live.endsWith('.db')).map(s => s.live) }
 }

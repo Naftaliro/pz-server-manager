@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSync, rmSync, readdirSync, utimesSync, appendFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -249,6 +249,103 @@ describe('restoring', () => {
       expect(readdirSync(join(f.dataDir, 'db'))).toEqual(['Test.db'])
     })
   }
+
+  // the app dying at each rename of the swap, just before it or just after it (before the
+  // marker heard about it): the next recovery puts the old world, db, its journal and settings
+  // back together, never the backup's world with the live db
+  const LIVE_JOURNAL = 'live journal'
+  const isOld = () => ({
+    world: readFileSync(join(worldDir(f), 'map', '99', '99.bin'), 'utf-8'),
+    db: readFileSync(dbFile(f), 'utf-8'),
+    journal: readFileSync(dbFile(f) + '-journal', 'utf-8'),
+    ini: readFileSync(join(configDir(f), 'Test.ini'), 'utf-8'),
+  })
+  // world, db, ini, sandbox: two renames each, then the journal goes aside
+  for (const crashAt of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+    for (const when of ['before', 'after'] as const) {
+      it(`a restore cut off ${when} rename ${crashAt} of the swap comes back whole`, async () => {
+        const b = (await createBackup(f, opts(0)))!
+        await changeEverything()
+        writeFileSync(dbFile(f) + '-journal', LIVE_JOURNAL)
+        const { rename: real } = await import('fs/promises')
+        let n = 0
+        let crashed = false
+        const rename = async (from: string, to: string) => {
+          if (++n === crashAt) {
+            if (when === 'after') await real(from, to)
+            crashed = true
+            // the app is gone: nothing after this ever runs
+            return new Promise<void>(() => undefined)
+          }
+          await real(from, to)
+        }
+        void restoreBackup(f, b.manifest, { configs: true, ops: { rename } })
+        await vi.waitFor(() => expect(crashed).toBe(true))
+        const notes = await recoverInterrupted(f)
+        expect(notes.length).toBe(when === 'before' && crashAt === 1 ? 0 : 1)
+        expect(isOld()).toEqual({ world: 'NEW far chunk', db: 'accounts v2', journal: LIVE_JOURNAL, ini: 'PVP=false' })
+        expect(readdirSync(join(f.dataDir, 'Saves', 'Multiplayer'))).toEqual(['Test'])
+        expect(readdirSync(join(f.dataDir, 'db')).sort()).toEqual(['Test.db', 'Test.db-journal'])
+        expect(readdirSync(configDir(f)).sort()).toEqual(['Other.ini', 'Test.ini', 'Test_SandboxVars.lua'])
+        expect(existsSync(join(backupsDir(f), 'restore.knox-swap.json'))).toBe(false)
+        // and a restore after that works
+        await restoreBackup(f, b.manifest, { configs: true })
+        expect(readFileSync(dbFile(f), 'utf-8')).toBe('accounts v1')
+      })
+    }
+  }
+
+  it('cut off after the last rename, the restore is finished instead', async () => {
+    const b = (await createBackup(f, opts(0)))!
+    await changeEverything()
+    // the swap is done and marked so, only the old copies are left (put back by hand here)
+    await restoreBackup(f, b.manifest, { configs: true })
+    const world = worldDir(f)
+    const { cpSync } = await import('fs')
+    cpSync(world, world + '.knox-old', { recursive: true })
+    writeFileSync(dbFile(f) + '.knox-old', 'accounts v2')
+    writeFileSync(join(backupsDir(f), 'restore.knox-swap.json'), JSON.stringify({
+      items: [{ live: world, staged: world + '.knox-staging', hadLive: true }, { live: dbFile(f), staged: dbFile(f) + '.knox-staging', hadLive: true }],
+      done: ['aside:0', 'in:0', 'aside:1', 'in:1'], finished: true,
+    }))
+    expect(await recoverInterrupted(f)).toEqual([])
+    expect(readFileSync(join(world, 'map', '12', '34.bin'), 'utf-8')).toBe('chunk 12 34')
+    expect(readFileSync(dbFile(f), 'utf-8')).toBe('accounts v1')
+    expect(readdirSync(join(f.dataDir, 'Saves', 'Multiplayer'))).toEqual(['Test'])
+    expect(readdirSync(join(f.dataDir, 'db'))).toEqual(['Test.db'])
+  })
+
+  it("a marker can't point the recovery at anything but this server's files", async () => {
+    const elsewhere = join(base, 'Important')
+    mkdirSync(elsewhere)
+    writeFileSync(join(elsewhere, 'keep.txt'), 'keep')
+    writeFileSync(join(elsewhere + '.knox-old'), 'x')
+    mkdirSync(backupsDir(f), { recursive: true })
+    writeFileSync(join(backupsDir(f), 'restore.knox-swap.json'), JSON.stringify({ items: [{ live: elsewhere, staged: join(base, 'x'), hadLive: true }], done: ['aside:0'] }))
+    await recoverInterrupted(f)
+    expect(readFileSync(join(elsewhere, 'keep.txt'), 'utf-8')).toBe('keep')
+  })
+
+  it("the restored db doesn't get the live db's journal, wal or shm", async () => {
+    const b = (await createBackup(f, opts(0)))!
+    await changeEverything()
+    for (const s of ['-journal', '-wal', '-shm']) writeFileSync(dbFile(f) + s, `live ${s}`)
+    // one inside the world that the backup has too is the backup's own
+    writeFileSync(join(worldDir(f), 'players.db-journal'), 'live world journal')
+    await restoreBackup(f, b.manifest, { configs: true })
+    expect(readdirSync(join(f.dataDir, 'db'))).toEqual(['Test.db'])
+    expect(existsSync(join(worldDir(f), 'players.db-journal'))).toBe(false)
+    expect(readFileSync(dbFile(f), 'utf-8')).toBe('accounts v1')
+  })
+
+  it('leaves the journal alone when the backup has no players db to replace it with', async () => {
+    const old = join(backupsDir(f), '2026-10-21_19-04-33')
+    write('map/12/34.bin', 'old chunk', join(old, 'world'))
+    writeFileSync(dbFile(f) + '-journal', LIVE_JOURNAL)
+    const legacy = (await listBackups(f)).find(b => b.legacy)!
+    await restoreBackup(f, legacy, { configs: true })
+    expect(readFileSync(dbFile(f) + '-journal', 'utf-8')).toBe(LIVE_JOURNAL)
+  })
 
   it('after a crash mid-swap, the old world comes back', async () => {
     // live world already moved aside, staged one not in yet
