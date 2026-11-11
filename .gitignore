@@ -31,3 +31,6 @@ Thumbs.db
 
 # typescript build cache
 *.tsbuildinfo
+
+# local test runs (app data, servers)
+.qa/
