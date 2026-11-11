@@ -91,16 +91,28 @@ async function saveFirst(profileId: string): Promise<boolean> {
   try { if (log) from = (await open(log, 'r').then(async fh => { const s = await fh.stat(); await fh.close(); return s.size })) } catch { /* no log yet */ }
   try { await rconFor(profileId, 'save', 15000) } catch { return false }
   if (!log) return true
+  // read on from where the last look stopped, a chunk at a time: a busy server can write more
+  // than a chunk between two looks (mods warning about every item), and the line can be anywhere
+  const CHUNK = 1024 * 1024
+  const done = /Saving finish|Saving took/
+  // the end of the last chunk, in case the line was cut in two
+  let tail = ''
   for (let waited = 0; waited < 60000; waited += 500) {
     await new Promise(r => setTimeout(r, 500))
     try {
       const fh = await open(log, 'r')
       try {
         const { size } = await fh.stat()
-        if (size < from) from = 0
-        const buf = Buffer.alloc(Math.min(size - from, 1024 * 1024))
-        await fh.read(buf, 0, buf.length, from)
-        if (/Saving finish|Saving took/.test(buf.toString('utf-8'))) return true
+        if (size < from) { from = 0; tail = '' }
+        while (from < size) {
+          const buf = Buffer.alloc(Math.min(size - from, CHUNK))
+          const { bytesRead } = await fh.read(buf, 0, buf.length, from)
+          if (!bytesRead) break
+          from += bytesRead
+          const text = tail + buf.subarray(0, bytesRead).toString('utf-8')
+          if (done.test(text)) return true
+          tail = text.slice(-200)
+        }
       } finally { await fh.close() }
     } catch { /* try again */ }
   }
