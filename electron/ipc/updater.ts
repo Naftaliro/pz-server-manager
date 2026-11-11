@@ -8,7 +8,7 @@ import path from 'path'
 import { spawn, execFile } from 'child_process'
 import {
   updateScript, updaterWindowCommand, uninstallersFor, APP_EXE_NAMES, INSTALLER_UPDATE_ARGS, isNsisInstaller,
-  RELEASE_SIGNER, signatureQueryScript, signedByUs, folderSignaturesScript, updatePackageProblem, expandArchiveScript,
+  RELEASE_SIGNER, signatureQueryScript, signedByUs, folderSignaturesScript, updatePackageProblem, expandArchiveScript, psJson,
   type SignatureInfo,
 } from './winScripts'
 import { redirectTarget } from './httpsOnly'
@@ -212,7 +212,7 @@ function readSignature(file: string): Promise<SignatureInfo | null> {
   return new Promise((resolve) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', signatureQueryScript(file)], { windowsHide: true, timeout: 60000 }, (err, stdout) => {
       if (err) return resolve(null)
-      try { resolve(JSON.parse(stdout)) } catch { resolve(null) }
+      try { resolve(psJson(stdout) as SignatureInfo) } catch { resolve(null) }
     })
   })
 }
@@ -223,7 +223,7 @@ function readFolderSignatures(dir: string): Promise<SignatureInfo[] | null> {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', folderSignaturesScript(dir)], { windowsHide: true, timeout: 180000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
       if (err) return resolve(null)
       try {
-        const list = JSON.parse(stdout)
+        const list = psJson(stdout)
         resolve(Array.isArray(list) ? list : null)
       } catch { resolve(null) }
     })
@@ -268,7 +268,7 @@ export async function unpackAndCheckUpdate(zipPath: string, extractDir: string, 
   // every app exe in it has to be ours, under either name, not only the one that gets started
   const exes = APP_EXE_NAMES.filter(n => originalFs.existsSync(path.join(found!.dir, n)))
   const problem = sigs
-    ? [found.exe, ...exes].map(n => updatePackageProblem(sigs, path.join(found!.dir, n))).find(Boolean) || null
+    ? [found.exe, ...exes].map(n => updatePackageProblem(sigs, path.join(found!.dir, n), found!.dir)).find(Boolean) || null
     : "Couldn't check the update's signature."
   return problem ? { error: problem } : { sourceDir: found.dir, exeName: found.exe }
 }

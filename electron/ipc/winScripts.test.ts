@@ -9,7 +9,7 @@ import {
   firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, FIREWALL_RULE, OLD_FIREWALL_RULE,
   type FirewallRuleInfo, uninstallerFor, uninstallersFor, APP_EXE_NAMES, INSTALLER_UPDATE_ARGS, isNsisInstaller, folderSizeArgs, parseFolderSize,
   RELEASE_SIGNER, signatureQueryScript, signedByUs, type SignatureInfo,
-  folderSignaturesScript, updatePackageProblem, expandArchiveScript, ARTIFACT_SIGNING_EKU, CODE_SIGNING_EKU,
+  folderSignaturesScript, updatePackageProblem, expandArchiveScript, ARTIFACT_SIGNING_EKU, CODE_SIGNING_EKU, PS_UTF8_OUTPUT, psJson,
 } from './winScripts'
 
 const STOCK_BAT = [
@@ -427,12 +427,34 @@ describe('installer updates', () => {
       expect(updatePackageProblem([file('PZ Server Manager.exe', ours), file('libEGL.dll', { status: 'HashMismatch', signer: 'Google LLC' })], exe)).toMatch(/libEGL.dll .* broken signature \(HashMismatch\)/)
       expect(updatePackageProblem([], exe)).not.toBeNull()
     })
+
+    it('finds the exe by where it is in the unpacked folder, whatever letters the path has', () => {
+      const root = 'C:\\Users\\Jürgen\\AppData\\Local\\pz-manager-update\\extracted'
+      // the user's name came back mangled, the part inside the folder didn't
+      const sig = { ...ours, path: 'C:\\Users\\J\uFFFDrgen\\AppData\\Local\\pz-manager-update\\extracted\\PZ Server Manager.exe', rel: 'PZ Server Manager.exe' }
+      expect(updatePackageProblem([sig], `${root}\\PZ Server Manager.exe`, root)).toBeNull()
+      expect(updatePackageProblem([{ ...sig, rel: 'pz server manager.EXE' }], `${root}\\PZ Server Manager.exe`, root)).toBeNull()
+      // one of ours further down doesn't count as the one at the top
+      expect(updatePackageProblem([{ ...sig, rel: 'resources\\PZ Server Manager.exe' }], `${root}\\PZ Server Manager.exe`, root)).toMatch(/doesn't have/)
+      // without rel, the full path still works
+      expect(updatePackageProblem([{ ...ours, path: `${root}\\PZ Server Manager.exe` }], `${root}\\PZ Server Manager.exe`, root)).toBeNull()
+    })
+  })
+
+  it('switches PowerShell output to UTF-8 in every script whose output the app reads', () => {
+    for (const script of [signatureQueryScript('C:\\a.exe'), folderSignaturesScript('C:\\a'), firewallQueryScript(), expandArchiveScript('C:\\a.zip', 'C:\\a')]) {
+      expect(script).toContain(PS_UTF8_OUTPUT)
+    }
+    expect(psJson('\uFEFF{"a":1}')).toEqual({ a: 1 })
   })
 })
 
 describe.runIf(process.platform === 'win32')('signatures on Windows', () => {
+  // the way the app runs them: PowerShell in a hidden console of its own, which is in the PC's
+  // old code page. Forced to 437 here, so a console running the tests in UTF-8 can't hide a
+  // script that doesn't switch its output to UTF-8 itself
   const run = (script: string, env: NodeJS.ProcessEnv = process.env) =>
-    JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env }).toString())
+    psJson(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437); ${script}`], { env, windowsHide: true }))
   const signature = (file: string, env?: NodeJS.ProcessEnv) => run(signatureQueryScript(file), env) as SignatureInfo
 
   it("reads everything signedByUs looks at from a signed program, and someone else's doesn't pass", () => {
@@ -449,7 +471,8 @@ describe.runIf(process.platform === 'win32')('signatures on Windows', () => {
   }, 30000)
 
   it('reads an unsigned file in a folder with awkward characters', () => {
-    const dir = mkdtempSync(join(tmpdir(), "pzm sig it's ü-"))
+    // a German, a Russian and a Chinese user name: none of them survive code page 437
+    const dir = mkdtempSync(join(tmpdir(), "pzm sig it's ü Жора 张伟-"))
     const file = join(dir, 'unsigned.ps1')
     writeFileSync(file, 'Write-Output 1\r\n')
     expect(signature(file)).toEqual({ path: file, status: 'NotSigned', signer: '', subject: [], issuer: '', timestamped: false, eku: [] })
@@ -477,7 +500,7 @@ describe.runIf(process.platform === 'win32')('signatures on Windows', () => {
   }, 60000)
 
   it('checks every program and library in an unpacked update, and spots one changed after signing', () => {
-    const dir = join(mkdtempSync(join(tmpdir(), "pzm upd it's ü-")), 'app')
+    const dir = join(mkdtempSync(join(tmpdir(), "pzm upd it's ü Жора 张伟-")), 'app')
     mkdirSync(join(dir, 'resources'), { recursive: true })
     copyFileSync(process.execPath, join(dir, 'PZ Server Manager.exe'))
     // an unsigned program, like Electron's own libraries: node.exe with its signature taken off
@@ -497,8 +520,10 @@ describe.runIf(process.platform === 'win32')('signatures on Windows', () => {
     const sigs = run(folderSignaturesScript(dir)) as SignatureInfo[]
     const byName = Object.fromEntries(sigs.map(s => [s.path!.slice(dir.length + 1), s.status]))
     expect(byName).toEqual({ 'PZ Server Manager.exe': 'Valid', 'ffmpeg.dll': 'NotSigned', 'resources\\helper.exe': 'HashMismatch' })
+    expect(Object.fromEntries(sigs.map(s => [s.rel, s.status]))).toEqual(byName)
     // node.exe isn't ours, so this update wouldn't go in either way
     expect(updatePackageProblem(sigs, join(dir, 'PZ Server Manager.exe'))).toMatch(/isn't signed by/)
+    expect(updatePackageProblem(sigs, join(dir, 'PZ Server Manager.exe'), dir)).toMatch(/isn't signed by/)
   }, 90000)
 })
 

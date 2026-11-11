@@ -233,7 +233,8 @@ export function firewallRemoveScript(): string {
 // are the same in every Windows language, netsh's text output isn't
 export function firewallQueryScript(): string {
   const names = [FIREWALL_RULE, OLD_FIREWALL_RULE].map(n => `'${n.replace(/'/g, "''")}'`).join(',')
-  return `$r = @(Get-NetFirewallRule -DisplayName ${names} -ErrorAction SilentlyContinue | ForEach-Object { $p = $_ | Get-NetFirewallPortFilter; $a = $_ | Get-NetFirewallApplicationFilter; [pscustomobject]@{ name = $_.DisplayName; enabled = [string]$_.Enabled; direction = [string]$_.Direction; action = [string]$_.Action; protocol = [string]$p.Protocol; ports = @($p.LocalPort | ForEach-Object { [string]$_ }); program = [string]$a.Program } }); ConvertTo-Json -InputObject $r -Compress -Depth 3`
+  // the rule's program is the server's java.exe, in a folder that can have any letters in it
+  return `${PS_UTF8_OUTPUT} $r = @(Get-NetFirewallRule -DisplayName ${names} -ErrorAction SilentlyContinue | ForEach-Object { $p = $_ | Get-NetFirewallPortFilter; $a = $_ | Get-NetFirewallApplicationFilter; [pscustomobject]@{ name = $_.DisplayName; enabled = [string]$_.Enabled; direction = [string]$_.Direction; action = [string]$_.Action; protocol = [string]$p.Protocol; ports = @($p.LocalPort | ForEach-Object { [string]$_ }); program = [string]$a.Program } }); ConvertTo-Json -InputObject $r -Compress -Depth 3`
 }
 
 export interface FirewallRuleInfo {
@@ -326,6 +327,18 @@ const SIGNATURE_INFO = [
 
 const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`
 
+// Windows PowerShell 5.1 writes to a pipe in the console's code page, and the console the app
+// starts it in (hidden, its own) is in the PC's old OEM one (437, 850, 866...): a path with
+// ü, é, Cyrillic or Chinese in it comes back as ? or garbage. Every script whose output the
+// app reads starts with this: UTF-8 out, without the BOM that would trip up JSON.parse. Can't
+// stop a script (no console to set it on is fine, the ASCII parts still come through)
+export const PS_UTF8_OUTPUT = 'try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { };'
+
+// What one of those scripts printed as JSON (a BOM in front, just in case, is dropped)
+export function psJson(stdout: string | Buffer): unknown {
+  return JSON.parse(String(stdout).replace(/^﻿/, ''))
+}
+
 // Windows' own check of a file's signature, no admin needed. Status is Valid, NotSigned,
 // HashMismatch, NotTrusted and so on, the same in every Windows language. Signatures stay
 // Valid after the 3-day certificate runs out because the build timestamps them.
@@ -333,16 +346,19 @@ const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`
 // a module path where 7's copy comes first and won't load. Any error stops the script, so a
 // check that couldn't run never looks like an unsigned file
 export function signatureQueryScript(file: string): string {
-  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security'); ${SIGNATURE_INFO}; ConvertTo-Json -Compress -Depth 4 -InputObject (PzmSig (Get-AuthenticodeSignature -LiteralPath ${psQuote(file)}) ${psQuote(file)})`
+  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security'); ${PS_UTF8_OUTPUT} ${SIGNATURE_INFO}; ConvertTo-Json -Compress -Depth 4 -InputObject (PzmSig (Get-AuthenticodeSignature -LiteralPath ${psQuote(file)}) ${psQuote(file)})`
 }
 
-// The same for every program and library in a folder (an unpacked update), as a list
+// The same for every program and library in a folder (an unpacked update), as a list. Each
+// one also says where it is inside the folder (rel), which is what the update check goes by
 export function folderSignaturesScript(dir: string): string {
-  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security'); ${SIGNATURE_INFO}; $r = @(Get-ChildItem -LiteralPath ${psQuote(dir)} -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object { PzmSig (Get-AuthenticodeSignature -LiteralPath $_.FullName) $_.FullName }); ConvertTo-Json -Compress -Depth 4 -InputObject $r`
+  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security'); ${PS_UTF8_OUTPUT} ${SIGNATURE_INFO}; $root = (Get-Item -LiteralPath ${psQuote(dir)}).FullName.TrimEnd('\\'); $r = @(Get-ChildItem -LiteralPath ${psQuote(dir)} -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object { $o = PzmSig (Get-AuthenticodeSignature -LiteralPath $_.FullName) $_.FullName; $o | Add-Member -NotePropertyName rel -NotePropertyValue $_.FullName.Substring($root.Length).TrimStart('\\'); $o }); ConvertTo-Json -Compress -Depth 4 -InputObject $r`
 }
 
 export interface SignatureInfo {
   path?: string
+  // where it is inside the folder that was checked (folderSignaturesScript)
+  rel?: string
   status: string
   // the certificate's name (CN), '' when the file isn't signed
   signer: string
@@ -377,10 +393,15 @@ export function signedByUs(sig: SignatureInfo): boolean {
  * be signed by us, the same check as the installer. Every other program and library in it is
  * either unsigned (Electron's own libraries are) or validly signed: a broken signature means
  * the file was changed after it was signed.
+ * root: the folder the signatures were read in. The exe is then found by where it is inside
+ * it, so the rest of the path (the user's name in it, any letters at all) can't get in the way
  */
-export function updatePackageProblem(sigs: SignatureInfo[], appExe: string): string | null {
-  const same = (a?: string) => !!a && win32.normalize(a).toLowerCase() === win32.normalize(appExe).toLowerCase()
-  const exe = sigs.find(s => same(s.path))
+export function updatePackageProblem(sigs: SignatureInfo[], appExe: string, root?: string): string | null {
+  const norm = (p: string) => win32.normalize(p).toLowerCase()
+  const want = root ? norm(win32.relative(root, appExe)) : norm(appExe)
+  const where = (s: SignatureInfo) => (root ? (s.rel ?? (s.path ? win32.relative(root, s.path) : undefined)) : s.path)
+  const same = (a?: string) => !!a && norm(a) === want
+  const exe = sigs.find(s => same(where(s)))
   if (!exe) return `The update doesn't have ${win32.basename(appExe)} in it.`
   if (!signedByUs(exe)) return `${win32.basename(appExe)} in the update isn't signed by ${RELEASE_SIGNER}.`
   const broken = sigs.find(s => s.status !== 'Valid' && s.status !== 'NotSigned')
@@ -391,7 +412,7 @@ export function updatePackageProblem(sigs: SignatureInfo[], appExe: string): str
 // Unpacks a zip with Windows' own Expand-Archive (module from Windows PowerShell's folder, see
 // signatureQueryScript), for powershell -Command straight from the app, no cmd in between
 export function expandArchiveScript(zipPath: string, destDir: string): string {
-  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Archive'); Expand-Archive -LiteralPath ${psQuote(zipPath)} -DestinationPath ${psQuote(destDir)} -Force`
+  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Archive'); ${PS_UTF8_OUTPUT} Expand-Archive -LiteralPath ${psQuote(zipPath)} -DestinationPath ${psQuote(destDir)} -Force`
 }
 
 // ── Folder sizes ─────────────────────────────────────────────────────────────

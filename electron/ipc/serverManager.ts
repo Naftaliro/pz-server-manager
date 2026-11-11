@@ -21,7 +21,7 @@ import { firewallStatus } from './network'
 import { notify, escapeDiscord, DISCORD_COLORS } from './discord'
 import { backupBeforeStart, serverUp, serverDown, whileDownForRestart } from './backups'
 import { mergeIni, mergeSandbox, isGameWritten, type SettingsTree } from '../../shared/gameConfig'
-import { patchStartBat,launcherScript, serverWindowCommand, sendKeysScript } from './winScripts'
+import { patchStartBat, launcherScript, serverWindowCommand, sendKeysScript, PS_UTF8_OUTPUT, psJson } from './winScripts'
 import { takeLines } from './logTail'
 import { resolveDataPath, setupDataFolderHandlers } from './dataFolder'
 import { syncLocalMods } from './localMods'
@@ -163,11 +163,14 @@ function disableQuickEdit(windowTitle: string): Promise<boolean> {
 // Process helpers
 // ---------------------------------------------------------------------------
 
+// one process as Get-CimInstance ... | ConvertTo-Json gives it (one alone isn't in a list)
+type ProcRow = { ProcessId: number; CommandLine: string | null; CreationDate?: string }
+
 // wmic got removed in newer Windows 11 builds, so ask CIM through powershell.
 // Returns every java process that has a -servername, keyed by that name.
 function findServerPids(): Promise<Map<string, number>> {
   return new Promise((resolve) => {
-    const script = `Get-CimInstance Win32_Process -Filter "Name LIKE 'java%.exe'" | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress`
+    const script = `${PS_UTF8_OUTPUT} Get-CimInstance Win32_Process -Filter "Name LIKE 'java%.exe'" | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress`
     execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
@@ -176,7 +179,7 @@ function findServerPids(): Promise<Map<string, number>> {
         const result = new Map<string, number>()
         if (err || !stdout || !stdout.trim()) return resolve(result)
         try {
-          const parsed = JSON.parse(stdout)
+          const parsed = psJson(stdout) as ProcRow | ProcRow[]
           const procs: Array<{ ProcessId: number; CommandLine: string | null; CreationDate?: string }> = Array.isArray(parsed) ? parsed : [parsed]
           // with two copies of one server running, the first one started is the one that
           // got the ports, so lowest creation time wins
@@ -220,7 +223,7 @@ function isPidAlive(pid: number): Promise<boolean> {
 // if it really is our launcher, so we never close some other cmd window.
 function findLauncherWindowPid(javaPid: number): Promise<number | null> {
   return new Promise((resolve) => {
-    const script = `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${javaPid}"; if ($p) { Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ParentProcessId)" | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress }`
+    const script = `${PS_UTF8_OUTPUT} $p = Get-CimInstance Win32_Process -Filter "ProcessId=${javaPid}"; if ($p) { Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ParentProcessId)" | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress }`
     execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
@@ -228,7 +231,7 @@ function findLauncherWindowPid(javaPid: number): Promise<number | null> {
       (err, stdout) => {
         if (err || !stdout || !stdout.trim()) return resolve(null)
         try {
-          const parent: { ProcessId: number; Name: string; CommandLine: string | null } = JSON.parse(stdout)
+          const parent: { ProcessId: number; Name: string; CommandLine: string | null } = psJson(stdout) as typeof parent
           const ours = /^cmd\.exe$/i.test(parent.Name) && /_pzm_launch_/i.test(parent.CommandLine || '')
           resolve(ours ? parent.ProcessId : null)
         } catch { resolve(null) }
@@ -241,7 +244,7 @@ function findLauncherWindowPid(javaPid: number): Promise<number | null> {
 // (_pzm_launch_<name>.bat, so "Server1" never matches "Server10"). Works after java is gone too
 function findLauncherWindows(serverName: string): Promise<number[]> {
   return new Promise((resolve) => {
-    const script = `Get-CimInstance Win32_Process -Filter "Name = 'cmd.exe'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`
+    const script = `${PS_UTF8_OUTPUT} Get-CimInstance Win32_Process -Filter "Name = 'cmd.exe'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`
     execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
@@ -249,7 +252,7 @@ function findLauncherWindows(serverName: string): Promise<number[]> {
       (err, stdout) => {
         if (err || !stdout || !stdout.trim()) return resolve([])
         try {
-          const parsed = JSON.parse(stdout)
+          const parsed = psJson(stdout) as ProcRow | ProcRow[]
           const procs: Array<{ ProcessId: number; CommandLine: string | null }> = Array.isArray(parsed) ? parsed : [parsed]
           const launcher = `_pzm_launch_${serverName}.bat`.toLowerCase()
           resolve(procs.filter(p => (p.CommandLine || '').toLowerCase().includes(launcher)).map(p => p.ProcessId))

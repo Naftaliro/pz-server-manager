@@ -7,7 +7,7 @@ import { join } from 'path'
 import { existsSync, writeFileSync, mkdtempSync, rmSync } from 'fs'
 import { listProfiles } from './profileManager'
 import { loadSettings } from './appSettings'
-import { firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, type FirewallEntry, type FirewallRuleInfo } from './winScripts'
+import { firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, psJson, type FirewallEntry, type FirewallRuleInfo } from './winScripts'
 
 // ── UPnP check ──────────────────────────────────────────────────────────────
 // PZ asks the router to open its ports over UPnP. This asks the router whether that
@@ -161,7 +161,7 @@ function readFirewallRules(): Promise<FirewallRuleInfo[] | null> {
   return new Promise((resolve) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', firewallQueryScript()], { windowsHide: true, timeout: 20000 }, (err, stdout) => {
       if (err) return resolve(null)
-      try { resolve(JSON.parse(stdout)) } catch { resolve(null) }
+      try { resolve(psJson(stdout) as FirewallRuleInfo[]) } catch { resolve(null) }
     })
   })
 }
