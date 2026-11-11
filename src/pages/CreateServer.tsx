@@ -9,6 +9,7 @@ import { saveProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
 import { downloadAndScan } from '../lib/mods'
 import { suggestPassword, publicIni, type ServerPack } from '../../shared/serverPack'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { useLeaveGuard } from '../lib/leaveGuard'
 import { steamImageUrl } from '../../shared/workshopItem'
 import { freeGamePort, freeRconPort } from '../../shared/ports'
 import { ModdedPresetList, ReadyToBuild } from '../components/ModdedPresets'
@@ -196,6 +197,11 @@ export default function CreateServer() {
 
   const steps = ['Name', 'Difficulty', 'Mods']
 
+  // once something's typed or picked, mouse back/forward and Cancel ask before throwing it away
+  const touched = step > 0 || !!name || !!password || pvp || !!moddedKey || preset !== 'Apocalypse' || maxPlayers !== 8
+  const [leaveOpen, setLeaveOpen] = useState(false)
+  const leaveGuard = useLeaveGuard(touched && !creating, () => setLeaveOpen(true))
+
   return (
     <div className="h-full overflow-y-auto p-8">
       <div className="max-w-xl mx-auto">
@@ -249,7 +255,7 @@ export default function CreateServer() {
             </div>
 
             <div className="flex justify-between">
-              <button onClick={() => setActiveView('home')} className="btn-ghost"><ArrowLeft size={14} /> Cancel</button>
+              <button onClick={() => (touched ? setLeaveOpen(true) : setActiveView('home'))} className="btn-ghost"><ArrowLeft size={14} /> Cancel</button>
               <button onClick={() => setStep(1)} disabled={!nameOk} className="btn-primary disabled:opacity-40">Next <ArrowRight size={14} /></button>
             </div>
 
@@ -361,6 +367,16 @@ export default function CreateServer() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={leaveOpen}
+        title="Leave without making the server?"
+        message="What you've filled in so far will be lost."
+        confirmLabel="Leave"
+        danger
+        onConfirm={() => { setLeaveOpen(false); if (!leaveGuard.leave()) setActiveView('home') }}
+        onCancel={() => { setLeaveOpen(false); leaveGuard.stay() }}
+      />
     </div>
   )
 }

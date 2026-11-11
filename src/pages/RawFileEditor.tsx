@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { ArrowLeft, Save, RefreshCw, FileText, AlertCircle, CheckCircle, FolderOpen, Info, Search, X, ChevronUp, ChevronDown } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import { getServerName } from '../lib/profile'
+import { useLeaveGuard } from '../lib/leaveGuard'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 type FileTab = 'ini' | 'sandbox'
 
@@ -21,6 +23,14 @@ export default function RawFileEditor() {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // each file as it was read or last saved: anything else is an edit that isn't saved yet
+  const [savedText, setSavedText] = useState<Record<FileTab, string>>({ ini: '', sandbox: '' })
+  const keep = (which: FileTab, text: string) => setSavedText(prev => ({ ...prev, [which]: text }))
+  const edited = (which: FileTab) => (which === 'ini' ? iniContent : sandboxContent) !== savedText[which]
+  const dirty = edited('ini') || edited('sandbox')
+  // mouse back/forward and the back arrow ask before throwing edits away
+  const [leaveOpen, setLeaveOpen] = useState(false)
+  const leaveGuard = useLeaveGuard(dirty, () => setLeaveOpen(true))
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('')
@@ -38,7 +48,9 @@ export default function RawFileEditor() {
   }, [profile])
 
   // Load file contents when tab changes or paths change
+  // (not over edits that aren't saved yet: switching tabs and back keeps them)
   useEffect(() => {
+    if (edited(activeTab)) return
     if (activeTab === 'ini') loadFile('ini')
     else loadFile('sandbox')
   }, [activeTab, iniPath, sandboxPath])
@@ -75,9 +87,11 @@ export default function RawFileEditor() {
       if (result.success && result.content !== undefined) {
         if (which === 'ini') { setIniContent(result.content); setIniExists(true) }
         else { setSandboxContent(result.content); setSandboxExists(true) }
+        keep(which, result.content)
       } else {
         if (which === 'ini') { setIniContent(''); setIniExists(false) }
         else { setSandboxContent(''); setSandboxExists(false) }
+        keep(which, '')
       }
     } catch {
       setError("Couldn't read the file.")
@@ -95,6 +109,7 @@ export default function RawFileEditor() {
     try {
       const result = await window.electronAPI.fs.writeFile(filePath, content)
       if (result.success) {
+        keep(activeTab, content)
         setSaved(true)
         if (activeTab === 'ini') setIniExists(true)
         else setSandboxExists(true)
@@ -122,6 +137,7 @@ export default function RawFileEditor() {
     if (result.success && result.content !== undefined) {
       if (activeTab === 'ini') { setIniContent(result.content); setIniPath(filePath); setIniExists(true) }
       else { setSandboxContent(result.content); setSandboxPath(filePath); setSandboxExists(true) }
+      keep(activeTab, result.content)
     }
   }
 
@@ -142,7 +158,7 @@ export default function RawFileEditor() {
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-4 px-6 py-4 border-b border-pz-border bg-pz-darker flex-shrink-0">
-        <button onClick={() => setActiveView('server')} className="btn-ghost p-1.5">
+        <button onClick={() => (dirty ? setLeaveOpen(true) : setActiveView('server'))} className="btn-ghost p-1.5">
           <ArrowLeft size={16} />
         </button>
         <div className="flex-1">
@@ -280,6 +296,16 @@ export default function RawFileEditor() {
           />
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={leaveOpen}
+        title="Leave without saving?"
+        message="Your edits to these files will be lost."
+        confirmLabel="Leave"
+        danger
+        onConfirm={() => { setLeaveOpen(false); if (!leaveGuard.leave()) setActiveView('server') }}
+        onCancel={() => { setLeaveOpen(false); leaveGuard.stay() }}
+      />
     </div>
   )
 }
