@@ -97,7 +97,9 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
           <StartButton profile={profile} big />
         </div>
 
-        {notice && <p className="text-sm text-pz-green bg-pz-green/10 border border-pz-green/30 rounded-lg px-3 py-2">{notice}</p>}
+        {notice && (
+          <p className={`text-sm rounded-lg px-3 py-2 border ${notice.startsWith("Didn't work") ? 'text-pz-yellow bg-pz-yellow/10 border-pz-yellow/30' : 'text-pz-green bg-pz-green/10 border-pz-green/30'}`}>{notice}</p>
+        )}
 
         {/* Mods updated on the Workshop while running */}
         {updatedMods.length > 0 && status === 'running' && (
@@ -352,9 +354,8 @@ function PlayersCard({ profile, online, running, say }: { profile: ServerProfile
     const { action, name } = confirm
     setConfirm(null)
     const r = await window.electronAPI.server.playerAction(profile.id, action, name)
-    say(r.success
-      ? { kick: `Kicked ${name}.`, ban: `Banned ${name}.`, unban: `${name} can join again.`, admin: `${name} is an admin now.` }[action]
-      : `Didn't work: ${r.message}`)
+    // what the server answered, a "doesn't exist" too
+    say(r.success ? r.message : `Didn't work: ${r.message}`)
     // the game writes its database a moment later
     setTimeout(() => void loadKnown(), 1500)
   }

@@ -11,6 +11,7 @@ import { getProfile, listProfiles, patchProfile, getServerName } from './profile
 import type { ServerProfile } from './profileManager'
 import { rconCommand } from './rcon'
 import { knownPlayers } from './playerDb'
+import { playerCommand, actionResult, knownName, type PlayerAction } from './playerActions'
 import { isServerInstalled, checkServerUpdate } from './steamcmd'
 import { workshopContentDir, scanWorkshopItem, fetchModDetails, PZ_APP_ID } from './modManager'
 import { formatModIds, orderModIds, buildMapLine, enabledIds, wrongBuildMods, isWorkshopId, type ModSnapshot } from '../../shared/modCore'
@@ -1274,21 +1275,24 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
     }
   })
 
-  ipcMain.handle('server:playerAction', async (_event, profileId: string, action: 'kick' | 'ban' | 'unban' | 'admin' | 'unadmin', name: string) => {
-    const safe = name.replace(/"/g, '')
-    const command = {
-      kick: `kickuser "${safe}"`,
-      ban: `banuser "${safe}"`,
-      unban: `unbanuser "${safe}"`,
-      admin: `setaccesslevel "${safe}" admin`,
-      unadmin: `setaccesslevel "${safe}" none`,
-    }[action]
+  ipcMain.handle('server:playerAction', async (_event, profileId: string, action: PlayerAction, name: string) => {
+    const profile = getProfile(profileId)
+    if (!profile) return { success: false, message: 'That server is no longer in your list.' }
+    const command = playerCommand(action, String(name || ''), profile.buildVersion === 'b41' ? 'b41' : 'b42')
     if (!command) return { success: false, message: 'Unknown action' }
+    // the game makes an account for a name it has never seen, don't let a typo do that
+    if (action !== 'kick') {
+      let known: string[] = []
+      try { known = knownPlayers(profile, resolveDataPath(profile.worldSavePath)).map(p => p.username) } catch { /* no db yet */ }
+      if (!knownName(name, known, runningServers.get(profileId)?.players || [])) {
+        return { success: false, message: `Nobody called ${name} has played on this server.` }
+      }
+    }
     try {
       const out = await rconFor(profileId, command)
       emitConsoleOutput(profileId, `> ${command}`)
       if (out) emitConsoleOutput(profileId, out)
-      return { success: true, message: out }
+      return actionResult(action, name, out || '')
     } catch (e) {
       return { success: false, message: e instanceof Error ? e.message : String(e) }
     }
