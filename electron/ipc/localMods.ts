@@ -4,7 +4,8 @@ import { existsSync, cpSync, mkdirSync, readFileSync } from 'fs'
 import { cp } from 'fs/promises'
 import { resolveDataPath } from './dataFolder'
 import { listDirs, parseModInfo, scanModFolders } from './modManager'
-import { installedBuild } from './steamcmd'
+import { installedBuild, knownInstalls, sameInstall } from './steamcmd'
+import { installDirProblem } from './allowedPaths'
 import { enabledIds } from '../../shared/modCore'
 import { sameFolder } from '../../shared/dataFolder'
 import type { ServerProfile } from './profileManager'
@@ -78,9 +79,12 @@ export function setupLocalModHandlers() {
   // which game build a server install has (its Steam build id), so the ready-made modded
   // servers can say when the server isn't the version they were tested on. Only reads the
   // install's appmanifest, no SteamCMD
+  // Only for the app's own server installs: a network path would have Windows connect to
+  // someone else's PC (and hand it the user's login) just to look for the file
   ipcMain.handle('presets:serverBuild', async (_event, installDir: string) => {
     try {
-      return { success: true, ...(typeof installDir === 'string' && installDir ? installedBuild(installDir) : { buildId: null, branch: 'public' }) }
+      const known = typeof installDir === 'string' && !installDirProblem(installDir) ? knownInstalls().find(d => sameInstall(d, installDir)) : undefined
+      return { success: true, ...(known ? installedBuild(known) : { buildId: null, branch: 'public' }) }
     } catch (e) {
       return { success: false, buildId: null, message: e instanceof Error ? e.message : String(e) }
     }

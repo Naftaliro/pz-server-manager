@@ -81,3 +81,34 @@ export function allowedFolder(p: unknown, roots: string[]): string | null {
 export function isServerName(name: unknown): name is string {
   return typeof name === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(name)
 }
+
+// ── Folders SteamCMD may install the game server into ───────────────────────
+
+// Folders the user picked in a folder dialog this session (and anything inside them)
+const pickedFolders = new Set<string>()
+export function rememberPickedFolder(p: string | null | undefined) {
+  const full = localPath(p)
+  if (full) pickedFolders.add(full.toLowerCase())
+}
+export function insidePickedFolder(p: string): boolean {
+  return [...pickedFolders].some(root => isInside(p, root))
+}
+
+/**
+ * Why SteamCMD shouldn't put the game server's files (.bat files included) in this folder,
+ * whoever asks: not a network path, not a whole drive, not Windows itself, not a Startup or
+ * Start Menu folder where Windows would run what lands there
+ */
+export function installDirProblem(dir: unknown, env: NodeJS.ProcessEnv = process.env): string | null {
+  const bad = `"${String(dir)}" isn't a folder the game server can go in.`
+  if (typeof dir !== 'string' || /^[\\/]{2}/.test(dir.trim())) return bad
+  const full = localPath(dir, env)
+  if (!full || /^[A-Za-z]:\\?$/.test(full)) return bad
+  const off = [
+    env.SystemRoot || env.windir || 'C:\\Windows',
+    ...[env.APPDATA, env.ProgramData].filter((d): d is string => !!d).map(d => win32.join(d, 'Microsoft', 'Windows', 'Start Menu')),
+  ]
+  if (off.some(root => isInside(full, root))) return bad
+  if (env.USERPROFILE && win32.resolve(full).toLowerCase() === win32.resolve(env.USERPROFILE).toLowerCase()) return bad
+  return null
+}

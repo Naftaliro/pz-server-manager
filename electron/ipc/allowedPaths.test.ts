@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { allowedFile, allowedFolder, localPath, isInside, isServerName } from './allowedPaths'
+import { allowedFile, allowedFolder, localPath, isInside, isServerName, installDirProblem, rememberPickedFolder, insidePickedFolder } from './allowedPaths'
 
 // security review F8: what a script that got into the app's window could ask the file handlers for
 describe.runIf(process.platform === 'win32')('allowed files and folders', () => {
@@ -76,5 +76,28 @@ describe('path helpers', () => {
   it('server names are folder-safe', () => {
     expect(isServerName('Friday_Night-2')).toBe(true)
     for (const bad of ['..', '..\\..\\Windows', 'a b', '', 'a/b', 5]) expect(isServerName(bad)).toBe(false)
+  })
+})
+
+describe('folders the game server can be installed into', () => {
+  const env = { SystemRoot: 'C:\\WINDOWS', APPDATA: 'C:\\Users\\Me\\AppData\\Roaming', ProgramData: 'C:\\ProgramData', USERPROFILE: 'C:\\Users\\Me' }
+  it('takes normal folders, Steam libraries too', () => {
+    for (const ok of ['C:\\PZServer', 'D:\\Games\\PZ Server', 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Project Zomboid Dedicated Server', 'C:\\Users\\Me\\PZ']) {
+      expect(installDirProblem(ok, env)).toBeNull()
+    }
+  })
+  it('turns down network paths, whole drives, Windows and the Startup folders', () => {
+    for (const bad of [
+      '\\\\evil\\share\\pz', '//evil/share', 'C:\\', 'D:', 'C:\\Windows\\System32\\x', 'c:\\windows',
+      'C:\\Users\\Me\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup',
+      'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\\pz',
+      'C:\\Users\\Me', 'relative\\dir', 'C:\\PZ\\a.txt:stream', '', 5,
+    ]) expect(installDirProblem(bad, env)).not.toBeNull()
+  })
+  it('remembers folders picked in the folder dialog, and what is inside them', () => {
+    expect(insidePickedFolder('E:\\Picked\\PZ')).toBe(false)
+    rememberPickedFolder('E:\\Picked')
+    expect(insidePickedFolder('e:\\picked\\PZ')).toBe(true)
+    expect(insidePickedFolder('E:\\Pickedx')).toBe(false)
   })
 })

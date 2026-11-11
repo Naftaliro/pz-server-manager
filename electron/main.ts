@@ -19,7 +19,7 @@ import { setupPlayitHandlers } from './ipc/playit'
 import { setupNetworkHandlers, firewallStatus } from './ipc/network'
 import { setupDiagnosticsHandlers } from './ipc/diagnostics'
 import { setupDiscordHandlers } from './ipc/discord'
-import { allowedFile, allowedFolder, localPath } from './ipc/allowedPaths'
+import { allowedFile, allowedFolder, localPath, rememberPickedFolder } from './ipc/allowedPaths'
 import { configFolders, appFolders } from './ipc/appFolders'
 import { lockDownSession } from './ipc/workshopSession'
 import { STARTUP_ARG, secondLaunch, RUN_KEY, RUN_VALUE, parseRunKey, runKeyPlan, startupProblem, type RunValue } from './ipc/startup'
@@ -265,6 +265,8 @@ app.whenReady().then(() => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       properties: ['openDirectory'],
     })
+    // a folder picked here can then get the game server installed into it (steamcmd:installServer)
+    if (!result.canceled) rememberPickedFolder(result.filePaths[0])
     return result.canceled ? null : result.filePaths[0]
   })
 

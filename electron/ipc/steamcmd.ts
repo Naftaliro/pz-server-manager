@@ -19,6 +19,7 @@ import { expandArchiveScript } from './winScripts'
 import { redirectTarget } from './httpsOnly'
 import { followFile } from './logTail'
 import { whileBusy } from './busy'
+import { installDirProblem, insidePickedFolder } from './allowedPaths'
 
 const STEAMCMD_URL = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 const PZ_SERVER_APP_ID = '380870'
@@ -67,6 +68,22 @@ export function knownInstalls(): string[] {
 
 export function sameInstall(a: string, b: string): boolean {
   return !!a && !!b && installKey(a) === installKey(b)
+}
+
+/**
+ * A folder the window may have SteamCMD install or update the game server in: one the app
+ * already knows (App settings, a server), one the user picked in a folder dialog this session
+ * (or inside it), or the copy Steam itself installed. During the first setup, a folder typed
+ * in by hand too. Never a network path, Windows or a Startup folder (installDirProblem)
+ */
+export async function allowedInstallDir(dir: unknown): Promise<string> {
+  const problem = installDirProblem(dir)
+  if (problem) throw new Error(problem)
+  const d = dir as string
+  if (knownInstalls().some(k => sameInstall(k, d)) || insidePickedFolder(d) || !loadSettings().setupComplete) return d
+  const steam = await findSteamInstalledServer().catch(() => null)
+  if (steam && sameInstall(steam, d)) return d
+  throw new Error("That isn't one of your server installs. Pick its folder in App settings first.")
 }
 
 function knownInstall(dir: unknown): string {
@@ -142,12 +159,16 @@ export function setupSteamCmdHandlers() {
 
   ipcMain.handle('steamcmd:installServer', async (event, { steamcmdPath, installDir, channel, buildVersion, branch }) => {
     const sender = event.sender
-    return runServerInstall(steamcmdPath, installDir, (line) => { if (!sender.isDestroyed()) sender.send(channel, line) }, false, buildVersion, branch)
+    let dir: string
+    try { dir = await allowedInstallDir(installDir) } catch (e) { return { success: false, message: e instanceof Error ? e.message : String(e) } }
+    return runServerInstall(steamcmdPath, dir, (line) => { if (!sender.isDestroyed()) sender.send(channel, line) }, false, buildVersion, branch)
   })
 
   ipcMain.handle('steamcmd:updateServer', async (event, { steamcmdPath, installDir, channel, buildVersion, branch }) => {
     const sender = event.sender
-    return runServerInstall(steamcmdPath, installDir, (line) => { if (!sender.isDestroyed()) sender.send(channel, line) }, true, buildVersion, branch)
+    let dir: string
+    try { dir = await allowedInstallDir(installDir) } catch (e) { return { success: false, message: e instanceof Error ? e.message : String(e) } }
+    return runServerInstall(steamcmdPath, dir, (line) => { if (!sender.isDestroyed()) sender.send(channel, line) }, true, buildVersion, branch)
   })
 
   // pick the branch the next update switches an install to ('' = stay where it is)
@@ -423,6 +444,8 @@ export async function runServerInstall(
   try {
     checkedSteamCmd(steamcmdPath)
     checkedDir(installDir)
+    const unsafe = installDirProblem(installDir)
+    if (unsafe) throw new Error(unsafe)
     if (branch !== undefined && branch !== null && !isBranchName(branch)) throw new Error(`"${String(branch)}" isn't a Steam branch.`)
   } catch (error: unknown) {
     return { success: false, message: error instanceof Error ? error.message : String(error) }
