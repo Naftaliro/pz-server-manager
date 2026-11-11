@@ -903,9 +903,16 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
     const infos = fresh.get(m.workshopId)!.filter(i => enabledIds(m).includes(i.id))
     for (const info of infos) {
       for (const dep of info.requires) {
-        if (!enabled.has(dep)) {
-          issues.push({ level: 'error', message: `"${m.name}" needs the mod "${dep}", which isn't in your list.`, fix: 'open-mods' })
-        }
+        if (enabled.has(dep)) continue
+        // inside an item in the list (one with several mods), just not turned on
+        const owner = profile.mods.find(o => (fresh.get(o.workshopId) || o.infos || []).some(i => i.id === dep))
+        issues.push({
+          level: 'error',
+          message: owner
+            ? `"${m.name}" needs the mod "${dep}". It's in your list (in "${owner.name}") but switched off, turn it on in the Mods tab.`
+            : `"${m.name}" needs the mod "${dep}", which isn't in your list.`,
+          fix: 'open-mods',
+        })
       }
     }
   }
