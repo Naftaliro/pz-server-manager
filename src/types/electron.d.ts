@@ -207,7 +207,7 @@ interface ElectronAPI {
       success: boolean; message?: string; cancelled?: boolean; path?: string; fixMods?: number; workshopItems?: number
     }>
     // the pack's fix mod files stay in the main process, only their names come back
-    openPackForHost: () => Promise<{ success: boolean; message?: string; cancelled?: boolean; path?: string; pack?: import('../../shared/serverPack').ServerPack }>
+    openPackForHost: () => Promise<{ success: boolean; message?: string; cancelled?: boolean; path?: string; pack?: import('../../shared/serverPack').ServerPack; droppedSettings?: string[] }>
     installPackFixes: (path: string, worldSavePath?: string) => Promise<{ success: boolean; message?: string; installed?: string[]; backedUp?: string[] }>
   }
   world: {

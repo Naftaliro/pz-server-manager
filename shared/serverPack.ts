@@ -3,6 +3,7 @@
 // the Electron side does the file reading / hashing / writing.
 
 import { isWorkshopId, type Build } from './modCore'
+import { isSettingKey } from './gameConfig'
 
 export const PACK_FORMAT = 'pzm-server-pack'
 export const PACK_VERSION = 1
@@ -81,6 +82,38 @@ export function publicIni(values: Record<string, unknown>): Record<string, strin
 function isSettingsTree(v: unknown, depth = 0): boolean {
   if (!v || typeof v !== 'object' || Array.isArray(v) || depth > 4) return false
   return Object.values(v).every(x => ['string', 'number', 'boolean'].includes(typeof x) || isSettingsTree(x, depth + 1))
+}
+
+// a setting name as the user sees it in "left out" messages, without anything that could
+// mess up the line it's shown on
+const shownKey = (path: string[]) => path.join('.').replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 60)
+
+function cleanTree(tree: Record<string, unknown>, path: string[], dropped: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(tree)) {
+    if (!isSettingKey(k) || (typeof v === 'number' && !Number.isFinite(v))) { dropped.push(shownKey([...path, k])); continue }
+    if (v && typeof v === 'object' && !Array.isArray(v)) out[k] = cleanTree(v as Record<string, unknown>, [...path, k], dropped)
+    else if (['string', 'number', 'boolean'].includes(typeof v)) out[k] = v
+    else dropped.push(shownKey([...path, k]))
+  }
+  return out
+}
+
+/**
+ * A pack's settings made safe to write into this PC's server files. They come from whoever
+ * made the pack: a setting name that isn't a plain word could write extra lines into the .ini
+ * or code into SandboxVars.lua (the server runs that file), and an .ini value can't have a
+ * line break in it. Those are left out, dropped lists them so the user can be told.
+ */
+export function cleanHostSettings(host: Pick<PackHost, 'ini' | 'sandbox'>): { ini: PackHost['ini']; sandbox: PackHost['sandbox']; dropped: string[] } {
+  const dropped: string[] = []
+  const ini: PackHost['ini'] = {}
+  for (const [k, v] of Object.entries(host.ini || {})) {
+    const ok = isSettingKey(k) && (typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && !/[\r\n\0]/.test(v)))
+    if (ok) ini[k] = v
+    else dropped.push(shownKey([k]))
+  }
+  return { ini, sandbox: cleanTree(host.sandbox || {}, [], dropped), dropped }
 }
 
 function hostErrors(h: unknown, localFolders: PackLocalMod[]): string[] {

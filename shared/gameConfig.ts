@@ -35,10 +35,18 @@ export function isTree(v: unknown): v is SettingsTree {
   return !!v && typeof v === 'object' && !Array.isArray(v)
 }
 
+// Setting names are plain words in both files (ZombieLore, Speed, server_browser_announced_ip).
+// They're written into the files as they are, and SandboxVars.lua is code the server runs,
+// so anything else (a space, = , a quote, a line break) never gets written
+export function isSettingKey(key: unknown): key is string {
+  return typeof key === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key)
+    && key !== '__proto__' && key !== 'constructor' && key !== 'prototype'
+}
+
 export function getPath(tree: SettingsTree | undefined, path: string[]): SettingValue | undefined {
   let node: SettingValue | SettingsTree | undefined = tree
   for (const p of path) {
-    if (!isTree(node)) return undefined
+    if (!isTree(node) || !Object.prototype.hasOwnProperty.call(node, p)) return undefined
     node = node[p]
   }
   return isTree(node) ? undefined : node
@@ -67,6 +75,8 @@ export function deleteToPath(tree: SettingsTree, path: string[]): SettingsTree {
 export function deepMerge(a: SettingsTree, b: SettingsTree): SettingsTree {
   const out: SettingsTree = { ...a }
   for (const [k, v] of Object.entries(b)) {
+    // a parsed file can have its own "__proto__", which as out[k] would swap out's prototype
+    if (k === '__proto__') continue
     out[k] = isTree(v) && isTree(out[k]) ? deepMerge(out[k] as SettingsTree, v) : v
   }
   return out
@@ -101,8 +111,9 @@ export function luaValue(value: SettingValue, decimal = false): string {
     // the game writes 1.0 for decimal settings, keep it that way
     return decimal && Number.isInteger(value) ? value.toFixed(1) : String(value)
   }
-  // some old profiles stored strings with their quotes already on
-  const s = String(value).replace(/^"(.*)"$/, '$1').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ')
+  // some old profiles stored strings with their quotes already on. Inside the quotes only
+  // \ and " mean something to Lua, and a line break would end the line
+  const s = String(value).replace(/^"(.*)"$/, '$1').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\x00-\x1f\x7f]+/g, ' ')
   return `"${s}"`
 }
 
@@ -220,6 +231,7 @@ export function mergeSandbox(existing: string, values: SettingsTree, appendMissi
     if (!isTree(node)) return []
     const lines: string[] = []
     for (const [k, v] of Object.entries(node)) {
+      if (!isSettingKey(k)) continue
       const full = [...path, k]
       if (isTree(v)) {
         // a whole section that isn't there yet (only at the top, sections inside are kept as found)
@@ -283,6 +295,8 @@ const eolOf = (text: string) => (/\r\n/.test(text) ? '\r\n' : '\n')
 function blockLines(tree: SettingsTree, indent: string, prefix: string[]): string[] {
   const lines: string[] = []
   for (const [k, v] of Object.entries(tree)) {
+    // the name goes into the file as code, see isSettingKey
+    if (!isSettingKey(k)) continue
     if (isTree(v)) lines.push(`${indent}${k} = {`, ...blockLines(v, indent + '    ', [...prefix, k]), `${indent}},`)
     else lines.push(`${indent}${k} = ${luaValue(v)},`)
   }
@@ -335,8 +349,9 @@ export function parseIni(text: string): ParsedConfig {
   return { values, defs }
 }
 
+// one line: a line break in a value would start a setting of its own
 function iniValue(v: SettingValue): string {
-  return String(v).replace(/[\r\n]+/g, ' ')
+  return String(v).replace(/[\x00-\x08\x0a-\x1f\x7f]+/g, ' ')
 }
 
 // Same idea as mergeSandbox: change the lines that hold these settings, add new ones at the end
@@ -350,14 +365,15 @@ export function mergeIni(existing: string, values: Record<string, unknown>): str
     const eq = t.indexOf('=')
     if (!t || t.startsWith('#') || t.startsWith(';') || eq === -1) { out.push(line); continue }
     const key = t.slice(0, eq).trim()
-    const v = values[key]
+    const v = Object.prototype.hasOwnProperty.call(values, key) ? values[key] : undefined
     if (v === undefined || v === null || isTree(v)) { out.push(line); continue }
     written.add(key)
     // same value: leave the line alone (the game writes 30.0, we'd write 30)
     if (parseIniValue(t.slice(eq + 1).trim()) === v) { out.push(line); continue }
     out.push(`${key}=${iniValue(v as SettingValue)}`)
   }
-  const added = Object.entries(values).filter(([k, v]) => !written.has(k) && v !== undefined && v !== null && !isTree(v))
+  // a name with = or a line break in it would write settings nobody picked
+  const added = Object.entries(values).filter(([k, v]) => isSettingKey(k) && !written.has(k) && v !== undefined && v !== null && !isTree(v))
   if (added.length > 0 && out.length > 0 && out[out.length - 1] !== '') out.push('')
   for (const [k, v] of added) out.push(`${k}=${iniValue(v as SettingValue)}`)
   const eol = eolOf(existing)

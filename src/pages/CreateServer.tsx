@@ -7,7 +7,8 @@ import type { SettingsTree } from '../../shared/gameConfig'
 import { DEV_PRESETS } from '../lib/devPresets'
 import { saveProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
 import { downloadAndScan } from '../lib/mods'
-import { suggestPassword } from '../../shared/serverPack'
+import { suggestPassword, type ServerPack } from '../../shared/serverPack'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 type Step = 0 | 1 | 2
 
@@ -57,12 +58,18 @@ export default function CreateServer() {
 
   // Host a copy of someone's server from their server pack: same mods, fix mods and settings
   const [packError, setPackError] = useState('')
+  // settings the app left out of a pack (not safe to write into the server files), asked about first
+  const [leftOut, setLeftOut] = useState<{ pack: ServerPack; path: string; dropped: string[] } | null>(null)
   const copyPack = async () => {
     setPackError('')
     const r = await window.electronAPI.client.openPackForHost()
     if (!r.success) { setPackError(r.message || "Couldn't open that pack."); return }
     if (r.cancelled || !r.pack?.host || !r.path) return
-    const { pack, path } = r
+    if (r.droppedSettings?.length) { setLeftOut({ pack: r.pack, path: r.path, dropped: r.droppedSettings }); return }
+    await hostCopy(r.pack, r.path)
+  }
+
+  const hostCopy = async (pack: ServerPack, path: string) => {
     const host = pack.host!
     setCreating(true)
     try {
@@ -223,6 +230,14 @@ export default function CreateServer() {
                 {creating ? <Loader size={16} className="animate-spin text-pz-muted" /> : <ArrowRight size={16} className="text-pz-muted" />}
               </button>
               {packError && <p className="text-xs text-pz-red mt-2">{packError}</p>}
+              <ConfirmDialog
+                isOpen={!!leftOut}
+                title="Some settings were left out"
+                message={leftOut ? `${leftOut.dropped.length} setting${leftOut.dropped.length === 1 ? '' : 's'} in this pack ${leftOut.dropped.length === 1 ? "isn't" : "aren't"} a normal server setting, so ${leftOut.dropped.length === 1 ? "it won't" : "they won't"} be copied: ${leftOut.dropped.slice(0, 5).join(', ')}${leftOut.dropped.length > 5 ? ', ...' : ''}. Only use packs from people you trust.` : ''}
+                confirmLabel="Host it without those"
+                onConfirm={() => { const l = leftOut; setLeftOut(null); if (l) void hostCopy(l.pack, l.path) }}
+                onCancel={() => setLeftOut(null)}
+              />
             </div>
           </div>
         )}

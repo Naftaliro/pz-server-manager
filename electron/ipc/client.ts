@@ -11,7 +11,7 @@ import { loadSettings, saveSettings } from './appSettings'
 import { enabledIds, orderModIds, orderedModMaps } from '../../shared/modCore'
 import { parseIni, parseSandbox, deepMerge, type SettingsTree } from '../../shared/gameConfig'
 import {
-  PACK_FORMAT, PACK_VERSION, PACK_MAX_BYTES, validatePack, checkPack, modFingerprint, launchUrl, isSafeRelPath, accountProblem, parseJoinAddress, publicIni,
+  PACK_FORMAT, PACK_VERSION, PACK_MAX_BYTES, validatePack, cleanHostSettings, checkPack, modFingerprint, launchUrl, isSafeRelPath, accountProblem, parseJoinAddress, publicIni,
   type ServerPack, type PackLocalMod, type PackHost, type ClientState,
 } from '../../shared/serverPack'
 
@@ -204,13 +204,18 @@ function storeSaved(list: SavedServer[]) {
   writeFileSync(savedPath(), JSON.stringify(list, null, 2), 'utf-8')
 }
 
-export function readPackFile(path: string, forHosting = false): ServerPack {
+// forHosting: also check the settings for hosting a copy, and leave out any that aren't safe
+// to write into this PC's server files (droppedSettings says which)
+export function readPackFile(path: string, forHosting = false): ServerPack & { droppedSettings?: string[] } {
   if (statSync(path).size > PACK_MAX_BYTES) throw new Error("That file is too big to be a server pack.")
   let raw: unknown
   try { raw = JSON.parse(readFileSync(path, 'utf-8')) } catch { throw new Error("That file isn't a server pack.") }
   const errors = validatePack(raw, forHosting)
   if (errors.length) throw new Error(errors.join(' '))
-  return raw as ServerPack
+  const pack = raw as ServerPack
+  if (!forHosting || !pack.host) return pack
+  const { ini, sandbox, dropped } = cleanHostSettings(pack.host)
+  return { ...pack, host: { ...pack.host, ini, sandbox }, droppedSettings: dropped }
 }
 
 // Same server again (same name + address + port) replaces the old copy, so a newer
@@ -344,8 +349,8 @@ export function setupClientHandlers(mainWindow: BrowserWindow | null) {
       properties: ['openFile'],
     })
     if (res.canceled || !res.filePaths[0]) return { cancelled: true }
-    const pack = readPackFile(res.filePaths[0], true)
-    return { path: res.filePaths[0], pack: { ...pack, localMods: pack.localMods.map(m => ({ ...m, files: [] })) } }
+    const { droppedSettings, ...pack } = readPackFile(res.filePaths[0], true)
+    return { path: res.filePaths[0], pack: { ...pack, localMods: pack.localMods.map(m => ({ ...m, files: [] })) }, droppedSettings: droppedSettings || [] }
   }))
 
   ipcMain.handle('client:installPackFixes', wrap(async (path: string, worldSavePath?: string) => {

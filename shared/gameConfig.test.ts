@@ -155,3 +155,51 @@ describe('old profile cleanup', () => {
     })).toEqual({ Zombies: 2, FoodLootNew: 2, ZombieConfig: { PopulationMultiplier: 2 }, ZombieLore: { Speed: 1 }, SomeMod: { Option: true } })
   })
 })
+
+// security review F2/F3: names and values from a server pack someone else made
+const LUA_PAYLOAD = 'Pwned = (function() print("KNOX_POC: attacker Lua ran inside SandboxVars.lua") return 1 end)()'
+const INI_KEY_PAYLOAD = 'ServerWelcomeMessage2\r\nWorkshopItems=999999999;2392709985\r\nMods=\\HiddenMod;\\SomeMod\r\nPassword'
+// every line between the braces: a plain name and a number, true/false or one quoted string
+const SAFE_LUA_LINE = /^\s*(?:[A-Za-z_]\w* = \{|[A-Za-z_]\w* = (?:true|false|-?\d+(?:\.\d+)?(?:e[-+]?\d+)?|"(?:[^"\\\r\n]|\\.)*"),|\},?)$/
+
+describe('nothing from a pack can write its own lines', () => {
+  it('leaves out sandbox names that are not plain words (new file and merged file)', () => {
+    const values = { ZombieLore: { Speed: 2, [`${LUA_PAYLOAD},\n    Dummy`]: 1 }, [`${LUA_PAYLOAD},\n    Dummy`]: 1, 'Evil = 1 } os.exit() --': 1, Ok: 3 } as never
+    for (const out of [mergeSandbox('', values), mergeSandbox(GAME_FILE, values), mergeSandbox(GAME_FILE, { NewBlock: values } as never)]) {
+      expect(out).not.toContain('function()')
+      expect(out).not.toContain('os.exit')
+      expect(out).toContain('Ok = 3,')
+      for (const line of out.split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith('--'))) expect(line).toMatch(SAFE_LUA_LINE)
+    }
+  })
+
+  it('quotes string values so they stay one string', () => {
+    const out = serializeSandbox({ A: 'x", os.exit(), y = "', B: 'back\\slash\\', C: 'line\r\nbreak\0', D: Infinity, E: NaN } as never)
+    expect(out).toContain('A = "x\\", os.exit(), y = \\"",')
+    expect(out).toContain('B = "back\\\\slash\\\\",')
+    expect(out).toContain('C = "line break ",')
+    expect(out).toContain('D = 0,')
+    expect(out).toContain('E = 0,')
+    for (const line of out.split('\n').filter(Boolean)) expect(line).toMatch(SAFE_LUA_LINE)
+  })
+
+  it('leaves out .ini names with line breaks or = in them, values stay on their line', () => {
+    const existing = 'PVP=true\r\nPassword=hosts-real-password\r\nWorkshopItems=2392709985\r\n'
+    const out = mergeIni(existing, { PVP: false, [INI_KEY_PAYLOAD]: '', 'A=B': 1, Welcome: 'hi\r\nPassword=\0', constructor: 'x' })
+    const lines = out.split('\r\n').filter(Boolean)
+    expect(lines).toEqual(['PVP=false', 'Password=hosts-real-password', 'WorkshopItems=2392709985', 'Welcome=hi Password= '])
+    expect(mergeIni('', { [INI_KEY_PAYLOAD]: '' })).toBe('')
+  })
+
+  it('a file line named after an Object property is not mistaken for a setting', () => {
+    expect(mergeIni('toString=1\nconstructor=2\n', { PVP: true })).toBe('toString=1\nconstructor=2\n\nPVP=true\n')
+  })
+
+  it("deepMerge doesn't let __proto__ swap the result's prototype", () => {
+    const out = deepMerge({}, JSON.parse('{"__proto__":{"polluted":true},"A":1}'))
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    expect((out as Record<string, unknown>).polluted).toBeUndefined()
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+    expect(out).toEqual({ A: 1 })
+  })
+})

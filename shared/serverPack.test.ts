@@ -160,3 +160,45 @@ describe('hosting from a pack', () => {
     expect(validatePack(missing, true).join(' ')).toMatch(/missing the fix mod "Other fix"/)
   })
 })
+
+// security review F2/F3: the "host a copy" pack from the review's proof of concept
+describe('settings from a pack someone else made', () => {
+  const LUA_KEY = 'Pwned = (function() print("KNOX_POC: attacker Lua ran inside SandboxVars.lua") return 1 end)(),\n    Dummy'
+  const INI_KEY = 'ServerWelcomeMessage2\r\nWorkshopItems=999999999;2392709985\r\nMods=\\HiddenMod;\\SomeMod\r\nPassword'
+  const evil = {
+    mods: [{ workshopId: '2392709985', modId: 'SomeMod', name: 'Some Mod' }],
+    maxPlayers: 8,
+    ini: { PVP: false, [INI_KEY]: '', Welcome: 'hi\r\nPassword=', Fine: 'one line' },
+    sandbox: { ZombieLore: { Speed: 2, 'Bad Key': 1 }, [LUA_KEY]: 1, Zombies: 3 },
+  }
+
+  it('the pack still opens (nothing to stop players or the import)', () => {
+    expect(validatePack(pack({ host: evil }), true)).toEqual([])
+  })
+
+  it('leaves out names that are not plain words and .ini values with line breaks, and says which', async () => {
+    const { cleanHostSettings } = await import('./serverPack')
+    const r = cleanHostSettings(evil)
+    expect(r.ini).toEqual({ PVP: false, Fine: 'one line' })
+    expect(r.sandbox).toEqual({ ZombieLore: { Speed: 2 }, Zombies: 3 })
+    expect(r.dropped).toHaveLength(4)
+    expect(r.dropped.join('|')).toContain('ZombieLore.Bad Key')
+    // shown on one line
+    expect(r.dropped.some(d => /[\r\n]/.test(d))).toBe(false)
+  })
+
+  it('__proto__ and friends never become settings', async () => {
+    const { cleanHostSettings } = await import('./serverPack')
+    const r = cleanHostSettings({ ini: JSON.parse('{"__proto__":"x","constructor":"y","A":1}'), sandbox: JSON.parse('{"__proto__":{"evil":1},"Normal":2}') })
+    expect(r.ini).toEqual({ A: 1 })
+    expect(r.sandbox).toEqual({ Normal: 2 })
+    expect(Object.getPrototypeOf(r.sandbox)).toBe(Object.prototype)
+  })
+
+  it('workshop ids in a pack are plain numbers', () => {
+    expect(validatePack(pack({ workshopItems: [{ workshopId: '1 & calc', name: 'x' }] }))).toContain('The pack has a bad Workshop item in it.')
+    expect(validatePack(pack({ workshopItems: [{ workshopId: 111 as never, name: 'x' }] }))).toContain('The pack has a bad Workshop item in it.')
+    const badHost = { ...evil, mods: [{ workshopId: '0;1 & calc.exe', modId: 'X', name: 'X' }] }
+    expect(validatePack(pack({ host: badHost }), true).join(' ')).toMatch(/mod list for hosting/)
+  })
+})
