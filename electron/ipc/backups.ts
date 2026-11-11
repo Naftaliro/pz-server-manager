@@ -735,13 +735,31 @@ export function setupBackupHandlers(mainWindow: BrowserWindow | null) {
         const exe = await ensureSteamCmd(loadSettings().steamcmdDir)
         return runServerInstall(exe, installDir, (line) => progress(steamProgress(line, 'Updating the game server')), true, servers[0]?.buildVersion || loadSettings().buildVersion, opts.branch || undefined)
       })
-      if (r.success && wasRunning.length) {
-        progress('Starting the servers again...')
-        for (const p of wasRunning) await startServer(p.id)
-      }
-      return r
+      const again = await startAgain(r.success)
+      return { ...r, message: [r.message.replace(/([^.])$/, '$1.'), again.note].filter(Boolean).join(' '), stillStopped: again.stillStopped }
     } catch (e) {
-      return { success: false, message: e instanceof Error ? e.message : String(e) }
+      const again = await startAgain(false)
+      return { success: false, message: [e instanceof Error ? e.message : String(e), again.note].filter(Boolean).join(' '), stillStopped: again.stillStopped }
+    }
+
+    // the ones that ran go back on, also when the update didn't work (their worlds weren't
+    // touched). Any that won't start are named
+    async function startAgain(updated: boolean): Promise<{ note?: string; stillStopped: string[] }> {
+      const stopped = wasRunning.filter(p => serverStatus(p.id) === 'stopped')
+      if (!stopped.length) return { stillStopped: [] }
+      progress('Starting the servers again...')
+      const failed: string[] = []
+      for (const p of stopped) {
+        const s = await startServer(p.id).catch(() => ({ success: false }))
+        if (!s.success) failed.push(p.name)
+      }
+      const list = (n: string[]) => n.map(x => `"${x}"`).join(', ')
+      const back = stopped.map(p => p.name).filter(n => !failed.includes(n))
+      const notes = [
+        !updated && back.length ? `Nothing in the worlds changed, so ${list(back)} ${back.length === 1 ? 'was' : 'were'} started again.` : '',
+        failed.length ? `${list(failed)} didn't start again and ${failed.length === 1 ? 'is' : 'are'} still stopped, start ${failed.length === 1 ? 'it' : 'them'} from ${failed.length === 1 ? 'its' : 'their'} Overview.` : '',
+      ].filter(Boolean)
+      return { note: notes.join(' ') || undefined, stillStopped: failed }
     }
   })
 }

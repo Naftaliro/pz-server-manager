@@ -15,6 +15,8 @@ export default function GameUpdateCard({ profile, update, onUpdated }: { profile
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
+  // servers that ran before the update and didn't come back on
+  const [stillStopped, setStillStopped] = useState<string[]>([])
   const installDir = profile.serverInstallPath
 
   useEffect(() => window.electronAPI.backups.onUpdateProgress((dir, text) => { if (skipKey(dir) === skipKey(installDir)) setProgress(text) }), [installDir])
@@ -58,6 +60,7 @@ export default function GameUpdateCard({ profile, update, onUpdated }: { profile
     setPhase('working')
     setProgress('Getting ready...')
     const r = await window.electronAPI.backups.updateGame(installDir, { warnMinutes: 1 })
+    setStillStopped(r.stillStopped || [])
     if (r.success) { setPhase('done'); onUpdated() } else { setError(r.message); setPhase('error') }
   }
 
@@ -76,7 +79,10 @@ export default function GameUpdateCard({ profile, update, onUpdated }: { profile
   if (phase === 'done') {
     return (
       <Box tone="green" icon={<CheckCircle size={14} />}>
-        <p className="flex-1">The game server is updated{to ? ` to ${to}` : ''}. The worlds were backed up first, "Roll back" can take them back.</p>
+        <p className="flex-1">
+          The game server is updated{to ? ` to ${to}` : ''}. The worlds were backed up first, "Roll back" can take them back.
+          {stillStopped.length > 0 && <span className="text-pz-yellow"> {stillStopped.map(n => `"${n}"`).join(', ')} didn't start again, start {stillStopped.length === 1 ? 'it' : 'them'} from {stillStopped.length === 1 ? 'its' : 'their'} Overview.</span>}
+        </p>
         <button onClick={() => setPhase('idle')} className="text-pz-muted hover:text-pz-text"><X size={14} /></button>
       </Box>
     )
@@ -101,7 +107,7 @@ export default function GameUpdateCard({ profile, update, onUpdated }: { profile
           <div className="bg-pz-darker border border-pz-border rounded-md p-3 space-y-2 text-xs text-pz-subtext">
             <p>
               {runningOnIt.length
-                ? `${runningOnIt.map(p => `"${p.name}"`).join(', ')} ${runningOnIt.length === 1 ? 'is' : 'are'} running and will stop (players get a 1 minute warning in chat), then start again after the update.`
+                ? `${runningOnIt.map(p => `"${p.name}"`).join(', ')} ${runningOnIt.length === 1 ? 'is' : 'are'} running and will stop (players get a 1 minute warning in chat), then start again once the update is done, or right away if it doesn't work.`
                 : 'The update takes a few minutes.'}
               {sharing.length > 1 && ` ${sharing.length} servers use these game files, they all get the update.`}
             </p>

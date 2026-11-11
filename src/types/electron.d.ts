@@ -146,7 +146,8 @@ interface ElectronAPI {
     rollback: (profileId: string, id: string, opts: RollbackOpts) => Promise<RollbackOutcome>
     undoRollback: (profileId: string, opts?: { stopFirst?: boolean; warnMinutes?: number }) => Promise<RollbackOutcome>
     delete: (profileId: string, id: string) => Promise<{ success: boolean; message?: string }>
-    updateGame: (installDir: string, opts?: { branch?: string; warnMinutes?: number }) => Promise<{ success: boolean; message: string; branch?: string }>
+    // stillStopped: servers that ran before and didn't start again
+    updateGame: (installDir: string, opts?: { branch?: string; warnMinutes?: number }) => Promise<{ success: boolean; message: string; branch?: string; stillStopped?: string[] }>
     onChanged: (callback: (profileId: string) => void) => () => void
     onProgress: (callback: (profileId: string, text: string) => void) => () => void
     onUpdateProgress: (callback: (installDir: string, text: string) => void) => () => void
