@@ -281,9 +281,31 @@ export function isNsisInstaller(head: Uint8Array): boolean {
 }
 
 // The name on the certificate releases are signed with (Microsoft Artifact Signing, see
-// CODE_SIGNING_POLICY.md). Only the name is checked: the certificate also has the city and
-// state, and those change if the publisher moves
+// CODE_SIGNING_POLICY.md). Artifact Signing makes a new certificate every few days, so there's
+// no thumbprint to pin. What stays the same, and what signedByUs checks: the name (CN and O),
+// that Microsoft's ID-verified code signing CA issued it, and the Artifact Signing marker in it.
+// Not the city and state, those change if the publisher moves
 export const RELEASE_SIGNER = 'Mitchell Berg'
+// "Microsoft ID Verified CS AOC CA 01", "... EOC CA 03" and so on. Microsoft adds new ones now
+// and then (03 and 04 in 2026), so only the start of the name
+export const RELEASE_ISSUER_PREFIX = 'Microsoft ID Verified CS '
+// every Artifact Signing public trust certificate has this, plus the normal code signing one
+export const ARTIFACT_SIGNING_EKU = '1.3.6.1.4.1.311.97.1.0'
+export const CODE_SIGNING_EKU = '1.3.6.1.5.5.7.3.3'
+
+// What the scripts below say about each signature
+const SIGNATURE_INFO = [
+  "function PzmSig($s, $p) {",
+  "$c = $s.SignerCertificate; $n = ''; $subject = @(); $issuer = ''; $eku = @();",
+  "if ($c) {",
+  "$n = $c.GetNameInfo('SimpleName', $false); $issuer = $c.GetNameInfo('SimpleName', $true);",
+  "$subject = @($c.SubjectName.Format($true) -split '\\r?\\n' | Where-Object { $_ });",
+  "$eku = @($c.Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] } | ForEach-Object { $_.EnhancedKeyUsages } | ForEach-Object { $_.Value })",
+  "};",
+  "[pscustomobject]@{ path = [string]$p; status = [string]$s.Status; signer = [string]$n; subject = $subject; issuer = [string]$issuer; timestamped = ($null -ne $s.TimeStamperCertificate); eku = $eku } }",
+].join(' ')
+
+const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`
 
 // Windows' own check of a file's signature, no admin needed. Status is Valid, NotSigned,
 // HashMismatch, NotTrusted and so on, the same in every Windows language. Signatures stay
@@ -292,17 +314,38 @@ export const RELEASE_SIGNER = 'Mitchell Berg'
 // a module path where 7's copy comes first and won't load. Any error stops the script, so a
 // check that couldn't run never looks like an unsigned file
 export function signatureQueryScript(file: string): string {
-  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security'); $s = Get-AuthenticodeSignature -LiteralPath '${file.replace(/'/g, "''")}'; $n = ''; if ($s.SignerCertificate) { $n = $s.SignerCertificate.GetNameInfo('SimpleName', $false) }; ConvertTo-Json -Compress -InputObject ([pscustomobject]@{ status = [string]$s.Status; signer = [string]$n })`
+  return `$ErrorActionPreference = 'Stop'; Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security'); ${SIGNATURE_INFO}; ConvertTo-Json -Compress -Depth 4 -InputObject (PzmSig (Get-AuthenticodeSignature -LiteralPath ${psQuote(file)}) ${psQuote(file)})`
 }
 
 export interface SignatureInfo {
+  path?: string
   status: string
   // the certificate's name (CN), '' when the file isn't signed
   signer: string
+  // every part of the certificate's subject: "CN=Mitchell Berg", "O=Mitchell Berg", "L=..."
+  subject?: string[]
+  // the name of the CA that issued the certificate
+  issuer?: string
+  timestamped?: boolean
+  // the certificate's extended key usage OIDs
+  eku?: string[]
+}
+
+// "O=Mitchell Berg" -> Mitchell Berg. Values with a comma in them come quoted
+function subjectField(sig: SignatureInfo, key: string): string | undefined {
+  const hit = (sig.subject || []).find(p => p.toUpperCase().startsWith(`${key}=`))
+  return hit?.slice(key.length + 1).trim().replace(/^"(.*)"$/, '$1')
 }
 
 export function signedByUs(sig: SignatureInfo): boolean {
-  return sig.status === 'Valid' && sig.signer === RELEASE_SIGNER
+  return sig.status === 'Valid'
+    // the certificate only lasts 3 days, without a timestamp the signature wouldn't either
+    && sig.timestamped === true
+    && sig.signer === RELEASE_SIGNER
+    && subjectField(sig, 'CN') === RELEASE_SIGNER
+    && subjectField(sig, 'O') === RELEASE_SIGNER
+    && typeof sig.issuer === 'string' && sig.issuer.startsWith(RELEASE_ISSUER_PREFIX)
+    && Array.isArray(sig.eku) && sig.eku.includes(ARTIFACT_SIGNING_EKU) && sig.eku.includes(CODE_SIGNING_EKU)
 }
 
 // ── Folder sizes ─────────────────────────────────────────────────────────────

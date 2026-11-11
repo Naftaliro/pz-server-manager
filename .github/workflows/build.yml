@@ -54,15 +54,20 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
 
       # The certificates only last 3 days, so every signature needs a timestamp to stay valid.
+      # Same checks as the app's updater (signedByUs in electron/ipc/winScripts.ts)
       - name: Check signatures
         if: env.SIGN == 'true'
         run: |
           foreach ($f in Get-ChildItem release/*.exe, release/win-unpacked/*.exe) {
             $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
-            $signer = $sig.SignerCertificate.Subject
-            "$($f.Name): $($sig.Status), $signer, timestamped: $($null -ne $sig.TimeStamperCertificate)"
-            if ($sig.Status -ne 'Valid' -or $signer -notmatch '(^|, )CN=Mitchell Berg(,|$)' -or $null -eq $sig.TimeStamperCertificate) {
-              throw "$($f.Name) isn't signed and timestamped by Mitchell Berg"
+            $cert = $sig.SignerCertificate
+            $signer = $cert.Subject
+            $issuer = $cert.GetNameInfo('SimpleName', $true)
+            $eku = @($cert.Extensions | Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] } | ForEach-Object { $_.EnhancedKeyUsages } | ForEach-Object { $_.Value })
+            "$($f.Name): $($sig.Status), $signer, issuer: $issuer, timestamped: $($null -ne $sig.TimeStamperCertificate), eku: $($eku -join ' ')"
+            if ($sig.Status -ne 'Valid' -or $signer -notmatch '(^|, )CN=Mitchell Berg(,|$)' -or $signer -notmatch '(^|, )O=Mitchell Berg(,|$)' -or
+                -not $issuer.StartsWith('Microsoft ID Verified CS ') -or $eku -notcontains '1.3.6.1.4.1.311.97.1.0' -or $null -eq $sig.TimeStamperCertificate) {
+              throw "$($f.Name) isn't signed and timestamped by Mitchell Berg through Artifact Signing"
             }
           }
 

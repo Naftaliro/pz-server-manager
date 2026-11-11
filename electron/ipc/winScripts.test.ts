@@ -9,6 +9,7 @@ import {
   firewallScript, firewallRemoveScript, firewallQueryScript, firewallState, FIREWALL_RULE, OLD_FIREWALL_RULE,
   type FirewallRuleInfo, uninstallerFor, INSTALLER_UPDATE_ARGS, isNsisInstaller, folderSizeArgs, parseFolderSize,
   RELEASE_SIGNER, signatureQueryScript, signedByUs, type SignatureInfo,
+  ARTIFACT_SIGNING_EKU, CODE_SIGNING_EKU,
 } from './winScripts'
 
 const STOCK_BAT = [
@@ -46,13 +47,13 @@ describe('patchStartBat', () => {
 
 describe('launcherScript', () => {
   const lines = launcherScript({
-    serverName: 'Main', serverDir: 'C:\\Users\\José\\100% PZ', startBat: '_pzm_StartServer64_Main.bat',
+    serverName: 'Main', serverDir: 'C:\\Users\\JosÃ©\\100% PZ', startBat: '_pzm_StartServer64_Main.bat',
     adminPassword: '50%off\\', cacheDir: 'D:\\Zomboid',
   }).split('\r\n')
 
   it('switches to UTF-8 before the first path', () => {
     expect(lines.indexOf('chcp 65001 > nul')).toBeLessThan(lines.findIndex(l => l.startsWith('cd /d')))
-    expect(lines).toContain('cd /d "C:\\Users\\José\\100%% PZ"')
+    expect(lines).toContain('cd /d "C:\\Users\\JosÃ©\\100%% PZ"')
   })
 
   it('keeps the password and data folder out of the call line', () => {
@@ -72,12 +73,12 @@ describe('launcherScript', () => {
 describe('updateScript', () => {
   const out = updateScript({
     zipPath: "C:\\Users\\O'Neil 100%\\update.zip",
-    extractDir: 'C:\\Users\\Łukasz!\\extracted',
-    appExe: 'C:\\Users\\Łukasz!\\Programs\\Knox Launcher\\PZ Server Manager.exe',
+    extractDir: 'C:\\Users\\Åukasz!\\extracted',
+    appExe: 'C:\\Users\\Åukasz!\\Programs\\Knox Launcher\\PZ Server Manager.exe',
   })
 
   it('switches to UTF-8 before the first path and never turns on delayed expansion', () => {
-    expect(out.indexOf('chcp 65001')).toBeLessThan(out.indexOf('Łukasz'))
+    expect(out.indexOf('chcp 65001')).toBeLessThan(out.indexOf('Åukasz'))
     expect(out).not.toMatch(/delayedexpansion/i)
   })
 
@@ -87,7 +88,7 @@ describe('updateScript', () => {
 
   it('waits for the right exe and stops with an error instead of claiming success', () => {
     expect(out).toContain('tasklist /FI "IMAGENAME eq PZ Server Manager.exe"')
-    expect(out).toContain('robocopy "%SRC%" "C:\\Users\\Łukasz!\\Programs\\Knox Launcher"')
+    expect(out).toContain('robocopy "%SRC%" "C:\\Users\\Åukasz!\\Programs\\Knox Launcher"')
     expect(out).toContain('if errorlevel 1 goto failed')
     expect(out.indexOf(':failed')).toBeGreaterThan(out.indexOf('exit /b 0'))
   })
@@ -298,12 +299,40 @@ describe('installer updates', () => {
     expect(isNsisInstaller(Buffer.from('MZ'))).toBe(false)
   })
 
+  // what an Artifact Signing signature on a release looks like (city and state made up: they
+  // aren't checked, the certificate changes every few days anyway)
+  const ours: SignatureInfo = {
+    status: 'Valid', signer: RELEASE_SIGNER, timestamped: true,
+    subject: [`CN=${RELEASE_SIGNER}`, `O=${RELEASE_SIGNER}`, 'L=Springfield', 'S=Oregon', 'C=US'],
+    issuer: 'Microsoft ID Verified CS EOC CA 03',
+    eku: [CODE_SIGNING_EKU, ARTIFACT_SIGNING_EKU, '1.3.6.1.4.1.311.97.990309390.766961637.194916062.941502583'],
+  }
+
   it('only runs an installer Windows says is validly signed by the release signer', () => {
-    expect(signedByUs({ status: 'Valid', signer: RELEASE_SIGNER })).toBe(true)
-    expect(signedByUs({ status: 'Valid', signer: 'Someone Else' })).toBe(false)
-    expect(signedByUs({ status: 'HashMismatch', signer: RELEASE_SIGNER })).toBe(false)
-    expect(signedByUs({ status: 'NotTrusted', signer: RELEASE_SIGNER })).toBe(false)
+    expect(signedByUs(ours)).toBe(true)
+    // Microsoft's other ID-verified CAs (and new ones) are fine
+    for (const issuer of ['Microsoft ID Verified CS AOC CA 01', 'Microsoft ID Verified CS AOC CA 04', 'Microsoft ID Verified CS EOC CA 02']) {
+      expect(signedByUs({ ...ours, issuer })).toBe(true)
+    }
+    expect(signedByUs({ ...ours, signer: 'Someone Else' })).toBe(false)
+    expect(signedByUs({ ...ours, status: 'HashMismatch' })).toBe(false)
+    expect(signedByUs({ ...ours, status: 'NotTrusted' })).toBe(false)
     expect(signedByUs({ status: 'NotSigned', signer: '' })).toBe(false)
+  })
+
+  // security review F9: a certificate with the same name from somewhere else doesn't pass
+  it('checks more than the name', () => {
+    expect(signedByUs({ ...ours, timestamped: false })).toBe(false)
+    expect(signedByUs({ ...ours, timestamped: undefined })).toBe(false)
+    expect(signedByUs({ ...ours, issuer: 'DigiCert Trusted G4 Code Signing RSA4096 SHA384 2021 CA1' })).toBe(false)
+    expect(signedByUs({ ...ours, issuer: 'Evil CA Microsoft ID Verified CS EOC CA 01' })).toBe(false)
+    expect(signedByUs({ ...ours, subject: [`CN=${RELEASE_SIGNER}`, 'O=Someone Else Ltd'] })).toBe(false)
+    expect(signedByUs({ ...ours, subject: [`CN=${RELEASE_SIGNER}`] })).toBe(false)
+    expect(signedByUs({ ...ours, subject: [`CN=${RELEASE_SIGNER} Jr`, `O=${RELEASE_SIGNER}`] })).toBe(false)
+    expect(signedByUs({ ...ours, eku: [CODE_SIGNING_EKU] })).toBe(false)
+    expect(signedByUs({ ...ours, eku: [ARTIFACT_SIGNING_EKU] })).toBe(false)
+    // what the old check looked at, alone
+    expect(signedByUs({ status: 'Valid', signer: RELEASE_SIGNER })).toBe(false)
   })
 
   it("escapes ' in the path for powershell", () => {
@@ -312,23 +341,43 @@ describe('installer updates', () => {
 })
 
 describe.runIf(process.platform === 'win32')('signatures on Windows', () => {
-  const signature = (file: string) =>
-    JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', signatureQueryScript(file)]).toString()) as SignatureInfo
+  const run = (script: string, env: NodeJS.ProcessEnv = process.env) =>
+    JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env }).toString())
+  const signature = (file: string, env?: NodeJS.ProcessEnv) => run(signatureQueryScript(file), env) as SignatureInfo
 
-  it("reads a signed program's name, and someone else's doesn't pass", () => {
+  it("reads everything signedByUs looks at from a signed program, and someone else's doesn't pass", () => {
     // node.exe, signed by the OpenJS Foundation
     const sig = signature(process.execPath)
     expect(sig.status).toBe('Valid')
     expect(sig.signer).not.toBe('')
+    expect(sig.subject).toContain(`CN=${sig.signer}`)
+    expect(sig.subject!.some(p => p.startsWith('O='))).toBe(true)
+    expect(sig.issuer).toMatch(/\S/)
+    expect(sig.timestamped).toBe(true)
+    expect(sig.eku).toContain(CODE_SIGNING_EKU)
     expect(signedByUs(sig)).toBe(false)
   }, 30000)
 
   it('reads an unsigned file in a folder with awkward characters', () => {
-    const dir = mkdtempSync(join(tmpdir(), "pzm sig it's ü-"))
+    const dir = mkdtempSync(join(tmpdir(), "pzm sig it's Ã¼-"))
     const file = join(dir, 'unsigned.ps1')
     writeFileSync(file, 'Write-Output 1\r\n')
-    expect(signature(file)).toEqual({ status: 'NotSigned', signer: '' })
+    expect(signature(file)).toEqual({ path: file, status: 'NotSigned', signer: '', subject: [], issuer: '', timestamped: false, eku: [] })
   }, 30000)
+
+  // started from PowerShell 7, the app's powershell.exe inherits a module path with 7's modules
+  // first. The check loads Windows PowerShell's own copy, so a module path like that (here a
+  // stand-in copy that refuses to load) can't get in the way
+  it('still works with a PowerShell 7 style module path in front', () => {
+    expect(signatureQueryScript('C:\\a.exe')).toMatch(/^\$ErrorActionPreference = 'Stop'; Import-Module \(Join-Path \$PSHOME 'Modules\\Microsoft\.PowerShell\.Security'\);/)
+    const fake = mkdtempSync(join(tmpdir(), 'pzm-ps7-'))
+    for (const m of ['Microsoft.PowerShell.Security']) {
+      mkdirSync(join(fake, m), { recursive: true })
+      writeFileSync(join(fake, m, `${m}.psm1`), "throw 'this is PowerShell 7s copy'\r\n")
+    }
+    const env = { ...process.env, PSModulePath: `${fake};${process.env.PSModulePath || ''}` }
+    expect(signature(process.execPath, env).status).toBe('Valid')
+  }, 60000)
 })
 
 // the real thing, when a build has been made on this PC
@@ -361,7 +410,7 @@ describe('folder sizes', () => {
     '   Times :   0:00:00   0:00:00                       0:00:00   0:00:00',
     '   Ended : Monday, October 26, 2026 7:40:01 PM',
   ].join('\r\n')
-  const french = english.replace('Dirs :', 'Rép. :').replace('Files :', 'Fichiers :').replace('Bytes :', 'Octets :')
+  const french = english.replace('Dirs :', 'RÃ©p. :').replace('Files :', 'Fichiers :').replace('Bytes :', 'Octets :')
 
   it('reads the byte total in any language', () => {
     expect(parseFolderSize(english)).toBe(226865399)
