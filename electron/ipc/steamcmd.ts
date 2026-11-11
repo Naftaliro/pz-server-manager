@@ -18,6 +18,7 @@ import { learnedBuilds } from './gameBuilds'
 import { expandArchiveScript } from './winScripts'
 import { redirectTarget } from './httpsOnly'
 import { followFile } from './logTail'
+import { whileBusy } from './busy'
 
 const STEAMCMD_URL = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 const PZ_SERVER_APP_ID = '380870'
@@ -360,6 +361,15 @@ export function installFailureMessage(code: number | null, output: string[], ins
   return `SteamCMD stopped without installing the server (exit code ${code ?? 'unknown'}). Try again, the details are under "Show details"`
 }
 
+// SteamCMD's " Update state (0x61) downloading, progress: 42.17 (...)" as "<what>: downloading 42%".
+// Its last line is "(0x0) unknown, progress: 0.00", which says nothing
+export function steamProgress(line: string, what: string): string {
+  const m = line.match(/Update state \(0x[0-9a-f]+\)\s*([a-z ]+?),\s*progress:\s*([\d.]+)/i)
+  if (!m || /unknown/i.test(m[1])) return `${what}...`
+  const stage = m[1].trim().replace(/^verifying update$/i, 'checking files').replace(/^committing$/i, 'installing files')
+  return `${what}: ${stage} ${Math.round(parseFloat(m[2]))}%`
+}
+
 // Run steamcmd with the given +commands, feeding each output line to onLine. No shell: the
 // arguments go to steamcmd as they are, so & | > and the like in them are just text
 function runSteamCmd(exe: string, args: string[], onLine: (line: string) => void): Promise<number | null> {
@@ -395,11 +405,37 @@ export async function runServerInstall(
     checkedSteamCmd(steamcmdPath)
     checkedDir(installDir)
     if (branch !== undefined && branch !== null && !isBranchName(branch)) throw new Error(`"${String(branch)}" isn't a Steam branch.`)
+  } catch (error: unknown) {
+    return { success: false, message: error instanceof Error ? error.message : String(error) }
+  }
+  // from here until it's done no server on this install starts (busy.ts): not while the
+  // worlds are backed up, not while it waits for SteamCMD, not while SteamCMD runs
+  const what = !isUpdate && !isServerInstalled(installDir) ? 'Installing the game server' : branch ? `Switching the game server to ${branchLabel(branch)}` : 'Updating the game server'
+  const updating = isUpdate || isServerInstalled(installDir)
+  return whileBusy({ installDir }, 'game-update', updating ? 'Backing up the worlds first...' : `${what}...`, (busyProgress) =>
+    installNow(steamcmdPath, installDir, (line) => {
+      if (/Update state \(0x[0-9a-f]+\)/i.test(line)) busyProgress(steamProgress(line, what))
+      sendProgress(line)
+    }, isUpdate, buildVersion, branch, () => busyProgress(`${what}...`)))
+}
+
+async function installNow(
+  steamcmdPath: string,
+  installDir: string,
+  sendProgress: (line: string) => void,
+  isUpdate: boolean,
+  buildVersion: string | undefined,
+  branch: string | undefined,
+  // SteamCMD is about to start on it
+  onStart: () => void,
+): Promise<{ success: boolean; message: string; branch?: string }> {
+  try {
     const mine = installedBuild(installDir)
     const target = branchFor({ chosen: branch || chosenBranch(installDir), installed: mine.buildId ? mine.branch : null, build: buildVersion })
     const args = installArgs(installDir, target)
     if (isUpdate || isServerInstalled(installDir)) await beforeUpdate?.(installDir)
     return await exclusive(async () => {
+      onStart()
       if (!existsSync(installDir)) mkdirSync(installDir, { recursive: true })
 
       sendProgress(isUpdate ? 'Starting server update...' : 'Starting server installation...')

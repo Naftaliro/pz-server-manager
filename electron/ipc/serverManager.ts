@@ -27,6 +27,7 @@ import { resolveDataPath, setupDataFolderHandlers } from './dataFolder'
 import { syncLocalMods } from './localMods'
 import { sharingWith, sameFolder } from '../../shared/dataFolder'
 import { StartWatch, quotedScriptLine, startFailureHint, requiredModHint, isProgressLine, type StartFailure } from './serverLog'
+import { startBlocker } from './busy'
 
 // 'starting' = java is up but still loading the world/mods, 'running' = friends can join
 type Status = 'starting' | 'running' | 'stopping' | 'stopped'
@@ -939,6 +940,10 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
     let profile = getProfile(profileId)
     if (!profile) return { success: false, message: 'Profile not found' }
 
+    // its game files or its world are being changed (busy.ts)
+    const blocked = startBlocker(profile)
+    if (blocked) return { success: false, message: blocked }
+
     // the app lost track of it (closed and reopened, a check went wrong) but it's still
     // up: reconnect. A second copy would fight it for the port, wipe its log and
     // rewrite its config while it runs
@@ -1040,6 +1045,11 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
     if (!(await disableQuickEdit(windowTitle))) {
       emitConsoleOutput(profileId, `[Knox] ⚠ Couldn't turn off QuickEdit. Clicking inside the server window will freeze it, press Esc if that happens.`)
     }
+
+    // a rollback or update asked for while this start was getting ready goes first. From the
+    // spawn on the server counts as running, and those wait for it or stop it
+    const late = startBlocker(profile) || (runningServers.has(profileId) ? 'Server is already running' : null)
+    if (late) return { success: false, message: late }
 
     // minimized so it stays out of the way but still shows up in the taskbar
     // built as one verbatim string: node escapes quotes inside args as \" and `start`

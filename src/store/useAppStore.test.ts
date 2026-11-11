@@ -105,6 +105,24 @@ describe('back/forward history', () => {
     expect(useAppStore.getState().navGuard).toBeNull()
   })
 
+  it('stays put while a page holds it (a rollback going), and moves again once it lets go', async () => {
+    const s = useAppStore.getState()
+    s.openServer('a')
+    await tick()
+    const release = s.holdNav()
+    const second = s.holdNav()
+    s.goBack()
+    expect(here()).toEqual(at('server', 'a'))
+    release()
+    // letting go twice doesn't let go of the other hold
+    release()
+    s.goBack()
+    expect(here()).toEqual(at('server', 'a'))
+    second()
+    s.goBack()
+    expect(here()).toEqual(at('home'))
+  })
+
   it('keeps at most 50 steps', async () => {
     const s = useAppStore.getState()
     for (let i = 0; i < 60; i++) {

@@ -14,6 +14,7 @@ import { getServerName, dataPath, patchProfile, formatBytes, everyMinutes } from
 import { applyFix, inviteMessage, splitAddress } from '../lib/fixes'
 import { PLAYIT_INTEGRATION } from '../lib/features'
 import { steamSwitchSteps } from '../../shared/gameVersion'
+import { useBusyFor } from '../lib/leaveGuard'
 
 export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
   const { serverStatuses, players, problems, clearProblems, openServer, modUpdates, setModUpdates, settings, setActiveView } = useAppStore()
@@ -469,9 +470,13 @@ function WorldCard({ profile, world, stopped, onWipe, say }: {
   say: (m?: string) => void
 }) {
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof window.electronAPI.backups.summary>> | null>(null)
-  const [dialog, setDialog] = useState<null | 'pick' | 'list' | 'undo'>(null)
+  const [dialog, setDialog] = useState<null | 'pick' | 'list' | 'undo' | 'job'>(null)
   const [undoOpen, setUndoOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  // a rollback still going (or just done) from before this page was opened: back on screen
+  const { own, finishedRollback } = useBusyFor(profile)
+  const rollbackJob = own?.kind === 'rollback' ? own : finishedRollback
+  useEffect(() => { if (rollbackJob && !dialog) setDialog('job') }, [rollbackJob?.id])
 
   const load = () => window.electronAPI.backups.summary(profile.id).then(setSummary).catch(() => setSummary(null))
   useEffect(() => { void load() }, [profile.id, stopped, profile.updatedAt])
@@ -529,6 +534,7 @@ function WorldCard({ profile, world, stopped, onWipe, say }: {
           profile={profile}
           startWith={dialog === 'list' ? 'list' : undefined}
           undo={dialog === 'undo'}
+          job={dialog === 'job' ? rollbackJob : undefined}
           onClose={() => { setDialog(null); void load() }}
         />
       )}

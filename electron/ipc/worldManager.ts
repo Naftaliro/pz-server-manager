@@ -5,6 +5,11 @@ import { rm } from 'fs/promises'
 import { folderSize, forgetFolderSize } from './folderSize'
 import { knownDataFolder } from './appFolders'
 import { isServerName } from './allowedPaths'
+import { listProfiles, getServerName } from './profileManager'
+import { resolveDataPath } from './dataFolder'
+import { serverStatus } from './serverManager'
+import { whileBusy, oneAtATime } from './busy'
+import { sameFolder } from '../../shared/dataFolder'
 
 // One of the servers' own data folders, and a plain server name: a wipe deletes this folder,
 // so nothing the window sends can point it anywhere else (..\..\ or another drive)
@@ -41,33 +46,44 @@ export function setupWorldHandlers() {
   ipcMain.handle('world:wipe', async (_event, serverName: string, dataPath: string) => {
     try {
       const worldPath = getWorldSavePath(serverName, dataPath)
-
-      if (!existsSync(worldPath)) {
-        return { success: true, message: 'No world data found to wipe' }
-      }
-
-      // Delete the world save directory recursively (without freezing the app on ~90,000 files)
-      await rm(worldPath, { recursive: true, force: true })
-      forgetFolderSize(worldPath)
-
-      // Also reset the ResetID in the .ini to force a fresh world
-      const serverDir = join(getServerDataPath(dataPath), 'Server')
-      const iniPath = join(serverDir, `${serverName}.ini`)
-
-      if (existsSync(iniPath)) {
-        const { readFileSync, writeFileSync } = await import('fs')
-        let iniContent = readFileSync(iniPath, 'utf-8')
-        // Update ResetID to force world reset
-        const newResetId = Math.floor(Math.random() * 999999999)
-        iniContent = iniContent.replace(/^ResetID=.*/m, `ResetID=${newResetId}`)
-        iniContent = iniContent.replace(/^ServerPlayerID=.*/m, `ServerPlayerID=${Math.floor(Math.random() * 999999999)}`)
-        writeFileSync(iniPath, iniContent, 'utf-8')
-      }
-
-      return { success: true, message: `World data wiped successfully. Path: ${worldPath}` }
+      // the server whose world it is: not while it runs, no start while it goes, and not in
+      // the middle of a backup or restore of it
+      const owner = listProfiles().find(p => getServerName(p) === serverName && sameFolder(resolveDataPath(p.worldSavePath), getServerDataPath(dataPath)))
+      if (!owner) return await wipeWorld(serverName, dataPath, worldPath)
+      if (serverStatus(owner.id) !== 'stopped') return { success: false, message: 'Stop the server first.' }
+      return await whileBusy({ profileId: owner.id }, 'wipe', 'Wiping the world...', () => oneAtATime(owner.id, async () => {
+        if (serverStatus(owner.id) !== 'stopped') return { success: false, message: 'Stop the server first.' }
+        return wipeWorld(serverName, dataPath, worldPath)
+      }))
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error)
       return { success: false, message: msg }
     }
   })
+}
+
+async function wipeWorld(serverName: string, dataPath: string, worldPath: string): Promise<{ success: boolean; message: string }> {
+  if (!existsSync(worldPath)) {
+    return { success: true, message: 'No world data found to wipe' }
+  }
+
+  // Delete the world save directory recursively (without freezing the app on ~90,000 files)
+  await rm(worldPath, { recursive: true, force: true })
+  forgetFolderSize(worldPath)
+
+  // Also reset the ResetID in the .ini to force a fresh world
+  const serverDir = join(getServerDataPath(dataPath), 'Server')
+  const iniPath = join(serverDir, `${serverName}.ini`)
+
+  if (existsSync(iniPath)) {
+    const { readFileSync, writeFileSync } = await import('fs')
+    let iniContent = readFileSync(iniPath, 'utf-8')
+    // Update ResetID to force world reset
+    const newResetId = Math.floor(Math.random() * 999999999)
+    iniContent = iniContent.replace(/^ResetID=.*/m, `ResetID=${newResetId}`)
+    iniContent = iniContent.replace(/^ServerPlayerID=.*/m, `ServerPlayerID=${Math.floor(Math.random() * 999999999)}`)
+    writeFileSync(iniPath, iniContent, 'utf-8')
+  }
+
+  return { success: true, message: `World data wiped successfully. Path: ${worldPath}` }
 }

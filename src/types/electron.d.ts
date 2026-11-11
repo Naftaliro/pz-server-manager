@@ -149,6 +149,13 @@ interface ElectronAPI {
     onProgress: (callback: (profileId: string, text: string) => void) => () => void
     onUpdateProgress: (callback: (installDir: string, text: string) => void) => () => void
   }
+  // game updates, rollbacks, wipes and folder moves going on right now (and why each server can't start)
+  busy: {
+    list: () => Promise<BusyState>
+    // the window has shown a finished job's result
+    dismiss: (id: number) => Promise<void>
+    onChanged: (callback: (state: BusyState) => void) => () => void
+  }
   profiles: {
     list: () => Promise<import('../store/useAppStore').ServerProfile[]>
     get: (id: string) => Promise<import('../store/useAppStore').ServerProfile | null>
@@ -303,6 +310,25 @@ interface RollbackOutcome {
   settingsRestored?: boolean
 }
 
+// something changing a game server install or a server's world right now (electron/ipc/busy.ts)
+interface BusyJobInfo {
+  id: number
+  kind: 'game-update' | 'rollback' | 'wipe' | 'data-folder'
+  profileId?: string
+  installDir?: string
+  progress: string
+  startedAt: number
+  // finished, with its result still to show
+  done?: boolean
+  result?: unknown
+}
+
+interface BusyState {
+  jobs: BusyJobInfo[]
+  // servers that can't start right now, and why
+  blocked: Record<string, string>
+}
+
 interface SteamBranchInfo {
   name: string
   buildId: string
@@ -407,6 +433,8 @@ declare global {
   type GameVersionNow = GameNow
   type RollbackOptions = RollbackOpts
   type RollbackResult = RollbackOutcome
+  type BusyJob = BusyJobInfo
+  type BusyNow = BusyState
   type SteamBranchOption = SteamBranchInfo
   type ServerPreflightIssue = PreflightIssue
   type ServerProblemReport = ServerProblem

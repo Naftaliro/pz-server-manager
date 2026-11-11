@@ -5,6 +5,7 @@ import { cp, mkdir, rm } from 'fs/promises'
 import { getProfile, listProfiles, patchProfile, getServerName } from './profileManager'
 import { folderSize } from './folderSize'
 import { copyBackupsFolder } from './backupStore'
+import { whileBusy, oneAtATime } from './busy'
 import { expandDataPath, ownDataFolder, sameFolder, sharingWith, serverFiles } from '../../shared/dataFolder'
 
 // Each server's data folder (see shared/dataFolder.ts for why new servers get their own)
@@ -75,7 +76,8 @@ export function setupDataFolderHandlers(isRunning: (id: string) => Promise<boole
   ipcMain.handle('server:dataFolder', async (_event, profileId: string) => dataFolderInfo(profileId))
   ipcMain.handle('server:useOwnDataFolder', async (_event, profileId: string) => {
     try {
-      return await useOwnDataFolder(profileId, isRunning)
+      // no start while the files move, and no backup or restore of them meanwhile
+      return await whileBusy({ profileId }, 'data-folder', 'Moving the files...', () => oneAtATime(profileId, () => useOwnDataFolder(profileId, isRunning)))
     } catch (e) {
       return { success: false, message: e instanceof Error ? e.message : String(e) }
     }

@@ -155,6 +155,14 @@ interface AppState {
   resetNav: () => void
   navGuard: NavGuard | null
   setNavGuard: (guard: NavGuard | null) => void
+  // something on the page that mustn't be left behind by back/forward (a rollback or game
+  // update still going, a result still to read). holdNav() returns the function that lets go
+  navHolds: number
+  holdNav: () => () => void
+
+  // game updates, rollbacks and the like going on in the app right now (electron/ipc/busy.ts)
+  busy: BusyNow
+  setBusy: (busy: BusyNow) => void
 
   isLoading: boolean
   setIsLoading: (loading: boolean) => void
@@ -285,6 +293,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   resetNav: () => set({ navBack: [], navForward: [] }),
   navGuard: null,
   setNavGuard: (guard) => set({ navGuard: guard }),
+  navHolds: 0,
+  holdNav: () => {
+    set(s => ({ navHolds: s.navHolds + 1 }))
+    let held = true
+    return () => { if (held) { held = false; set(s => ({ navHolds: Math.max(0, s.navHolds - 1) })) } }
+  },
+
+  busy: { jobs: [], blocked: {} },
+  setBusy: (busy) => set({ busy }),
 
   isLoading: false,
   setIsLoading: (loading) => set({ isLoading: loading }),
@@ -293,6 +310,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 }))
 
 function travel(dir: 'back' | 'forward') {
+  // a rollback or game update on the page is still going (or its result is up): stay put
+  if (useAppStore.getState().navHolds > 0) return
   const go = () => {
     const s = useAppStore.getState()
     // nowhere to go while setup is still running or something is loading

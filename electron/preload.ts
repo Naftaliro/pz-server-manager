@@ -159,6 +159,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  // what's being changed right now (game updates, rollbacks...), see electron/ipc/busy.ts
+  busy: {
+    list: () => ipcRenderer.invoke('busy:list'),
+    dismiss: (id: number) => ipcRenderer.invoke('busy:dismiss', id),
+    onChanged: (callback: (state: unknown) => void) => {
+      const handler = (_e: unknown, state: unknown) => callback(state)
+      ipcRenderer.on('busy:changed', handler)
+      return () => ipcRenderer.removeListener('busy:changed', handler)
+    },
+  },
+
   // Profile management
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),

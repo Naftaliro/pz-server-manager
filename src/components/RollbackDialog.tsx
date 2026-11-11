@@ -7,6 +7,7 @@ import type { ServerProfile } from '../store/useAppStore'
 import { useAppStore } from '../store/useAppStore'
 import { quickPicks, whenLabel, dayLabel, REASON_LABELS, type QuickPickKey } from '../../shared/backups'
 import { formatBytes, everyMinutes } from '../lib/profile'
+import { useNavHold } from '../lib/leaveGuard'
 
 type Check = Awaited<ReturnType<typeof window.electronAPI.backups.check>>
 
@@ -18,21 +19,45 @@ type Step =
 
 // "Roll back": pick a time (or a backup from the full list), see what changes, go.
 // undo: skip straight to putting back the backup the last rollback made
-export default function RollbackDialog({ profile, startWith, undo, onClose }: {
+export default function RollbackDialog({ profile, startWith, undo, job, onClose: close }: {
   profile: ServerProfile
   // open on the full list instead of the quick picks
   startWith?: 'list'
   undo?: boolean
+  // a rollback of this server already going (or done, its result not shown yet), started
+  // before this page was opened: show that instead
+  job?: BusyJob
   onClose: () => void
 }) {
-  const { serverStatuses } = useAppStore()
+  const { serverStatuses, busy: busyNow } = useAppStore()
   const running = (serverStatuses[profile.id] || 'stopped') !== 'stopped'
   const [backups, setBackups] = useState<WorldBackup[] | null>(null)
   const [current, setCurrent] = useState<GameVersionNow | undefined>()
-  const [step, setStep] = useState<Step>(undo ? { kind: 'working', undo: true } : { kind: 'pick' })
+  const [step, setStep] = useState<Step>(
+    job ? (job.done ? { kind: 'done', result: job.result as RollbackResult } : { kind: 'working' })
+      : undo ? { kind: 'working', undo: true } : { kind: 'pick' })
   const [showList, setShowList] = useState(startWith === 'list')
-  const [progress, setProgress] = useState('')
+  const [progress, setProgress] = useState(job?.progress || '')
   const [now] = useState(Date.now())
+
+  // the job this window came back to: its progress, then its result
+  const attached = job ? busyNow.jobs.find(j => j.id === job.id) : undefined
+  useEffect(() => {
+    if (!attached) return
+    if (attached.done) setStep(s => (s.kind === 'working' ? { kind: 'done', result: attached.result as RollbackResult, undo: s.undo } : s))
+    else if (attached.progress) setProgress(attached.progress)
+  }, [attached?.done, attached?.progress])
+
+  // mouse back/forward can't take a rollback that's going, or its result, off the screen
+  useNavHold(step.kind === 'working' || step.kind === 'done')
+
+  // the result has been seen: the app can forget it
+  const onClose = () => {
+    for (const j of useAppStore.getState().busy.jobs) {
+      if (j.done && j.kind === 'rollback' && j.profileId === profile.id) void window.electronAPI.busy.dismiss(j.id)
+    }
+    close()
+  }
 
   const load = () => {
     window.electronAPI.server.listBackups(profile.id).then(setBackups).catch(() => setBackups([]))
@@ -52,7 +77,7 @@ export default function RollbackDialog({ profile, startWith, undo, onClose }: {
   }
 
   useEffect(() => {
-    if (undo) void run(() => window.electronAPI.backups.undoRollback(profile.id, { stopFirst: true, warnMinutes: 1 }), true)
+    if (undo && !job) void run(() => window.electronAPI.backups.undoRollback(profile.id, { stopFirst: true, warnMinutes: 1 }), true)
   }, [])
 
   const busy = step.kind === 'working'

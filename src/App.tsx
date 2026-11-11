@@ -52,7 +52,9 @@ export default function App() {
       window.electronAPI.server.onPlayers((id, names) => setPlayers(id, names)),
       window.electronAPI.server.onProblem((id, problem) => addProblem(id, problem)),
       window.electronAPI.server.onModUpdates((id, names) => setModUpdates(id, names)),
+      window.electronAPI.busy.onChanged(state => useAppStore.getState().setBusy(state)),
     ]
+    window.electronAPI.busy.list().then(state => useAppStore.getState().setBusy(state)).catch(() => undefined)
     window.electronAPI.server.getAllStatuses().then(statuses => {
       Object.entries(statuses).forEach(([id, status]) => setServerStatus(id, status as ServerStatus))
     })

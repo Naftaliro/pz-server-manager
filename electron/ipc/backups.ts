@@ -6,7 +6,7 @@ import {
   resolveDataPath, serverStatus, serverPlayers, serverLogPath, rconFor, stopServer, startServer, installedModTimes, emitConsoleOutput,
 } from './serverManager'
 import {
-  installedBuild, steamBranches, cachedBranches, runServerInstall, onBeforeServerUpdate, sameInstall, checkServerUpdate, ensureSteamCmd,
+  installedBuild, steamBranches, cachedBranches, runServerInstall, onBeforeServerUpdate, sameInstall, checkServerUpdate, ensureSteamCmd, steamProgress,
 } from './steamcmd'
 import { loadSettings, steamcmdExe } from './appSettings'
 import { learnedBuilds, learnBuild } from './gameBuilds'
@@ -19,6 +19,7 @@ import {
 import { planRetention, checkCompat, isBackupId, type BackupReason, type BackupGame, type BackupMod, type CompatResult, type GameCheck } from '../../shared/backups'
 import { versionOf, versionFromLog, worldVersionOf, branchLabel, steamSwitchSteps, shortVersion, isBranchName } from '../../shared/gameVersion'
 import { PRIVATE_INI_KEYS, SECRET_INI_KEYS } from '../../shared/serverPack'
+import { oneAtATime, whileBusy, busyJobs, dismissJob, onBusyChange, startBlocker } from './busy'
 
 // ---------------------------------------------------------------------------
 // World backups for every server: before each start, every so often while it runs, by hand,
@@ -42,14 +43,6 @@ const say = (profileId: string, line: string) => emitConsoleOutput(profileId, `[
 
 function emitChanged(profileId: string) {
   if (mainWindowRef && !mainWindowRef.isDestroyed()) mainWindowRef.webContents.send('backups:changed', profileId)
-}
-
-// one backup or restore per server at a time
-const queues = new Map<string, Promise<unknown>>()
-function oneAtATime<T>(profileId: string, job: () => Promise<T>): Promise<T> {
-  const run = (queues.get(profileId) || Promise.resolve()).then(job, job)
-  queues.set(profileId, run.catch(() => undefined))
-  return run
 }
 
 // when the last backup was made and the server last launched, to skip a second backup of a
@@ -120,15 +113,6 @@ async function saveFirst(profileId: string): Promise<boolean> {
 }
 
 // ── Making backups ────────────────────────────────────────────────────────────
-
-// SteamCMD's " Update state (0x61) downloading, progress: 42.17 (...)" as "<what>: downloading 42%".
-// Its last line is "(0x0) unknown, progress: 0.00", which says nothing
-function steamProgress(line: string, what: string): string {
-  const m = line.match(/Update state \(0x[0-9a-f]+\)\s*([a-z ]+?),\s*progress:\s*([\d.]+)/i)
-  if (!m || /unknown/i.test(m[1])) return `${what}...`
-  const stage = m[1].trim().replace(/^verifying update$/i, 'checking files').replace(/^committing$/i, 'installing files')
-  return `${what}: ${stage} ${Math.round(parseFloat(m[2]))}%`
-}
 
 const mb = (bytes: number) => (bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.max(0.1, Math.round(bytes / 1024 / 1024 * 10) / 10)} MB`)
 
@@ -202,7 +186,11 @@ function backupUsage(profile: ServerProfile): Promise<number> {
  * (the new one converts it on load, for good), so that one is made even with backups off.
  */
 export async function backupBeforeStart(profile: ServerProfile): Promise<void> {
-  try { for (const note of await recoverInterrupted(filesOf(profile))) say(profile.id, note) } catch { /* nothing to recover */ }
+  // in the queue: a rollback or restore still going finishes first (its own backup would
+  // count as "fresh" below), and this never tidies up after one that's half way
+  await oneAtATime(profile.id, async () => {
+    try { for (const note of await recoverInterrupted(filesOf(profile))) say(profile.id, note) } catch { /* nothing to recover */ }
+  })
   const inst = installedBuild(profile.serverInstallPath)
   const gameChanged = !!profile.lastRunGame?.buildId && !!inst.buildId && profile.lastRunGame.buildId !== inst.buildId
   const fresh = (lastBackupAt.get(profile.id) || 0) > (lastLaunchAt.get(profile.id) || 0) && Date.now() - (lastBackupAt.get(profile.id) || 0) < 10 * 60 * 1000
@@ -422,7 +410,17 @@ function modsFromBackup(then: BackupMod[], now: ModEntry[]): ModEntry[] {
   })
 }
 
-export function rollback(profileId: string, id: string, opts: RollbackOptions, progress: (s: string) => void = () => undefined): Promise<RollbackResult> {
+// keepResult: the window shows what came of it, also when it was on another page meanwhile
+// (busy.ts keeps it until the window says it's been seen)
+export function rollback(profileId: string, id: string, opts: RollbackOptions, report: (s: string) => void = () => undefined, keepResult = false): Promise<RollbackResult> {
+  // a server can't start from the moment this is asked for, also while it waits its turn
+  return whileBusy({ profileId }, 'rollback', 'Getting started...', (busyProgress) => {
+    const progress = (s: string) => { busyProgress(s); report(s) }
+    return rollbackNow(profileId, id, opts, progress)
+  }, { keepResult })
+}
+
+function rollbackNow(profileId: string, id: string, opts: RollbackOptions, progress: (s: string) => void): Promise<RollbackResult> {
   return oneAtATime(profileId, async (): Promise<RollbackResult> => {
     const fail = (message: string): RollbackResult => ({ success: false, message })
     const profile = getProfile(profileId)
@@ -551,6 +549,16 @@ export function setupBackupHandlers(mainWindow: BrowserWindow | null) {
   mainWindowRef = mainWindow
   onBeforeServerUpdate(beforeServerUpdate)
 
+  // what's busy (busy.ts): Start buttons say why they're off, and a page that comes back to a
+  // game update or rollback still going shows it instead of starting over
+  const busyState = () => ({
+    jobs: busyJobs(),
+    blocked: Object.fromEntries(listProfiles().flatMap(p => { const why = startBlocker(p); return why ? [[p.id, why]] : [] })),
+  })
+  onBusyChange(() => { if (mainWindowRef && !mainWindowRef.isDestroyed()) mainWindowRef.webContents.send('busy:changed', busyState()) })
+  ipcMain.handle('busy:list', async () => busyState())
+  ipcMain.handle('busy:dismiss', async (_event, id: number) => { if (Number.isInteger(id)) dismissJob(id) })
+
   const send = (channel: string, ...args: unknown[]) => { if (mainWindowRef && !mainWindowRef.isDestroyed()) mainWindowRef.webContents.send(channel, ...args) }
   const wrap = <A extends unknown[], R>(fn: (...args: A) => Promise<R> | R) => async (_e: unknown, ...args: A) => {
     try { return { success: true, ...(await fn(...args)) } } catch (e) {
@@ -624,7 +632,7 @@ export function setupBackupHandlers(mainWindow: BrowserWindow | null) {
 
   ipcMain.handle('backups:rollback', async (_event, profileId: string, id: string, opts: RollbackOptions) => {
     try {
-      return await rollback(profileId, id, opts || {}, progressFor(profileId))
+      return await rollback(profileId, id, opts || {}, progressFor(profileId), true)
     } catch (e) {
       return { success: false, message: e instanceof Error ? e.message : String(e) }
     }
@@ -643,7 +651,7 @@ export function setupBackupHandlers(mainWindow: BrowserWindow | null) {
       const r = await rollback(profileId, lr.beforeId, {
         switchBranch, restoreMods: true, restoreSettings: true, force: compat.game.kind === 'blocked' && compat.game.canForce,
         stopFirst: opts.stopFirst, warnMinutes: opts.warnMinutes,
-      }, progressFor(profileId))
+      }, progressFor(profileId), true)
       // undoing the undo isn't a thing people want, the next rollback starts fresh
       if (r.success) patchProfile(profileId, { lastRollback: undefined })
       return r
@@ -682,10 +690,14 @@ export function setupBackupHandlers(mainWindow: BrowserWindow | null) {
     const progress = (text: string) => send('backups:updateProgress', installDir, text)
     const wasRunning = servers.filter(p => serverStatus(p.id) !== 'stopped')
     try {
-      await Promise.all(wasRunning.map(p => warnAndStop(p.id, Math.max(0, Math.min(10, opts.warnMinutes ?? 1)), 'for a game update', progress)))
-      progress('Backing up the worlds...')
-      const exe = await ensureSteamCmd(loadSettings().steamcmdDir)
-      const r = await runServerInstall(exe, installDir, (line) => progress(steamProgress(line, 'Updating the game server')), true, servers[0]?.buildVersion || loadSettings().buildVersion, opts.branch || undefined)
+      // no server on it starts from here (also not one that was off) until the update is done
+      const r = await whileBusy({ installDir }, 'game-update', 'Getting ready...', async (busyProgress) => {
+        const tell = (text: string) => { busyProgress(text); progress(text) }
+        await Promise.all(wasRunning.map(p => warnAndStop(p.id, Math.max(0, Math.min(10, opts.warnMinutes ?? 1)), 'for a game update', tell)))
+        tell('Backing up the worlds...')
+        const exe = await ensureSteamCmd(loadSettings().steamcmdDir)
+        return runServerInstall(exe, installDir, (line) => progress(steamProgress(line, 'Updating the game server')), true, servers[0]?.buildVersion || loadSettings().buildVersion, opts.branch || undefined)
+      })
       if (r.success && wasRunning.length) {
         progress('Starting the servers again...')
         for (const p of wasRunning) await startServer(p.id)

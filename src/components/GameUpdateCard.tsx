@@ -3,6 +3,7 @@ import { Download, Loader, CheckCircle, AlertTriangle, Info, Copy, X } from 'luc
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile } from '../store/useAppStore'
 import { shortVersion, steamSwitchSteps } from '../../shared/gameVersion'
+import { useBusyFor, useNavHold } from '../lib/leaveGuard'
 
 const skipKey = (dir: string) => dir.toLowerCase()
 
@@ -17,6 +18,27 @@ export default function GameUpdateCard({ profile, update, onUpdated }: { profile
   const installDir = profile.serverInstallPath
 
   useEffect(() => window.electronAPI.backups.onUpdateProgress((dir, text) => { if (skipKey(dir) === skipKey(installDir)) setProgress(text) }), [installDir])
+
+  // an update of these game files going on, also one started before this page was opened
+  // (here, from App settings, or by a rollback switching versions)
+  const { install } = useBusyFor(profile)
+  const working = phase === 'working' || !!install
+  // back/forward would only take the progress off the screen
+  useNavHold(working)
+  // one this card didn't start just finished: what's installed now says how it went
+  const [seen, setSeen] = useState<number | null>(null)
+  useEffect(() => {
+    if (install) setSeen(install.id)
+    else if (seen !== null) { setSeen(null); if (phase !== 'working') onUpdated() }
+  }, [install?.id])
+
+  if (install && phase !== 'working') {
+    return (
+      <Box tone="yellow" icon={<Loader size={14} className="animate-spin" />}>
+        <p className="flex-1">{install.progress || 'The game server is updating...'} <span className="text-pz-muted">Servers on these game files can start again when it's done.</span></p>
+      </Box>
+    )
+  }
 
   if (!update?.installed) return null
   const v = (version?: string, build?: string | null) => shortVersion(version) || (build ? `build ${build}` : '')
@@ -73,8 +95,8 @@ export default function GameUpdateCard({ profile, update, onUpdated }: { profile
             </p>
           </div>
         </div>
-        {phase === 'working' ? (
-          <p className="text-sm text-pz-text flex items-center gap-2"><Loader size={14} className="animate-spin text-pz-green" /> {progress}</p>
+        {working ? (
+          <p className="text-sm text-pz-text flex items-center gap-2"><Loader size={14} className="animate-spin text-pz-green" /> {progress || install?.progress}</p>
         ) : phase === 'confirm' ? (
           <div className="bg-pz-darker border border-pz-border rounded-md p-3 space-y-2 text-xs text-pz-subtext">
             <p>

@@ -3,6 +3,7 @@ import { Play, Square, Loader, AlertTriangle, X, AlertCircle } from 'lucide-reac
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile } from '../store/useAppStore'
 import { applyFix } from '../lib/fixes'
+import { useBusyFor } from '../lib/leaveGuard'
 
 // Start/Stop in one button. Before starting it runs the pre-start checks and,
 // if something would break the server, explains it with a button to fix it.
@@ -12,6 +13,8 @@ export default function StartButton({ profile, className = '', big = false }: { 
   const [busy, setBusy] = useState(false)
   const [issues, setIssues] = useState<ServerPreflightIssue[] | null>(null)
   const [error, setError] = useState('')
+  // its game files are updating or its world is being rolled back: not now, and why
+  const { blocked } = useBusyFor(profile)
 
   const start = async (force = false) => {
     setBusy(true)
@@ -49,10 +52,19 @@ export default function StartButton({ profile, className = '', big = false }: { 
   return (
     <>
       {status === 'stopped' ? (
-        <button onClick={() => start()} disabled={busy} className={`btn-primary ${size} ${className}`}>
-          {busy ? <Loader size={big ? 18 : 14} className="animate-spin" /> : <Play size={big ? 18 : 14} />}
-          {busy ? 'Checking...' : 'Start'}
-        </button>
+        blocked ? (
+          <span className={`flex flex-col items-center gap-1 ${className}`} title={blocked}>
+            <button disabled className={`btn-primary w-full justify-center ${size}`}>
+              <Play size={big ? 18 : 14} /> Start
+            </button>
+            {big && <span className="text-[11px] text-pz-muted max-w-48 text-center leading-tight">{blocked}</span>}
+          </span>
+        ) : (
+          <button onClick={() => start()} disabled={busy} className={`btn-primary ${size} ${className}`}>
+            {busy ? <Loader size={big ? 18 : 14} className="animate-spin" /> : <Play size={big ? 18 : 14} />}
+            {busy ? 'Checking...' : 'Start'}
+          </button>
+        )
       ) : status === 'stopping' ? (
         <button disabled className={`btn-outline ${size} ${className}`}>
           <Loader size={big ? 18 : 14} className="animate-spin" /> Stopping...
