@@ -5,31 +5,79 @@ import { spawn, execFile } from 'child_process'
 import https from 'https'
 import fs from 'fs'
 import { folderSize } from './folderSize'
-import { loadSettings, steamcmdExe } from './appSettings'
+import { loadSettings, saveSettings, steamcmdExe } from './appSettings'
 import { PZ_APP_ID } from './modManager'
 import { backupAfterDownload } from './modBackups'
+import { listProfiles } from './profileManager'
 import { isWorkshopId } from '../../shared/modCore'
+import {
+  branchArgs, branchFor, parseBranches, serverVersionState, versionOf, branchLabel, isBranchName, buildOfBranch,
+  type SteamBranch,
+} from '../../shared/gameVersion'
+import { learnedBuilds } from './gameBuilds'
 import { expandArchiveScript } from './winScripts'
 import { redirectTarget } from './httpsOnly'
 
 const STEAMCMD_URL = 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
 const PZ_SERVER_APP_ID = '380870'
 
-// B42 is the default public branch now, B41 lives on the legacy41 beta
-function branchArgs(buildVersion?: string): string[] {
-  return buildVersion === 'b41' ? ['-beta', 'legacy41'] : []
-}
-
 // What goes on SteamCMD's command line. SteamCMD runs without a shell (so nothing in here can
 // start another program), and every +command and its arguments are separate items: SteamCMD
-// puts them back together itself, and a path with spaces goes in as one item
-export function installArgs(installDir: string, buildVersion?: string): string[] {
+// puts them back together itself, and a path with spaces goes in as one item.
+// The branch is always there, public too (see shared/gameVersion)
+export function installArgs(installDir: string, branch = 'public'): string[] {
   return [
     '+force_install_dir', checkedDir(installDir),
     '+login', 'anonymous',
-    '+app_update', PZ_SERVER_APP_ID, ...branchArgs(buildVersion), 'validate',
+    '+app_update', PZ_SERVER_APP_ID, ...branchArgs(branch), 'validate',
     '+quit',
   ]
+}
+
+// A branch the user picked for an install that the next install/update switches it to,
+// kept per install folder. Once that's done it's forgotten: the install's own branch (in its
+// manifest) is what updates keep, also when someone switched it outside the app
+const installKey = (dir: string) => win32.resolve(dir).toLowerCase()
+
+export function chosenBranch(installDir: string): string | undefined {
+  const b = loadSettings().serverBranches?.[installKey(installDir)]
+  return isBranchName(b) ? b : undefined
+}
+
+export function chooseBranch(installDir: string, branch: string) {
+  if (!isBranchName(branch)) throw new Error(`"${String(branch)}" isn't a Steam branch.`)
+  saveSettings({ serverBranches: { ...loadSettings().serverBranches, [installKey(installDir)]: branch } })
+}
+
+function clearBranchChoice(installDir: string) {
+  const all = { ...loadSettings().serverBranches }
+  if (!(installKey(installDir) in all)) return
+  delete all[installKey(installDir)]
+  saveSettings({ serverBranches: all })
+}
+
+// Every server install the app knows about. Things the window asks SteamCMD to do happen
+// in one of these, nowhere else
+export function knownInstalls(): string[] {
+  const all = [loadSettings().serverInstallPath, ...listProfiles().map(p => p.serverInstallPath)].filter(Boolean)
+  return [...new Map(all.map(d => [installKey(d), d])).values()]
+}
+
+export function sameInstall(a: string, b: string): boolean {
+  return !!a && !!b && installKey(a) === installKey(b)
+}
+
+function knownInstall(dir: unknown): string {
+  const hit = typeof dir === 'string' ? knownInstalls().find(d => sameInstall(d, dir)) : undefined
+  if (!hit) throw new Error("That isn't one of your server installs.")
+  return hit
+}
+
+// Before an update or branch switch touches an install (backups.ts makes a backup of every
+// server on it). Throwing stops the update
+let beforeUpdate: ((installDir: string) => Promise<void>) | null = null
+export function onBeforeServerUpdate(fn: (installDir: string) => Promise<void>) {
+  beforeUpdate = fn
 }
 
 export function workshopDownloadArgs(installDir: string, workshopIds: string[]): string[] {
@@ -83,21 +131,44 @@ export function setupSteamCmdHandlers() {
     }
   })
 
-  ipcMain.handle('steamcmd:installServer', async (event, { steamcmdPath, installDir, channel, buildVersion }) => {
-    return runServerInstall(event, steamcmdPath, installDir, channel, false, buildVersion)
+  ipcMain.handle('steamcmd:installServer', async (event, { steamcmdPath, installDir, channel, buildVersion, branch }) => {
+    const sender = event.sender
+    return runServerInstall(steamcmdPath, installDir, (line) => { if (!sender.isDestroyed()) sender.send(channel, line) }, false, buildVersion, branch)
   })
 
-  ipcMain.handle('steamcmd:updateServer', async (event, { steamcmdPath, installDir, channel, buildVersion }) => {
-    return runServerInstall(event, steamcmdPath, installDir, channel, true, buildVersion)
+  ipcMain.handle('steamcmd:updateServer', async (event, { steamcmdPath, installDir, channel, buildVersion, branch }) => {
+    const sender = event.sender
+    return runServerInstall(steamcmdPath, installDir, (line) => { if (!sender.isDestroyed()) sender.send(channel, line) }, true, buildVersion, branch)
+  })
+
+  // pick the branch the next update switches an install to ('' = stay where it is)
+  ipcMain.handle('steamcmd:chooseBranch', async (_event, installDir: string, branch: string) => {
+    try {
+      const dir = knownInstall(installDir)
+      if (branch) chooseBranch(dir, branch)
+      else clearBranchChoice(dir)
+      return { success: true }
+    } catch (e) {
+      return { success: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
+  ipcMain.handle('steamcmd:branches', async (_event, force?: boolean) => {
+    const branches = await steamBranches(!!force)
+    return branches ? { success: true, branches: branches.map(b => ({ ...b, label: branchLabel(b.name, b.description), version: versionOf(b.buildId, { learned: learnedBuilds(), branches }) })) } : { success: false, message: "Couldn't ask Steam which versions it has." }
   })
 
   // Download workshop mods straight into the server's own workshop folder, so the
   // server sees them as already downloaded and we can read mod.info right away
-  ipcMain.handle('steamcmd:downloadMods', async (event, { workshopIds, channel }) => {
+  ipcMain.handle('steamcmd:downloadMods', async (event, { workshopIds, channel, installDir }) => {
     const sender = event.sender
     const send = (payload: ModDownloadEvent) => { if (!sender.isDestroyed()) sender.send(channel, payload) }
-    const result = await downloadMods(workshopIds, send)
-    backupAfterDownload(result.done)
+    let dir: string
+    try { dir = installDir ? knownInstall(installDir) : loadSettings().serverInstallPath } catch (e) {
+      return { success: false, done: [], failed: Array.isArray(workshopIds) ? workshopIds.map(String) : [], message: e instanceof Error ? e.message : String(e) }
+    }
+    const result = await downloadMods(workshopIds, send, dir)
+    backupAfterDownload(result.done, dir)
     return result
   })
 }
@@ -126,31 +197,73 @@ export function installedBuild(installDir: string): { buildId: string | null; br
   }
 }
 
-let latestCache: { branch: string; buildId: string; at: number } | null = null
+// Every branch of the server on Steam with its build id, from app_info_print. Asked at
+// most every 30 minutes, null when Steam couldn't be asked
+let branchCache: { branches: SteamBranch[]; at: number } | null = null
+let branchAsk: Promise<SteamBranch[] | null> | null = null
 
-async function latestBuild(branch: string): Promise<string | null> {
-  if (latestCache && latestCache.branch === branch && Date.now() - latestCache.at < 30 * 60 * 1000) return latestCache.buildId
-  const settings = loadSettings()
-  let exe = steamcmdExe(settings)
-  if (!existsSync(exe)) {
-    try { exe = await ensureSteamCmd(settings.steamcmdDir) } catch { return null }
-  }
-  let out = ''
-  await exclusive(() => runSteamCmd(exe, ['+login', 'anonymous', '+app_info_update', '1', '+app_info_print', PZ_SERVER_APP_ID, '+quit'], (l) => { out += l + '\n' }))
-  // ..."branches" { "public" { "buildid" "123" ... } "legacy41" { ... } }
-  const branches = out.slice(out.search(/"branches"/i))
-  const block = branches.match(new RegExp(`"${branch}"\\s*\\{([^}]*)\\}`, 'i'))?.[1]
-  const buildId = block?.match(/"buildid"\s+"(\d+)"/i)?.[1] || null
-  if (buildId) latestCache = { branch, buildId, at: Date.now() }
-  return buildId
+export function steamBranches(force = false): Promise<SteamBranch[] | null> {
+  if (!force && branchCache && Date.now() - branchCache.at < 30 * 60 * 1000) return Promise.resolve(branchCache.branches)
+  if (branchAsk) return branchAsk
+  branchAsk = (async () => {
+    const settings = loadSettings()
+    let exe = steamcmdExe(settings)
+    if (!existsSync(exe)) {
+      try { exe = await ensureSteamCmd(settings.steamcmdDir) } catch { return null }
+    }
+    let out = ''
+    await exclusive(() => runSteamCmd(exe, ['+login', 'anonymous', '+app_info_update', '1', '+app_info_print', PZ_SERVER_APP_ID, '+quit'], (l) => { out += l + '\n' }))
+    const branches = parseBranches(out, PZ_SERVER_APP_ID)
+    if (branches.length === 0) return branchCache?.branches || null
+    branchCache = { branches, at: Date.now() }
+    return branches
+  })().catch(() => branchCache?.branches || null).finally(() => { branchAsk = null })
+  return branchAsk
 }
 
-export async function checkServerUpdate(installDir: string): Promise<{ checked: boolean; updateAvailable: boolean; installed: string | null; latest: string | null; steamManaged: boolean }> {
+export interface ServerUpdateInfo {
+  checked: boolean
+  updateAvailable: boolean
+  installed: string | null
+  latest: string | null
+  steamManaged: boolean
+  // the Steam branch the install is on, and how people would say it
+  branch: string
+  branchLabel: string
+  // a branch picked for this install that it isn't on yet (applies on the next update)
+  chosenBranch?: string
+  branchMissing: boolean
+  behindPublic: boolean
+  publicBuild: string | null
+  installedVersion?: string
+  latestVersion?: string
+  publicVersion?: string
+}
+
+export async function checkServerUpdate(installDir: string): Promise<ServerUpdateInfo> {
   const steamManaged = loadSettings().steamManaged
-  const { buildId, branch } = installedBuild(installDir)
-  if (!buildId) return { checked: false, updateAvailable: false, installed: null, latest: null, steamManaged }
-  const latest = await latestBuild(branch || 'public')
-  return { checked: !!latest, updateAvailable: !!latest && latest !== buildId, installed: buildId, latest, steamManaged }
+  const mine = installedBuild(installDir)
+  const chosen = chosenBranch(installDir)
+  const base = { steamManaged, branch: mine.branch, branchLabel: branchLabel(mine.branch), chosenBranch: chosen && chosen !== mine.branch ? chosen : undefined }
+  if (!mine.buildId) return { ...base, checked: false, updateAvailable: false, installed: null, latest: null, branchMissing: false, behindPublic: false, publicBuild: null }
+  const branches = await steamBranches()
+  const state = serverVersionState(mine, branches)
+  const learned = learnedBuilds()
+  const v = (id: string | null) => versionOf(id, { learned, branches })
+  return {
+    ...base,
+    branchLabel: branchLabel(mine.branch, branches?.find(b => b.name === mine.branch)?.description),
+    checked: !!state.latest || state.branchMissing,
+    updateAvailable: state.updateAvailable,
+    installed: mine.buildId,
+    latest: state.latest,
+    branchMissing: state.branchMissing,
+    behindPublic: state.behindPublic,
+    publicBuild: state.publicBuild,
+    installedVersion: v(mine.buildId),
+    latestVersion: v(state.latest),
+    publicVersion: v(state.publicBuild),
+  }
 }
 
 // ── Already installed through Steam? ──────────────────────────────────────────
@@ -221,41 +334,53 @@ function runSteamCmd(exe: string, args: string[], onLine: (line: string) => void
   })
 }
 
-function runServerInstall(
-  event: Electron.IpcMainInvokeEvent,
+/**
+ * Install or update the server. branch: switch the install to this branch (it's remembered for
+ * the install). Without one an update keeps the branch the install is on, see branchFor.
+ * An update first lets backups.ts back up every server on the install, and stops if it can't.
+ */
+export async function runServerInstall(
   steamcmdPath: string,
   installDir: string,
-  channel: string,
+  sendProgress: (line: string) => void,
   isUpdate: boolean,
-  buildVersion?: string
-) {
-  return exclusive(async () => {
-    try {
-      const args = installArgs(installDir, buildVersion)
-      checkedSteamCmd(steamcmdPath)
+  buildVersion?: string,
+  branch?: string,
+): Promise<{ success: boolean; message: string; branch?: string }> {
+  try {
+    checkedSteamCmd(steamcmdPath)
+    checkedDir(installDir)
+    if (branch !== undefined && branch !== null && !isBranchName(branch)) throw new Error(`"${String(branch)}" isn't a Steam branch.`)
+    const mine = installedBuild(installDir)
+    const target = branchFor({ chosen: branch || chosenBranch(installDir), installed: mine.buildId ? mine.branch : null, build: buildVersion })
+    const args = installArgs(installDir, target)
+    if (isUpdate || isServerInstalled(installDir)) await beforeUpdate?.(installDir)
+    return await exclusive(async () => {
       if (!existsSync(installDir)) mkdirSync(installDir, { recursive: true })
-
-      const sender = event.sender
-      const sendProgress = (line: string) => { if (!sender.isDestroyed()) sender.send(channel, line) }
 
       sendProgress(isUpdate ? 'Starting server update...' : 'Starting server installation...')
       sendProgress(`SteamCMD path: ${steamcmdPath}`)
       sendProgress(`Install directory: ${installDir}`)
-      sendProgress(`Branch: ${buildVersion === 'b41' ? 'legacy41 (Build 41)' : 'public (Build 42)'}`)
+      sendProgress(`Branch: ${target} (${buildOfBranch(target) === 'b41' ? 'Build 41' : 'Build 42'})`)
 
       const code = await runSteamCmd(steamcmdPath, args, sendProgress)
+      branchCache = branchCache && { ...branchCache, at: 0 }
 
       // steamcmd exits 7 after a successful self-update, so trust the files over the exit code
-      if (isServerInstalled(installDir) && (code === 0 || code === 7)) {
+      const now = installedBuild(installDir)
+      if (isServerInstalled(installDir) && (code === 0 || code === 7) && now.branch === target) {
+        // the switch is done, from now on updates keep whatever branch the install is on
+        clearBranchChoice(installDir)
         sendProgress('Installation complete!')
-        return { success: true, message: isUpdate ? 'Server updated successfully' : 'Server installed successfully' }
+        return { success: true, branch: target, message: isUpdate ? 'Server updated successfully' : 'Server installed successfully' }
       }
+      if (isServerInstalled(installDir) && (code === 0 || code === 7)) throw new Error(`Steam left the server on ${now.branch} instead of ${target}`)
       throw new Error(`SteamCMD exited with code ${code}`)
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error)
-      return { success: false, message: msg }
-    }
-  })
+    })
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return { success: false, message: msg }
+  }
 }
 
 // ── Workshop downloads ────────────────────────────────────────────────────────
@@ -267,9 +392,11 @@ export interface ModDownloadEvent {
   message?: string
 }
 
+// installDir: the server install the mods are for (each server can have its own)
 export function downloadMods(
   workshopIds: string[],
-  send: (e: ModDownloadEvent) => void
+  send: (e: ModDownloadEvent) => void,
+  installDir = loadSettings().serverInstallPath,
 ): Promise<{ success: boolean; done: string[]; failed: string[]; message?: string }> {
   // ids come from mod lists people paste in and packs other people made: only plain numbers
   // get anywhere near SteamCMD
@@ -283,7 +410,6 @@ export function downloadMods(
   return exclusive(async () => {
     const settings = loadSettings()
     let exe = steamcmdExe(settings)
-    const installDir = settings.serverInstallPath
     try {
       checkedDir(installDir)
       if (!existsSync(exe)) exe = await ensureSteamCmd(settings.steamcmdDir)

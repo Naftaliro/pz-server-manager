@@ -24,6 +24,12 @@ export interface AppSettings {
   // keep a copy of every Workshop mod after it downloads (modBackups.ts), and where
   modBackups?: boolean
   modBackupDir?: string
+  // a Steam branch picked per server install (lowercased folder) that the next update switches to
+  serverBranches?: Record<string, string>
+  // "Ask before updating the game server", on unless turned off
+  askBeforeServerUpdate?: boolean
+  // "Not now" on an update: install folder (lowercased) -> the build that was skipped
+  skippedServerUpdate?: Record<string, string>
 }
 
 const DEFAULTS: AppSettings = {

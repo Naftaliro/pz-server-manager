@@ -69,22 +69,27 @@ interface ElectronAPI {
   }
   steamcmd: {
     download: (targetDir: string) => Promise<{ success: boolean; path?: string; message: string }>
+    // branch: switch the install to this Steam branch. Left out, an update keeps the install's own branch
     installServer: (
       steamcmdPath: string,
       installDir: string,
       onProgress: (line: string) => void,
-      buildVersion?: 'b41' | 'b42'
-    ) => Promise<{ success: boolean; message: string }>
+      buildVersion?: 'b41' | 'b42',
+      branch?: string
+    ) => Promise<{ success: boolean; message: string; branch?: string }>
     updateServer: (
       steamcmdPath: string,
       installDir: string,
       onProgress: (line: string) => void,
-      buildVersion?: 'b41' | 'b42'
-    ) => Promise<{ success: boolean; message: string }>
+      buildVersion?: 'b41' | 'b42',
+      branch?: string
+    ) => Promise<{ success: boolean; message: string; branch?: string }>
     checkInstalled: (installDir: string) => Promise<boolean>
-    checkUpdate: (installDir: string) => Promise<{ checked: boolean; updateAvailable: boolean; installed: string | null; latest: string | null; steamManaged: boolean }>
+    checkUpdate: (installDir: string) => Promise<ServerUpdateState>
+    branches: (force?: boolean) => Promise<{ success: boolean; message?: string; branches?: Array<SteamBranchInfo> }>
+    chooseBranch: (installDir: string, branch: string) => Promise<{ success: boolean; message?: string }>
     findSteamInstall: () => Promise<string | null>
-    downloadMods: (workshopIds: string[], onEvent: (e: ModDownloadEvent) => void) => Promise<{
+    downloadMods: (workshopIds: string[], onEvent: (e: ModDownloadEvent) => void, installDir?: string) => Promise<{
       success: boolean
       done: string[]
       failed: string[]
@@ -188,7 +193,7 @@ interface ElectronAPI {
       items?: Record<string, { name?: string; savedAt: string; versions: number }>
     }>
     configure: (patch: { enabled?: boolean; dir?: string }) => Promise<{ success: boolean; message?: string }>
-    backupNow: (items: Array<{ workshopId: string; name?: string }>) => Promise<{ success: boolean; message?: string; saved?: number; same?: number; missing?: number }>
+    backupNow: (items: Array<{ workshopId: string; name?: string; installDir?: string }>) => Promise<{ success: boolean; message?: string; saved?: number; same?: number; missing?: number }>
     use: (workshopId: string, worldSavePath?: string) => Promise<{
       success: boolean; message?: string; folders?: string[]; infos?: import('../../shared/modCore').ModInfo[]; savedAt?: string
     }>
@@ -221,6 +226,36 @@ interface ElectronAPI {
       message?: string
     }>
   }
+}
+
+interface SteamBranchInfo {
+  name: string
+  buildId: string
+  description?: string
+  timeUpdated?: number
+  pwdRequired?: boolean
+  downloadBytes?: number
+  // "42.21 fall-back", "Latest"
+  label: string
+  version?: string
+}
+
+// how a server install compares with what Steam has (steamcmd.ts checkServerUpdate)
+interface ServerUpdateState {
+  checked: boolean
+  updateAvailable: boolean
+  installed: string | null
+  latest: string | null
+  steamManaged: boolean
+  branch: string
+  branchLabel: string
+  chosenBranch?: string
+  branchMissing: boolean
+  behindPublic: boolean
+  publicBuild: string | null
+  installedVersion?: string
+  latestVersion?: string
+  publicVersion?: string
 }
 
 interface ModDownloadEvent {
@@ -290,6 +325,8 @@ declare global {
   type PlayServer = PlayServerInfo
   type ModFileInfo = ModInfo
   type ModDownloadProgress = ModDownloadEvent
+  type ServerUpdateInfo = ServerUpdateState
+  type SteamBranchOption = SteamBranchInfo
   type ServerPreflightIssue = PreflightIssue
   type ServerProblemReport = ServerProblem
   type PlayitState = PlayitStateInfo

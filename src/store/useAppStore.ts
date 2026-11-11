@@ -74,6 +74,10 @@ export interface AppSettings {
   role?: 'host' | 'player'
   modBackups?: boolean
   modBackupDir?: string
+  serverBranches?: Record<string, string>
+  // "Ask before updating the game server", on unless turned off
+  askBeforeServerUpdate?: boolean
+  skippedServerUpdate?: Record<string, string>
 }
 
 // 'starting' = loading world/mods, 'running' = players can join

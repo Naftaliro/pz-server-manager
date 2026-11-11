@@ -60,25 +60,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // SteamCMD
   steamcmd: {
     download: (targetDir: string) => ipcRenderer.invoke('steamcmd:download', targetDir),
-    installServer: (steamcmdPath: string, installDir: string, onProgress: (line: string) => void, buildVersion?: 'b41' | 'b42') => {
+    installServer: (steamcmdPath: string, installDir: string, onProgress: (line: string) => void, buildVersion?: 'b41' | 'b42', branch?: string) => {
       const channel = `steamcmd:progress:${Date.now()}`
       ipcRenderer.on(channel, (_e, line) => onProgress(line))
-      return ipcRenderer.invoke('steamcmd:installServer', { steamcmdPath, installDir, channel, buildVersion })
+      return ipcRenderer.invoke('steamcmd:installServer', { steamcmdPath, installDir, channel, buildVersion, branch })
         .finally(() => ipcRenderer.removeAllListeners(channel))
     },
-    updateServer: (steamcmdPath: string, installDir: string, onProgress: (line: string) => void, buildVersion?: 'b41' | 'b42') => {
+    updateServer: (steamcmdPath: string, installDir: string, onProgress: (line: string) => void, buildVersion?: 'b41' | 'b42', branch?: string) => {
       const channel = `steamcmd:progress:${Date.now()}`
       ipcRenderer.on(channel, (_e, line) => onProgress(line))
-      return ipcRenderer.invoke('steamcmd:updateServer', { steamcmdPath, installDir, channel, buildVersion })
+      return ipcRenderer.invoke('steamcmd:updateServer', { steamcmdPath, installDir, channel, buildVersion, branch })
         .finally(() => ipcRenderer.removeAllListeners(channel))
     },
     checkInstalled: (installDir: string) => ipcRenderer.invoke('steamcmd:checkInstalled', installDir),
     checkUpdate: (installDir: string) => ipcRenderer.invoke('steamcmd:checkUpdate', installDir),
+    branches: (force?: boolean) => ipcRenderer.invoke('steamcmd:branches', force),
+    chooseBranch: (installDir: string, branch: string) => ipcRenderer.invoke('steamcmd:chooseBranch', installDir, branch),
     findSteamInstall: () => ipcRenderer.invoke('steamcmd:findSteamInstall'),
-    downloadMods: (workshopIds: string[], onEvent: (e: unknown) => void) => {
+    downloadMods: (workshopIds: string[], onEvent: (e: unknown) => void, installDir?: string) => {
       const channel = `steamcmd:mods:${Date.now()}:${Math.random()}`
       ipcRenderer.on(channel, (_e, payload) => onEvent(payload))
-      return ipcRenderer.invoke('steamcmd:downloadMods', { workshopIds, channel })
+      return ipcRenderer.invoke('steamcmd:downloadMods', { workshopIds, channel, installDir })
         .finally(() => ipcRenderer.removeAllListeners(channel))
     },
   },

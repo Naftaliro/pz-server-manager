@@ -10,15 +10,23 @@ const INJECTED = ['0', '1 & calc.exe', '2392709985" & whoami > %TEMP%\\x.txt & "
 
 describe('SteamCMD command line', () => {
   it('puts every +command and its arguments in their own item, path with spaces as one', () => {
-    expect(installArgs('C:\\Program Files (x86)\\PZ Server', 'b42')).toEqual([
+    expect(installArgs('C:\\Program Files (x86)\\PZ Server', 'public')).toEqual([
       '+force_install_dir', 'C:\\Program Files (x86)\\PZ Server',
       '+login', 'anonymous',
-      '+app_update', '380870', 'validate',
+      '+app_update', '380870', '-beta', 'public', 'validate',
       '+quit',
     ])
-    expect(installArgs('C:\\PZServer', 'b41')).toEqual([
+    expect(installArgs('C:\\PZServer', 'legacy41')).toEqual([
       '+force_install_dir', 'C:\\PZServer', '+login', 'anonymous', '+app_update', '380870', '-beta', 'legacy41', 'validate', '+quit',
     ])
+    expect(installArgs('C:\\PZServer', '42.21')).toContain('42.21')
+  })
+
+  // F-04: SteamCMD keeps the last branch when -beta is left out, so public has to be said out loud
+  it('always names the branch, public included', () => {
+    expect(installArgs('C:\\PZServer')).toEqual(expect.arrayContaining(['-beta', 'public']))
+    expect(() => installArgs('C:\\PZServer', 'x +quit')).toThrow()
+    expect(() => installArgs('C:\\PZServer', '-beta')).toThrow()
   })
 
   it('downloads each workshop item with its own +workshop_download_item', () => {
