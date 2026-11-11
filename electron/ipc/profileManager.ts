@@ -44,7 +44,16 @@ export interface ServerProfile {
   autoRestart?: boolean
   restartOnModUpdate?: boolean
   backupsEnabled?: boolean
+  // older versions kept the last N, backups thin out over time now (shared/backups planRetention)
   backupsToKeep?: number
+  // while running, a backup this often (minutes, 0 = only at start). 30 when unset
+  backupEveryMinutes?: number
+  // keep backups under this many GB (unset = no limit)
+  backupCapGb?: number | null
+  // the game build that last ran this world: a backup says what game it's from by this
+  lastRunGame?: { buildId?: string; branch?: string; version?: string }
+  // the last rollback, for "Undo"
+  lastRollback?: { at: string; backupId: string; beforeId?: string; branchBefore?: string; branchAfter?: string }
   // restart once a day at this hour (0-23), off when unset
   dailyRestartHour?: number | null
   // Discord channel webhook for server updates

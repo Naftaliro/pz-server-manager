@@ -41,6 +41,11 @@ export interface ServerProfile {
   restartOnModUpdate?: boolean
   backupsEnabled?: boolean
   backupsToKeep?: number
+  // while running, a backup this often (minutes, 0 = only at start). 30 when unset
+  backupEveryMinutes?: number
+  backupCapGb?: number | null
+  lastRunGame?: { buildId?: string; branch?: string; version?: string }
+  lastRollback?: { at: string; backupId: string; beforeId?: string; branchBefore?: string; branchAfter?: string }
   // restart once a day at this hour (0-23), off when unset
   dailyRestartHour?: number | null
   // Discord channel webhook for server updates

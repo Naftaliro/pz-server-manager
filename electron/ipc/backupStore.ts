@@ -128,11 +128,52 @@ async function readIndex(backup: string): Promise<Map<string, IndexEntry>> {
   return out
 }
 
-// which file on disk (hard links share one) -> its size
-async function diskFiles(backup: string): Promise<Map<string, number>> {
-  const out = new Map<string, number>()
-  for (const e of (await readIndex(backup)).values()) out.set(`${e.dev}:${e.ino}`, Number(e.size))
-  return out
+// The files on disk one backup holds (hard links share one), as sorted file ids and their
+// sizes. Small enough to keep a few dozen in memory for a 90,000 file world (16 bytes each)
+export interface DiskMap {
+  ids: BigUint64Array
+  sizes: Float64Array
+  // files the drive gave no id for (FAT): can't be shared, always counted
+  loose: number
+}
+
+export async function diskMap(backup: StoredBackup): Promise<DiskMap> {
+  const seen = new Map<bigint, number>()
+  let loose = 0
+  for (const e of (await readIndex(backup.dir)).values()) {
+    if (e.ino === 0n) loose += Number(e.size)
+    else seen.set(e.ino, Number(e.size))
+  }
+  const ids = BigUint64Array.from([...seen.keys()]).sort()
+  return { ids, sizes: Float64Array.from(ids, id => seen.get(id)!), loose }
+}
+
+function sharedBytes(a: DiskMap, b: DiskMap): number {
+  let i = 0, j = 0, shared = 0
+  while (i < a.ids.length && j < b.ids.length) {
+    if (a.ids[i] === b.ids[j]) { shared += b.sizes[j]; i++; j++ } else if (a.ids[i] < b.ids[j]) i++
+    else j++
+  }
+  return shared
+}
+
+const mapBytes = (m: DiskMap) => m.sizes.reduce((n, s) => n + s, 0) + m.loose
+
+/**
+ * Space on disk a set of backups takes together, oldest first in the list. A backup only ever
+ * links to the one right before it, so a file shared by two backups is in every backup between
+ * them too, and comparing each backup with the one before it in the list is enough
+ */
+export function usageOf(chronological: Array<DiskMap | number>): number {
+  let total = 0
+  let prev: DiskMap | null = null
+  for (const m of chronological) {
+    // a plain number: an old world-only backup, a full copy of that size
+    if (typeof m === 'number') { total += m; continue }
+    total += mapBytes(m) - (prev ? sharedBytes(prev, m) : 0)
+    prev = m
+  }
+  return total
 }
 
 // ── Listing ───────────────────────────────────────────────────────────────────
@@ -168,15 +209,7 @@ export async function listBackups(f: ServerFiles): Promise<StoredBackup[]> {
  */
 export async function diskUsage(backups: StoredBackup[], oldSize: (b: StoredBackup) => Promise<number> = async b => b.sizeBytes): Promise<number> {
   const chrono = [...backups].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
-  let total = 0
-  let prev = new Map<string, number>()
-  for (const b of chrono) {
-    if (b.legacy) { total += await oldSize(b); continue }
-    const files = await diskFiles(b.dir)
-    for (const [key, size] of files) if (!prev.has(key)) total += size
-    prev = files
-  }
-  return total
+  return usageOf(await Promise.all(chrono.map(b => (b.legacy ? oldSize(b) : diskMap(b)))))
 }
 
 export async function deleteBackup(f: ServerFiles, id: string): Promise<void> {

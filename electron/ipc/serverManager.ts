@@ -1,8 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { spawn, execFile, ChildProcess } from 'child_process'
 import { join } from 'path'
-import { existsSync, writeFileSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync, unlinkSync, readdirSync } from 'fs'
-import { cp, rm } from 'fs/promises'
+import { existsSync, writeFileSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync, unlinkSync } from 'fs'
 import { randomBytes } from 'crypto'
 import dgram from 'dgram'
 import os from 'os'
@@ -17,8 +16,8 @@ import { formatModIds, orderModIds, buildMapLine, enabledIds, wrongBuildMods, is
 import { loadSettings } from './appSettings'
 import { ensurePlayitRunning, PLAYIT_INTEGRATION } from './playit'
 import { firewallStatus } from './network'
-import { folderSize } from './folderSize'
 import { notify, escapeDiscord, DISCORD_COLORS } from './discord'
+import { backupBeforeStart, serverUp, serverDown, whileDownForRestart } from './backups'
 import { mergeIni, mergeSandbox, isGameWritten, type SettingsTree } from '../../shared/gameConfig'
 import { patchStartBat,launcherScript, serverWindowCommand, sendKeysScript } from './winScripts'
 
@@ -89,6 +88,9 @@ export function iniSettingsFor(profile: ServerProfile): Record<string, unknown> 
     WorkshopItems: profile.mods.map(m => m.workshopId).filter(isWorkshopId).join(';'),
     Mods: formatModIds(orderModIds(profile.mods).order, profile.buildVersion),
     Map: mapLine(profile),
+    // the app backs up the world before every start itself (only what changed), so the game
+    // doesn't zip a second full copy. Its backup when the game version changes stays on
+    ...(profile.backupsEnabled !== false ? { BackupsOnStart: false } : {}),
   }
 }
 
@@ -322,6 +324,7 @@ function markRunning(profileId: string, srv: ServerProcess) {
   pollPlayers()
   srv.playersTimer = setInterval(pollPlayers, 20000)
   srv.modTimer = setInterval(() => { void checkModUpdates(profileId, srv) }, 15 * 60 * 1000)
+  serverUp(profileId)
 
   // "Works with playit.gg": make sure the user's tunnel agent is up while the server is
   if (PLAYIT_INTEGRATION && loadSettings().playitEnabled) {
@@ -339,6 +342,7 @@ function cleanup(profileId: string) {
   if (srv.playersTimer) clearInterval(srv.playersTimer)
   if (srv.modTimer) clearInterval(srv.modTimer)
   if (srv.pendingRestart) clearTimeout(srv.pendingRestart)
+  serverDown(profileId)
   runningServers.delete(profileId)
   if (srv.status === 'stopping' && !restarting.has(profileId)) {
     const profile = getProfile(profileId)
@@ -434,7 +438,7 @@ async function checkModUpdates(profileId: string, srv: ServerProcess) {
   const names = updated.map(u => u.name)
   emitModUpdates(profileId, names)
   emitConsoleOutput(profileId, `[Knox] Mods updated on the Workshop: ${names.join(', ')}`)
-  if (profile.restartOnModUpdate !== false) scheduleRestart(profileId, srv, 5, 'to update mods')
+  if (profile.restartOnModUpdate !== false) scheduleRestart(profileId, srv, 5, 'to update mods', 'mod-update')
 }
 
 // a failed start shouldn't leave the next manual start saying "back online"
@@ -444,8 +448,9 @@ async function startAfterRestart(profileId: string) {
   return result
 }
 
-// Warn players in chat, then restart
-function scheduleRestart(profileId: string, srv: ServerProcess, minutes: number, reason: string) {
+// Warn players in chat, then restart. kind: a mod update gets a backup while it's down, and
+// planned restarts can bring in a game update when the update guard is off (backups.ts)
+function scheduleRestart(profileId: string, srv: ServerProcess, minutes: number, reason: string, kind?: 'mod-update' | 'daily') {
   if (srv.pendingRestart) return
   const say = (msg: string) => rconFor(profileId, `servermsg "${msg}"`).catch(() => undefined)
   say(`Server restarting in ${minutes} minutes ${reason}`)
@@ -459,6 +464,7 @@ function scheduleRestart(profileId: string, srv: ServerProcess, minutes: number,
     restarting.add(profileId)
     await stopServer(profileId)
     await new Promise(r => setTimeout(r, 3000))
+    if (kind) await whileDownForRestart(profileId, kind)
     await startAfterRestart(profileId)
   }, minutes * 60 * 1000)
 }
@@ -491,67 +497,26 @@ function checkDailyRestarts() {
     const key = dailyRestartDue(hour, new Date(), lastDailyRestart.get(profileId))
     if (!key) continue
     lastDailyRestart.set(profileId, key)
-    scheduleRestart(profileId, srv, DAILY_WARNING_MINUTES, '(daily restart)')
+    scheduleRestart(profileId, srv, DAILY_WARNING_MINUTES, '(daily restart)', 'daily')
   }
 }
 
 // ---------------------------------------------------------------------------
-// Backups: copy the world before every start, keep the last few
+// What backups.ts needs from here (world backups, rollbacks, game updates)
 // ---------------------------------------------------------------------------
-function backupRoot(profile: ServerProfile): string {
-  return join(resolveDataPath(profile.worldSavePath), 'pzm-backups', getServerName(profile))
+export function serverStatus(profileId: string): Status {
+  return runningServers.get(profileId)?.status || 'stopped'
 }
 
-function worldDir(profile: ServerProfile): string {
-  return join(resolveDataPath(profile.worldSavePath), 'Saves', 'Multiplayer', getServerName(profile))
+export function serverPlayers(profileId: string): string[] {
+  return runningServers.get(profileId)?.players || []
 }
 
-function dbFile(profile: ServerProfile): string {
-  return join(resolveDataPath(profile.worldSavePath), 'db', `${getServerName(profile)}.db`)
+export function serverLogPath(profileId: string): string | null {
+  return runningServers.get(profileId)?.logPath || null
 }
 
-function stamp(): string {
-  const d = new Date()
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`
-}
-
-async function backupWorld(profile: ServerProfile, label = '', prune = true): Promise<string | null> {
-  const world = worldDir(profile)
-  if (!existsSync(world)) return null
-  const dest = join(backupRoot(profile), stamp() + (label ? `_${label}` : ''))
-  await cp(world, join(dest, 'world'), { recursive: true })
-  if (existsSync(dbFile(profile))) await cp(dbFile(profile), join(dest, 'players.db'))
-  // keep the newest N
-  if (prune) {
-    const keep = Math.max(1, profile.backupsToKeep || 5)
-    for (const old of listBackupNames(profile).slice(keep)) await rm(join(backupRoot(profile), old), { recursive: true, force: true })
-  }
-  return dest
-}
-
-function listBackupNames(profile: ServerProfile): string[] {
-  try {
-    return readdirSync(backupRoot(profile)).filter(n => /^\d{4}-\d{2}-\d{2}_/.test(n)).sort().reverse()
-  } catch {
-    return []
-  }
-}
-
-async function restoreBackup(profileId: string, name: string): Promise<{ success: boolean; message: string }> {
-  const profile = getProfile(profileId)
-  if (!profile) return { success: false, message: 'Profile not found' }
-  if (runningServers.has(profileId)) return { success: false, message: 'Stop the server first.' }
-  const src = join(backupRoot(profile), name)
-  if (!existsSync(join(src, 'world'))) return { success: false, message: "That backup doesn't exist anymore." }
-  // keep what's there now, in case they change their mind. No pruning here, or the
-  // backup we're about to restore could be the one that gets deleted to make room
-  await backupWorld(profile, 'before-restore', false)
-  await rm(worldDir(profile), { recursive: true, force: true })
-  await cp(join(src, 'world'), worldDir(profile), { recursive: true })
-  if (existsSync(join(src, 'players.db'))) await cp(join(src, 'players.db'), dbFile(profile))
-  return { success: true, message: 'Backup restored. Start the server to play it.' }
-}
+export { rconFor, stopServer, startServer, installedModTimes, emitConsoleOutput }
 
 // What the diagnostics report needs to know about one server
 export function serverDiagnostics(profileId: string) {
@@ -652,9 +617,13 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
         level: 'warning',
         message: upd.steamManaged
           ? 'The game got an update and this server is older. Open Steam and let it update "Project Zomboid Dedicated Server", or friends on the new version can\'t join.'
-          : 'The game got an update and this server is older, so friends on the new version can\'t join. Update it first (takes a couple of minutes).',
-        fix: upd.steamManaged ? undefined : 'update-server',
+          : 'The game got an update and this server is older, so friends on the new version can\'t join. Use "Back up & update" above (takes a couple of minutes).',
       })
+    }
+    if (upd?.branchMissing) {
+      issues.push({ level: 'warning', message: `Steam doesn't have the "${upd.branch}" version of the game anymore, so this server can't get updates. Pick another one in App settings → Game server files.` })
+    } else if (upd?.behindPublic) {
+      issues.push({ level: 'warning', message: `This server runs ${upd.installedVersion ? `game version ${upd.installedVersion}` : `the "${upd.branch}" version`}${upd.publicVersion ? `, players on the normal version (${upd.publicVersion}) can't join` : ', players on the normal version can\'t join'}. They need to pick ${upd.branch} in Steam (Properties → Game Versions & Betas).` })
     }
   } catch { /* offline or steamcmd busy, don't block starting */ }
 
@@ -846,14 +815,8 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
       cacheDir: dataPath !== resolveDataPath() ? dataPath : undefined,
     }))
 
-    if (profile.backupsEnabled !== false) {
-      try {
-        const made = await backupWorld(profile)
-        if (made) emitConsoleOutput(profileId, `[Knox] ✓ Backed up the world`)
-      } catch (e) {
-        emitConsoleOutput(profileId, `[Knox] ⚠ Backup failed: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    }
+    // before this game build gets its hands on the world (it converts older worlds for good)
+    await backupBeforeStart(profile)
 
     // last session's log is still sitting there and has its own "SERVER STARTED" in it,
     // so clear it (PZ makes a fresh one) or skip past it if something has it locked
@@ -1087,35 +1050,7 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
     return { success: true }
   })
 
-  ipcMain.handle('server:listBackups', async (_event, profileId: string) => {
-    const profile = getProfile(profileId)
-    if (!profile) return []
-    // a finished backup never changes, so each one is measured once (outside the app, they're
-    // a full copy of the world each) and remembered for good
-    return Promise.all(listBackupNames(profile).map(async name => ({
-      name, sizeMb: Math.round((await folderSize(join(backupRoot(profile), name), Infinity)) / 1024 / 1024 * 10) / 10,
-    })))
-  })
-
-  ipcMain.handle('server:backupNow', async (_event, profileId: string) => {
-    const profile = getProfile(profileId)
-    if (!profile) return { success: false, message: 'Profile not found' }
-    try {
-      const made = await backupWorld(profile, 'manual')
-      return made ? { success: true, message: 'Backup made.' } : { success: false, message: 'No world to back up yet.' }
-    } catch (e) {
-      return { success: false, message: e instanceof Error ? e.message : String(e) }
-    }
-  })
-
-  ipcMain.handle('server:restoreBackup', async (_event, profileId: string, name: string) => restoreBackup(profileId, name))
-
-  ipcMain.handle('server:openBackups', async (_event, profileId: string) => {
-    const profile = getProfile(profileId)
-    if (!profile) return ''
-    mkdirSync(backupRoot(profile), { recursive: true })
-    return backupRoot(profile)
-  })
+  // server:listBackups, backupNow, restoreBackup and openBackups live in backups.ts
 
   ipcMain.handle('server:networkInfo', async () => ({
     publicIp: await getPublicIp(),

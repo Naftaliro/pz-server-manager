@@ -202,6 +202,11 @@ export function installedBuild(installDir: string): { buildId: string | null; br
 let branchCache: { branches: SteamBranch[]; at: number } | null = null
 let branchAsk: Promise<SteamBranch[] | null> | null = null
 
+// what the last ask said, without asking again (null = not asked yet)
+export function cachedBranches(): SteamBranch[] | null {
+  return branchCache?.branches || null
+}
+
 export function steamBranches(force = false): Promise<SteamBranch[] | null> {
   if (!force && branchCache && Date.now() - branchCache.at < 30 * 60 * 1000) return Promise.resolve(branchCache.branches)
   if (branchAsk) return branchAsk
@@ -304,7 +309,7 @@ export function isServerInstalled(installDir: string): boolean {
   return existsSync(join(installDir, 'StartServer64.bat')) || existsSync(join(installDir, 'ProjectZomboidServer.bat'))
 }
 
-async function ensureSteamCmd(targetDir: string): Promise<string> {
+export async function ensureSteamCmd(targetDir: string): Promise<string> {
   if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true })
   const exe = join(targetDir, 'steamcmd.exe')
   if (existsSync(exe)) return exe

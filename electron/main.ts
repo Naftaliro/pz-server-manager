@@ -4,6 +4,7 @@ import { existsSync } from 'fs'
 import { pathToFileURL } from 'url'
 import { setupSteamCmdHandlers, checkServerUpdate, isServerInstalled } from './ipc/steamcmd'
 import { setupServerHandlers } from './ipc/serverManager'
+import { setupBackupHandlers } from './ipc/backups'
 import { setupProfileHandlers } from './ipc/profileManager'
 import { setupFileHandlers } from './ipc/fileManager'
 import { setupModHandlers } from './ipc/modManager'
@@ -155,6 +156,7 @@ app.whenReady().then(() => {
   setupNetworkHandlers()
   setupSteamCmdHandlers()
   setupServerHandlers(mainWindow)
+  setupBackupHandlers(mainWindow)
   setupProfileHandlers()
   setupFileHandlers()
   setupModHandlers()
