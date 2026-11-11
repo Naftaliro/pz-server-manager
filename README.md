@@ -4,6 +4,12 @@
 
 a windows app for playing project zomboid (b42) with your friends. host a server, or join a friend's with exactly their mods and fixes. no ini files, no command lines, mods just work.
 
+<!-- screenshots: drop the images in docs/screenshots/ and take away the comment markers around these
+![home](docs/screenshots/home.png)
+![joining a friend's server](docs/screenshots/join.png)
+![hosting a server](docs/screenshots/host.png)
+-->
+
 **joining a friend's server**
 
 - pick "play on a friend's server" the first time it opens, no server download needed
@@ -36,7 +42,7 @@ a windows app for playing project zomboid (b42) with your friends. host a server
 
 ## install
 
-grab `Knox-Launcher-Setup-x.x.x.exe` from [releases](https://github.com/Naftaliro/pz-server-manager/releases/latest) and run it. it installs, puts a shortcut on your desktop and opens. prefer portable? grab the zip instead and run `PZ Server Manager.exe` from the extracted folder.
+grab `Knox-Launcher-Setup-x.x.x.exe` from [releases](https://github.com/Naftaliro/pz-server-manager/releases/latest) and run it. it installs, puts a shortcut on your desktop and opens. prefer portable? grab the zip instead and run `PZ Server Manager.exe` from the extracted folder (the exe kept its old name).
 
 the app is signed, so windows shows the publisher as **Mitchell Berg**. for a while after a new release windows might still say it "protected your pc", because it wants to see enough downloads first. click **more info**, check the publisher says Mitchell Berg, then **run anyway**.
 
