@@ -6,6 +6,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import GameSettingsEditor from '../components/GameSettingsEditor'
 import { getServerName, formatModIds, dataPath as profileDataPath, patchProfile } from '../lib/profile'
 import { loadIniSchema } from '../lib/gameSettings'
+import { useLeaveGuard } from '../lib/leaveGuard'
 import type { Schema } from '../lib/gameSettings'
 import { orderModIds } from '../../shared/modCore'
 import { deepMerge, flatten, getPath, pathKey, parseIni, mergeIni } from '../../shared/gameConfig'
@@ -53,6 +54,8 @@ export default function ServerEditor() {
   const base = useMemo(() => deepMerge(schema?.fileValues || {}, (profile?.iniSettings || {}) as SettingsTree), [schema, profile?.iniSettings])
   const current = useMemo(() => deepMerge(base, edits), [base, edits])
   const changed = useMemo(() => new Set(flatten(edits).filter(([p, v]) => getPath(base, p) !== v).map(([p]) => pathKey(p))), [edits, base])
+  const unsaved = !!profile && !!form && (changed.size > 0 || JSON.stringify(form) !== JSON.stringify(appFields(profile)))
+  const leaveGuard = useLeaveGuard(unsaved, () => setConfirm('leave'))
 
   if (!profile || !form) return null
 
@@ -232,8 +235,8 @@ export default function ServerEditor() {
           : 'Your changes here will be lost.'}
         confirmLabel={confirm === 'wipe' ? 'Wipe it' : 'Leave'}
         danger
-        onConfirm={() => (confirm === 'wipe' ? wipe() : (setConfirm(null), openServer(profile.id, 'settings')))}
-        onCancel={() => setConfirm(null)}
+        onConfirm={() => (confirm === 'wipe' ? wipe() : (setConfirm(null), leaveGuard.leave() || openServer(profile.id, 'settings')))}
+        onCancel={() => { setConfirm(null); leaveGuard.stay() }}
       />
     </div>
   )

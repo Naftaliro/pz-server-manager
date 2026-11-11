@@ -82,6 +82,16 @@ export type ServerStatus = 'stopped' | 'starting' | 'running' | 'stopping'
 export type View = 'setup' | 'home' | 'create' | 'server' | 'editor' | 'sandbox' | 'raweditor' | 'appsettings' | 'play'
 export type ServerTab = 'overview' | 'mods' | 'settings' | 'console'
 
+// where you are in the app, for back/forward (mouse side buttons, alt+left/right)
+export interface NavLocation {
+  view: View
+  profileId: string | null
+  tab: ServerTab
+}
+// a page with unsaved changes can hold up back/forward. It gets a function that carries on
+// with the move, to call if the user says leaving is fine
+export type NavGuard = (proceed: () => void) => void
+
 export interface ModDownloadState {
   state: 'queued' | 'downloading' | 'done' | 'failed'
   bytes?: number
@@ -126,6 +136,15 @@ interface AppState {
   // open a server on a given tab in one go
   openServer: (id: string, tab?: ServerTab) => void
 
+  navBack: NavLocation[]
+  navForward: NavLocation[]
+  goBack: () => void
+  goForward: () => void
+  // forget the history, e.g. once the app has picked its first page
+  resetNav: () => void
+  navGuard: NavGuard | null
+  setNavGuard: (guard: NavGuard | null) => void
+
   isLoading: boolean
   setIsLoading: (loading: boolean) => void
   loadingMessage: string
@@ -136,7 +155,41 @@ interface AppState {
 let pendingLogs: Record<string, string[]> = {}
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 
-export const useAppStore = create<AppState>((set) => ({
+const NAV_LIMIT = 50
+// these pages need a server that still exists
+const NEEDS_PROFILE: View[] = ['server', 'editor', 'sandbox', 'raweditor']
+
+export function sameLocation(a: NavLocation, b: NavLocation): boolean {
+  // the tab only matters on the server page
+  return a.view === b.view && a.profileId === b.profileId && (a.view !== 'server' || a.tab === b.tab)
+}
+
+// a place back/forward can still take you: not the setup screen, not a deleted server
+export function canVisit(loc: NavLocation, profileIds: string[]): boolean {
+  if (loc.view === 'setup') return false
+  return !NEEDS_PROFILE.includes(loc.view) || (!!loc.profileId && profileIds.includes(loc.profileId))
+}
+
+// step through the history in one direction, skipping places that are gone.
+// from = the stack being walked, to = the other one
+export function stepNav(from: NavLocation[], to: NavLocation[], here: NavLocation, profileIds: string[]) {
+  const rest = [...from]
+  while (rest.length) {
+    const next = rest.pop()!
+    if (canVisit(next, profileIds) && !sameLocation(next, here)) {
+      return { next, from: rest, to: [...to, here].slice(-NAV_LIMIT) }
+    }
+  }
+  return null
+}
+
+const locationOf = (s: Pick<AppState, 'activeView' | 'activeProfileId' | 'serverTab'>): NavLocation =>
+  ({ view: s.activeView, profileId: s.activeProfileId, tab: s.serverTab })
+
+// set while back/forward moves us, so that move isn't recorded as a new place
+let travelling = false
+
+export const useAppStore = create<AppState>((set, get) => ({
   settings: null,
   setSettings: (settings) => set({ settings }),
 
@@ -214,8 +267,60 @@ export const useAppStore = create<AppState>((set) => ({
   setServerTab: (tab) => set({ serverTab: tab }),
   openServer: (id, tab = 'overview') => set({ activeProfileId: id, activeView: 'server', serverTab: tab }),
 
+  navBack: [],
+  navForward: [],
+  goBack: () => travel('back'),
+  goForward: () => travel('forward'),
+  resetNav: () => set({ navBack: [], navForward: [] }),
+  navGuard: null,
+  setNavGuard: (guard) => set({ navGuard: guard }),
+
   isLoading: false,
   setIsLoading: (loading) => set({ isLoading: loading }),
   loadingMessage: '',
   setLoadingMessage: (msg) => set({ loadingMessage: msg }),
 }))
+
+function travel(dir: 'back' | 'forward') {
+  const go = () => {
+    const s = useAppStore.getState()
+    // nowhere to go while setup is still running or something is loading
+    if (s.activeView === 'setup' || s.isLoading) return
+    const ids = s.profiles.map(p => p.id)
+    const step = dir === 'back'
+      ? stepNav(s.navBack, s.navForward, locationOf(s), ids)
+      : stepNav(s.navForward, s.navBack, locationOf(s), ids)
+    if (!step) return
+    travelling = true
+    useAppStore.setState({
+      activeView: step.next.view,
+      activeProfileId: step.next.profileId,
+      serverTab: step.next.tab,
+      navGuard: null,
+      ...(dir === 'back' ? { navBack: step.from, navForward: step.to } : { navForward: step.from, navBack: step.to }),
+    })
+    travelling = false
+  }
+  const guard = useAppStore.getState().navGuard
+  if (guard) guard(go)
+  else go()
+}
+
+// Record every move. Pages often change the view and the server in two separate calls
+// (setActiveProfileId then setActiveView), so the moves made in one go are saved as one step
+let before: NavLocation | null = null
+useAppStore.subscribe((state, prev) => {
+  if (travelling) return
+  const now = locationOf(state)
+  const was = locationOf(prev)
+  if (sameLocation(now, was)) return
+  if (before) return
+  before = was
+  queueMicrotask(() => {
+    const from = before!
+    before = null
+    const s = useAppStore.getState()
+    if (sameLocation(locationOf(s), from) || from.view === 'setup') return
+    useAppStore.setState({ navBack: [...s.navBack, from].slice(-NAV_LIMIT), navForward: [] })
+  })
+})
