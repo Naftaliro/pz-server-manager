@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { takeLines } from './logTail'
 
 const feed = (chunks: Array<string | Buffer>) => {
-  let rest = Buffer.alloc(0)
+  let rest: Buffer = Buffer.alloc(0)
   const out: string[] = []
   for (const c of chunks) {
     const r = takeLines(rest, Buffer.isBuffer(c) ? c : Buffer.from(c))

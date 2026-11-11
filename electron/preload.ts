@@ -111,8 +111,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('server:players', handler)
       return () => ipcRenderer.removeListener('server:players', handler)
     },
-    onProblem: (callback: (profileId: string, problem: { hint: string; line: string; at: number }) => void) => {
-      const handler = (_e: unknown, profileId: string, problem: { hint: string; line: string; at: number }) => callback(profileId, problem)
+    onProblem: (callback: (profileId: string, problem: { hint: string; line: string; at: number; fix?: string }) => void) => {
+      const handler = (_e: unknown, profileId: string, problem: { hint: string; line: string; at: number; fix?: string }) => callback(profileId, problem)
       ipcRenderer.on('server:problem', handler)
       return () => ipcRenderer.removeListener('server:problem', handler)
     },

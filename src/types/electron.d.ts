@@ -269,6 +269,8 @@ interface ServerProblem {
   hint: string
   line: string
   at: number
+  // what the button next to it opens
+  fix?: 'open-mods' | 'open-console'
 }
 
 interface WorkshopMod {

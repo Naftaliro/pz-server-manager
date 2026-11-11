@@ -133,9 +133,14 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
               <button onClick={() => clearProblems(profile.id)} className="text-pz-muted hover:text-pz-text" title="Dismiss"><X size={14} /></button>
             </div>
             {serverProblems.map((p, i) => (
-              <div key={i} className="text-sm">
-                <p className="text-pz-text">{p.hint}</p>
-                <p className="text-xs text-pz-muted font-mono truncate" title={p.line}>{p.line}</p>
+              <div key={i} className="text-sm flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-pz-text">{p.hint}</p>
+                  <p className="text-xs text-pz-muted font-mono truncate" title={p.line}>{p.line}</p>
+                </div>
+                {p.fix === 'open-mods' && (
+                  <button onClick={() => openServer(profile.id, 'mods')} className="btn-outline text-xs py-1 px-2 flex-shrink-0"><Package size={12} /> Open the Mods tab</button>
+                )}
               </div>
             ))}
             <button onClick={() => openServer(profile.id, 'console')} className="text-xs text-pz-green hover:underline">See the full log</button>

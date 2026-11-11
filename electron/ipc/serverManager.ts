@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { spawn, execFile, ChildProcess } from 'child_process'
 import { join } from 'path'
 import { existsSync, writeFileSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync, unlinkSync, readdirSync } from 'fs'
-import { cp, rm } from 'fs/promises'
+import { cp, rm, readdir, readFile } from 'fs/promises'
 import { randomBytes } from 'crypto'
 import dgram from 'dgram'
 import os from 'os'
@@ -22,6 +22,7 @@ import { notify, escapeDiscord, DISCORD_COLORS } from './discord'
 import { mergeIni, mergeSandbox, isGameWritten, type SettingsTree } from '../../shared/gameConfig'
 import { patchStartBat,launcherScript, serverWindowCommand, sendKeysScript } from './winScripts'
 import { takeLines } from './logTail'
+import { StartWatch, quotedScriptLine, startFailureHint, requiredModHint, isProgressLine, type StartFailure } from './serverLog'
 
 // 'starting' = java is up but still loading the world/mods, 'running' = friends can join
 type Status = 'starting' | 'running' | 'stopping' | 'stopped'
@@ -44,6 +45,17 @@ interface ServerProcess {
   pendingRestart: NodeJS.Timeout | null
   // picked back up after the app was reopened, so Discord already knows it's online
   reattached?: boolean
+  // reads the log while it starts, for the moment the game gives up
+  watch: StartWatch
+  startedAt: number
+  // when the log last had something new, and the last line that says what it's doing
+  lastLineAt: number
+  lastNote: string
+  slowNotice?: boolean
+  // the start failed and it's being shut down, nothing else should touch it
+  failed?: boolean
+  // the mod ids it was started with
+  modIds: string[]
 }
 
 const runningServers = new Map<string, ServerProcess>()
@@ -221,6 +233,33 @@ function findLauncherWindowPid(javaPid: number): Promise<number | null> {
   })
 }
 
+// Every console window of ours for this server, found by the launcher it runs
+// (_pzm_launch_<name>.bat, so "Server1" never matches "Server10"). Works after java is gone too
+function findLauncherWindows(serverName: string): Promise<number[]> {
+  return new Promise((resolve) => {
+    const script = `Get-CimInstance Win32_Process -Filter "Name = 'cmd.exe'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { timeout: 15000, windowsHide: true },
+      (err, stdout) => {
+        if (err || !stdout || !stdout.trim()) return resolve([])
+        try {
+          const parsed = JSON.parse(stdout)
+          const procs: Array<{ ProcessId: number; CommandLine: string | null }> = Array.isArray(parsed) ? parsed : [parsed]
+          const launcher = `_pzm_launch_${serverName}.bat`.toLowerCase()
+          resolve(procs.filter(p => (p.CommandLine || '').toLowerCase().includes(launcher)).map(p => p.ProcessId))
+        } catch { resolve([]) }
+      }
+    )
+  })
+}
+
+// Close this server's old console windows (after a crash or a failed start), so they don't pile up
+async function closeLauncherWindows(serverName: string): Promise<void> {
+  for (const pid of await findLauncherWindows(serverName)) await killProcessTree(pid)
+}
+
 function killProcessTree(pid: number): Promise<void> {
   return new Promise((resolve) => {
     if (!Number.isInteger(pid) || pid <= 0) return resolve()
@@ -254,8 +293,9 @@ function rconFor(profileId: string, command: string, timeoutMs?: number): Promis
 // which is how we know when it's actually ready and what went wrong.
 // ---------------------------------------------------------------------------
 const READY_PATTERN = /SERVER STARTED/i
+// "required mod X not found" is handled on its own (requiredModHint): X can be in the list
 const PROBLEM_PATTERNS: Array<{ pattern: RegExp; hint: string }> = [
-  { pattern: /required mod .* not found|mod .* is missing|missing.*required/i, hint: 'A mod needs another mod that is not in your list.' },
+  { pattern: /mod .* is missing|missing.*required/i, hint: 'A mod needs another mod that is not in your list.' },
   { pattern: /workshop.*(fail|error)|failed to download|ItemNotFound|item state.*not installed/i, hint: 'A workshop mod failed to download. Try "Download mods" on the Mods tab.' },
   { pattern: /Address already in use|BindException/i, hint: 'The port is already in use. Another server might still be running.' },
   { pattern: /OutOfMemoryError|Could not reserve enough space/i, hint: 'The server ran out of memory. Lower or raise the memory setting depending on your PC.' },
@@ -285,7 +325,18 @@ function tailLog(profileId: string, srv: ServerProcess) {
     for (const line of lines) {
       if (!line.trim()) continue
       emitConsoleOutput(profileId, line)
-      if (srv.status === 'starting' && READY_PATTERN.test(line)) markRunning(profileId, srv)
+      srv.lastLineAt = Date.now()
+      if (isProgressLine(line)) srv.lastNote = line
+      if (srv.status === 'starting' && !srv.failed) {
+        if (READY_PATTERN.test(line)) markRunning(profileId, srv)
+        const failure = srv.watch.feed(line)
+        if (failure) void failStart(profileId, srv, { failure })
+      }
+      const required = requiredModHint(line, srv.modIds)
+      if (required) {
+        emitProblem(profileId, required, line, 'open-mods')
+        continue
+      }
       for (const p of PROBLEM_PATTERNS) {
         if (p.pattern.test(line)) {
           emitProblem(profileId, p.hint, line)
@@ -350,7 +401,10 @@ function cleanup(profileId: string) {
   if (srv.modTimer) clearInterval(srv.modTimer)
   if (srv.pendingRestart) clearTimeout(srv.pendingRestart)
   runningServers.delete(profileId)
-  if (srv.status === 'stopping' && !restarting.has(profileId)) {
+  if (srv.failed) {
+    const profile = getProfile(profileId)
+    notify(profile, `⚠️ **${escapeDiscord(profile?.name || srv.serverName)}** couldn't start. The host needs to take a look.`, DISCORD_COLORS.red)
+  } else if (srv.status === 'stopping' && !restarting.has(profileId)) {
     const profile = getProfile(profileId)
     notify(profile, `🔴 **${escapeDiscord(profile?.name || srv.serverName)}** was stopped`, DISCORD_COLORS.gray)
   }
@@ -366,21 +420,119 @@ function attach(profileId: string, srv: ServerProcess, pid: number) {
   // if the log never shows up (custom setups), RCON answering means it's ready too
   let rconChecks = 0
   srv.watcher = setInterval(async () => {
-    if (!srv.pid) return
+    if (!srv.pid || srv.failed) return
     if (!(await isPidAlive(srv.pid))) {
-      const crashed = srv.status === 'running' || srv.status === 'starting'
+      if (srv.failed) return
       emitConsoleOutput(profileId, `[Knox] Server process (PID ${srv.pid}) has stopped.`)
+      // gone before it finished loading: starting it again would only fail the same way
+      if (srv.status === 'starting') {
+        const last = srv.watch.lastError()
+        void failStart(profileId, srv, {
+          hint: `The server closed while it was starting${last ? `. The last error in its log: ${last.text}` : ''}. Its window stays open in the taskbar in case it says more.`,
+          line: last?.text || srv.lastNote,
+          fix: 'open-console',
+          keepWindow: true,
+        })
+        return
+      }
+      const crashed = srv.status === 'running'
       cleanup(profileId)
       if (crashed) handleCrash(profileId)
       return
     }
-    if (srv.status === 'starting' && ++rconChecks % 3 === 0) {
+    if (srv.status !== 'starting') return
+    if (++rconChecks % 3 === 0) {
       try {
         await rconFor(profileId, 'players', 3000)
         markRunning(profileId, srv)
+        return
       } catch { /* still loading */ }
     }
+    checkSlowStart(profileId, srv)
   }, 5000)
+}
+
+// ---------------------------------------------------------------------------
+// Starts that go wrong. The game can give up on loading the world (a broken mod) and
+// keep java running with nothing loaded, so the app would wait forever
+// ---------------------------------------------------------------------------
+const SLOW_START_MINUTES = 5
+// nothing new in the log for this long while starting = stuck
+const STUCK_MINUTES = 10
+
+function checkSlowStart(profileId: string, srv: ServerProcess) {
+  const minutes = (Date.now() - srv.startedAt) / 60000
+  if (!srv.slowNotice && minutes >= SLOW_START_MINUTES) {
+    srv.slowNotice = true
+    emitProblem(profileId,
+      `Still starting after ${SLOW_START_MINUTES} minutes. That can be normal the first time with lots of mods (the server may be downloading them). The last thing it wrote:`,
+      srv.lastNote || 'Nothing in its log yet.', 'open-console')
+  }
+  // only when there is a log to go by (custom setups may not have one)
+  if (srv.lastLineAt && minutes >= STUCK_MINUTES && Date.now() - srv.lastLineAt > STUCK_MINUTES * 60000) {
+    void failStart(profileId, srv, {
+      hint: `The server has been starting for ${Math.round(minutes)} minutes and hasn't written anything to its log for the last ${STUCK_MINUTES}, so it looks stuck and was stopped. The last thing it wrote:`,
+      line: srv.lastNote,
+      fix: 'open-console',
+    })
+  }
+}
+
+// The mod whose script files have the line the game quoted in its error. Script errors
+// ("Fluid not found: Alcohol. line: fluid 0.1 [Alcohol]") don't say which mod they came from
+async function modWithScriptLine(profile: ServerProfile, quoted: string): Promise<string | null> {
+  const want = quoted.replace(/\s+/g, ' ').toLowerCase()
+  const contentDir = workshopContentDir(profile.serverInstallPath)
+  const localDir = join(resolveDataPath(profile.worldSavePath), 'mods')
+  const places = profile.mods.flatMap(m => m.workshopId
+    ? [{ name: m.name, dir: join(contentDir, m.workshopId) }]
+    : enabledIds(m).map(id => ({ name: m.name, dir: join(localDir, id) })))
+  const search = async (dir: string, inScripts: boolean, depth: number): Promise<boolean> => {
+    if (depth > 12) return false
+    let entries
+    try { entries = await readdir(dir, { withFileTypes: true }) } catch { return false }
+    for (const e of entries) {
+      const full = join(dir, e.name)
+      if (e.isDirectory()) {
+        if (await search(full, inScripts || e.name.toLowerCase() === 'scripts', depth + 1)) return true
+      } else if (inScripts && /\.txt$/i.test(e.name)) {
+        try {
+          if ((await readFile(full, 'utf-8')).replace(/\s+/g, ' ').toLowerCase().includes(want)) return true
+        } catch { /* unreadable, skip it */ }
+      }
+    }
+    return false
+  }
+  for (const p of places) if (await search(p.dir, false, 0)) return p.name
+  return null
+}
+
+// The start went wrong: say why in plain words, then close java (it can stay open with
+// nothing loaded) and its window, so Stop doesn't have to wait for a server that isn't there
+async function failStart(profileId: string, srv: ServerProcess, o: {
+  failure?: StartFailure
+  hint?: string
+  line?: string
+  fix?: ProblemFix
+  // the window may have something worth reading (java itself closed)
+  keepWindow?: boolean
+}) {
+  if (srv.failed || srv.status !== 'starting') return
+  srv.failed = true
+  const profile = getProfile(profileId)
+  const cause = o.failure?.cause || null
+  let modName = cause?.mod
+  if (!modName && cause?.workshopId) modName = profile?.mods.find(m => m.workshopId === cause.workshopId)?.name
+  const quoted = cause ? quotedScriptLine(cause.text) : null
+  if (!modName && quoted && profile) modName = (await modWithScriptLine(profile, quoted).catch(() => null)) || undefined
+  const hint = o.hint || startFailureHint(cause, modName)
+  emitConsoleOutput(profileId, `[Knox] The server couldn't start. ${hint}`)
+  emitProblem(profileId, hint, o.line ?? (cause?.text || o.failure?.fatalLine || ''), o.fix || (modName || cause ? 'open-mods' : 'open-console'))
+
+  if (srv.pid && (await isPidAlive(srv.pid))) await killProcessTree(srv.pid)
+  if (!o.keepWindow) await closeLauncherWindows(srv.serverName)
+  restarting.delete(profileId)
+  cleanup(profileId)
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +758,7 @@ function reattachProfile(profile: ServerProfile, pid: number) {
     pid, status: 'starting', serverName, serverDir: profile.serverInstallPath,
     logPath, logOffset: 0, logRest: Buffer.alloc(0), watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
     reattached: true,
+    watch: new StartWatch(), startedAt: Date.now(), lastLineAt: 0, lastNote: '', modIds: profile.mods.flatMap(enabledIds),
   }
   runningServers.set(profile.id, srv)
   emitStatusChange(profile.id, 'starting')
@@ -894,6 +1047,7 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
     const srv: ServerProcess = {
       pid: null, status: 'starting', serverName, serverDir,
       logPath, logOffset, logRest: Buffer.alloc(0), watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
+      watch: new StartWatch(), startedAt: Date.now(), lastLineAt: 0, lastNote: '', modIds: profile.mods.flatMap(enabledIds),
     }
     runningServers.set(profileId, srv)
     emitStatusChange(profileId, 'starting')
@@ -926,7 +1080,11 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
 async function stopServer(profileId: string): Promise<{ success: boolean; message: string }> {
   const srv = runningServers.get(profileId)
   if (!srv) return { success: false, message: 'Server is not running' }
+  // its failed start is already closing it
+  if (srv.failed) return { success: true, message: 'Server stopped.' }
 
+  // still loading: no world to save yet, and the game reads the console only once it's up
+  const wasStarting = srv.status === 'starting'
   srv.status = 'stopping'
   emitStatusChange(profileId, 'stopping')
   emitConsoleOutput(profileId, `[Knox] Saving and stopping "${srv.serverName}"...`)
@@ -955,8 +1113,10 @@ async function stopServer(profileId: string): Promise<{ success: boolean; messag
       await sendKeysToWindow(srv.serverName, 'quit')
     }
 
-    // give it time to save the world
-    for (let waited = 0; waited < 60000; waited += 2000) {
+    // give it time to save the world. One that gave up loading ("Server Terminated.") has
+    // nothing to save and never quits by itself
+    const patience = srv.watch.failed ? 0 : wasStarting ? 15000 : 60000
+    for (let waited = 0; waited < patience; waited += 2000) {
       await new Promise(resolve => setTimeout(resolve, 2000))
       if (!(await isPidAlive(srv.pid))) {
         emitConsoleOutput(profileId, `[Knox] Server stopped.`)
@@ -1168,11 +1328,14 @@ function emitModUpdates(profileId: string, names: string[]) {
   }
 }
 
-function emitProblem(profileId: string, hint: string, line: string) {
+// what the button next to a problem on the Overview opens
+type ProblemFix = 'open-mods' | 'open-console'
+
+function emitProblem(profileId: string, hint: string, line: string, fix?: ProblemFix) {
   const list = recentProblems.get(profileId) || []
   list.push({ hint, line, at: Date.now() })
   recentProblems.set(profileId, list.slice(-10))
   if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-    mainWindowRef.webContents.send('server:problem', profileId, { hint, line, at: Date.now() })
+    mainWindowRef.webContents.send('server:problem', profileId, { hint, line, at: Date.now(), fix })
   }
 }
