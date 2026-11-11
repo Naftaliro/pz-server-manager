@@ -11,7 +11,7 @@ import { backupAfterDownload } from './modBackups'
 import { listProfiles } from './profileManager'
 import { isWorkshopId } from '../../shared/modCore'
 import {
-  branchArgs, branchFor, parseBranches, serverVersionState, versionOf, branchLabel, isBranchName, buildOfBranch,
+  branchArgs, branchFor, parseBranches, serverVersionState, versionOf, branchLabel, isBranchName, buildOfBranch, shortVersion,
   type SteamBranch,
 } from '../../shared/gameVersion'
 import { learnedBuilds } from './gameBuilds'
@@ -233,6 +233,18 @@ export function steamBranches(force = false): Promise<SteamBranch[] | null> {
     return branches
   })().catch(() => branchCache?.branches || null).finally(() => { branchAsk = null })
   return branchAsk
+}
+
+// The build Steam has for a branch right now, asked fresh. Only from inside an exclusive()
+// job (it runs SteamCMD itself instead of queueing behind the job it's part of)
+async function currentBuildOf(exe: string, branch: string): Promise<string | undefined> {
+  let out = ''
+  try {
+    await runSteamCmd(exe, ['+login', 'anonymous', '+app_info_update', '1', '+app_info_print', PZ_SERVER_APP_ID, '+quit'], (l) => { out += l + '\n' })
+  } catch { /* use what's known */ }
+  const branches = parseBranches(out, PZ_SERVER_APP_ID)
+  if (branches.length) branchCache = { branches, at: Date.now() }
+  return (branches.length ? branches : branchCache?.branches)?.find(b => b.name === branch)?.buildId
 }
 
 export interface ServerUpdateInfo {
@@ -460,13 +472,16 @@ async function installNow(
       const progress = followFile(join(dirname(steamcmdPath), 'logs', 'console_log.txt'), (line) => {
         if (/Update state \(0x[0-9a-f]+\)/i.test(line)) sendProgress(line.replace(/^\[[^\]]*\]\s*/, ''))
       })
+      // the build it's on now, to tell an update that happened from one that didn't
+      const buildBefore = installedBuild(installDir).buildId
       let code: number | null
       try {
         code = await runSteamCmd(steamcmdPath, args, onLine)
         // steamcmd exits 7 when it updated itself instead of doing the job (a SteamCMD folder from
         // before the app bootstrapped it, or an update Valve pushed since), and a fresh one can
-        // trip over its empty app info cache: run it again, once
-        if (worthRetrying(code, output) && !isServerInstalled(installDir)) {
+        // trip over its empty app info cache: run it again, once. Also on an update or a version
+        // switch, where the old files are still there: app_update ... validate is fine to repeat
+        if (worthRetrying(code, output)) {
           sendProgress(code === 7 ? 'SteamCMD updated itself, starting the download again...' : 'SteamCMD needed a second go, starting the download again...')
           output.length = 0
           code = await runSteamCmd(steamcmdPath, args, onLine)
@@ -478,13 +493,26 @@ async function installNow(
 
       // steamcmd exits 7 after a successful self-update, so trust the files over the exit code
       const now = installedBuild(installDir)
-      if (isServerInstalled(installDir) && (code === 0 || code === 7) && now.branch === target) {
+      if (isServerInstalled(installDir) && (code === 0 || code === 7)) {
+        const label = branchLabel(target, branchCache?.branches.find(b => b.name === target)?.description)
+        if (now.branch !== target) {
+          throw new Error(target === 'public'
+            ? "Steam didn't switch the server to the latest version. Try again."
+            : `Steam didn't switch the server to ${label}. Try again, or check that the ${label} version is still offered in Steam.`)
+        }
+        // it only counts when the build changed, or it already is the one Steam has for that
+        // branch (nothing to update). Without Steam's answer, a clean exit says it's current
+        const changed = !!now.buildId && now.buildId !== buildBefore
+        const current = changed ? undefined : await currentBuildOf(steamcmdPath, target)
+        if (!changed && (current ? now.buildId !== current : code !== 0)) {
+          const version = current ? versionOf(current, { learned: learnedBuilds(), branches: branchCache?.branches }) : undefined
+          throw new Error(`Steam didn't update the server${version ? ` to ${shortVersion(version)}` : ''}. Try again, it usually works the next time.`)
+        }
         // the switch is done, from now on updates keep whatever branch the install is on
         clearBranchChoice(installDir)
         sendProgress('Installation complete!')
         return { success: true, branch: target, message: isUpdate ? 'Server updated successfully' : 'Server installed successfully' }
       }
-      if (isServerInstalled(installDir) && (code === 0 || code === 7)) throw new Error(`Steam left the server on ${now.branch} instead of ${target}`)
       throw new Error(installFailureMessage(code, output, installDir))
     })
   } catch (error: unknown) {

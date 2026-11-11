@@ -12,12 +12,19 @@ const { installJob } = await import('./busy')
 type Step = { code: number; build?: string; branch?: string; say?: string }
 const FAKE = `
 const fs = require('fs'), path = require('path')
+if (process.argv.includes('+app_info_print')) {
+  // what Steam has for each branch: FAKE_STEAM_BRANCHES = {"public":"300"}
+  const b = JSON.parse(process.env.FAKE_STEAM_BRANCHES || '{}')
+  console.log('"380870"\\n{\\n\\t"depots"\\n\\t{\\n\\t\\t"branches"\\n\\t\\t{\\n' + Object.entries(b).map(([n, id]) => '\\t\\t\\t"' + n + '"\\n\\t\\t\\t{\\n\\t\\t\\t\\t"buildid"\\t\\t"' + id + '"\\n\\t\\t\\t}\\n').join('') + '\\t\\t}\\n\\t}\\n}')
+  process.exit(0)
+}
 const plan = JSON.parse(fs.readFileSync(process.env.FAKE_STEAM_PLAN, 'utf-8'))
 const runs = path.join(path.dirname(process.env.FAKE_STEAM_PLAN), 'runs.txt')
 const n = fs.existsSync(runs) ? fs.readFileSync(runs, 'utf-8').split('\\n').filter(Boolean).length : 0
 fs.appendFileSync(runs, process.argv.slice(1).join(' ') + '\\n')
 const step = plan[Math.min(n, plan.length - 1)]
-const dir = process.argv[process.argv.indexOf('+force_install_dir') + 1]
+// node takes the first argument for its script and makes it a full path
+const dir = process.argv[process.argv.findIndex(a => a.endsWith('+force_install_dir')) + 1]
 if (step.build) {
   fs.mkdirSync(path.join(dir, 'steamapps'), { recursive: true })
   fs.writeFileSync(path.join(dir, 'StartServer64.bat'), 'rem')
@@ -89,6 +96,42 @@ describe.runIf(process.platform === 'win32')('updating a server install', () => 
       done()
     }
   }, 60000)
+
+  describe('only says it worked when it did', () => {
+    const update = async (plan: Step[], installed: { build: string; branch?: string }, steam: Record<string, string>, branch?: string) => {
+      const f = await fakeSteam(plan, installed)
+      process.env.FAKE_STEAM_BRANCHES = JSON.stringify(steam)
+      try {
+        return { ...(await runServerInstall(f.exe, f.installDir, () => undefined, true, 'b42', branch)), runs: f.runs() }
+      } finally {
+        done()
+      }
+    }
+
+    it('runs SteamCMD again after it updated itself, also on an install that is there', async () => {
+      const r = await update([{ code: 7 }, { code: 0, build: '300' }], { build: '200' }, { public: '300' })
+      expect(r).toMatchObject({ success: true, runs: 2 })
+    }, 60000)
+
+    it("isn't fooled by SteamCMD updating itself twice and leaving the old build", async () => {
+      const r = await update([{ code: 7 }, { code: 7 }], { build: '200' }, { public: '300' })
+      expect(r.success).toBe(false)
+      expect(r.message).toMatch(/^Steam didn't update the server\b.*Try again/)
+      expect(r.runs).toBe(2)
+    }, 60000)
+
+    it('is fine when there was nothing to update', async () => {
+      expect(await update([{ code: 0 }], { build: '300' }, { public: '300' })).toMatchObject({ success: true, runs: 1 })
+    }, 60000)
+
+    it("says plainly when Steam didn't switch the version", async () => {
+      const r = await update([{ code: 0, build: '200' }], { build: '200' }, { public: '200', '42.21': '100' }, '42.21')
+      expect(r.success).toBe(false)
+      expect(r.message).toBe("Steam didn't switch the server to 42.21. Try again, or check that the 42.21 version is still offered in Steam.")
+      const ok = await update([{ code: 0, build: '100', branch: '42.21' }], { build: '200' }, { public: '200', '42.21': '100' }, '42.21')
+      expect(ok).toMatchObject({ success: true, branch: '42.21' })
+    }, 60000)
+  })
 })
 
 describe('installFailureMessage', () => {
