@@ -73,9 +73,10 @@ export function launcherScript(o: LauncherOptions): string {
   ].join('\r\n')
 }
 
-// The app's exe. 1.6 renamed it from "PZ Server Manager.exe" to "Knox Launcher.exe", and a
-// copy can be running under either name (installed or unzipped before the rename), so the
-// updater and the installer check look for both. The new name first
+// The app's exe. It's still "PZ Server Manager.exe" in 1.6 (1.5.1 and older update from the zip
+// and only look for their own name), and a later version renames it to "Knox Launcher.exe".
+// A copy can then be running under either name, so the updater and the installer check look
+// for both. The new name first
 export const APP_EXE_NAMES = ['Knox Launcher.exe', 'PZ Server Manager.exe']
 
 export interface UpdateScriptOptions {
@@ -269,7 +270,8 @@ export function firewallState(needed: FirewallEntry[], rules: FirewallRuleInfo[]
 
 // The installed (NSIS) copy has electron-builder's uninstaller next to the exe, named after
 // the exe ("Uninstall ${productFilename}.exe", and productFilename comes from executableName,
-// so here "Uninstall Knox Launcher.exe"). The portable zip doesn't have one
+// so "Uninstall PZ Server Manager.exe" now, "Uninstall Knox Launcher.exe" after the rename).
+// The portable zip doesn't have one
 export function uninstallerFor(appExe: string): string {
   const name = win32.basename(appExe).replace(/\.exe$/i, '')
   return win32.join(win32.dirname(appExe), `Uninstall ${name}.exe`)
