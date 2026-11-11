@@ -33,7 +33,9 @@ a windows app for playing project zomboid (b42) with your friends. host a server
 - "invite your friends" box with a copy-paste invite message
 - step by step guide for [playit.gg](https://playit.gg) so friends can join without touching your router, and the invite shows your playit address (playit is its own free service, not affiliated with this app)
 - checks your router (upnp), sets up the windows firewall rule for you, warns when the server is out of date
-- backs up the world every start, one-click restore
+- backs up the world (plus its settings, players and mod list) every start and every 30 minutes while people play. backups only store what changed, and older ones thin out by themselves
+- **roll back**: "before the last game update", "about an hour ago", "yesterday", "last week", or any backup from the list. it checks the game version, mods and settings first, switches the server to the old game version when steam still has it (like the 42.21 fall-back), and tells your players what to pick in steam. undo puts it all back
+- game server updates wait until you hit **back up & update** (turn that off in app settings if you'd rather they go in at the next daily restart). shows which game version and steam branch the server runs, and you can pick any branch steam has
 - restarts by itself if it crashes or when a mod updates (warns players in chat first)
 - kick / ban / make admin right from the players list
 - import a mod list from any server `.ini`, or share yours
@@ -61,7 +63,7 @@ easiest: follow the playit.gg guide in app settings and paste your playit addres
 
 - let the app add the windows firewall rule (app settings, or the fix button before starting)
 - forward **udp 16261 and 16262** on your router to your pc (the app tries upnp first, lots of routers block it)
-- everyone needs the same game version as the server, no beta branches. update the server in app settings after a game update
+- everyone needs the same game version as the server. on the normal version, no beta branches. on a fall-back like 42.21, everyone picks that in steam (right-click project zomboid → properties → game versions & betas). the overview says which one the server runs
 
 ## where stuff lives
 
@@ -69,6 +71,7 @@ easiest: follow the playit.gg guide in app settings and paste your playit addres
 - server config: `%USERPROFILE%\Zomboid\Server\[ServerName].ini` and `_SandboxVars.lua`
 - world saves: `%USERPROFILE%\Zomboid\Saves\Multiplayer\[ServerName]\`
 - server log: `%USERPROFILE%\Zomboid\server-console.txt`
+- world backups: `%USERPROFILE%\Zomboid\pzm-backups\[ServerName]\`, one folder each. files that didn't change are hard links to the backup before, so every folder is a complete backup on its own and any of them can be deleted
 - the app's own stuff: `%APPDATA%\pz-server-manager\` (`profiles.json`, `settings.json`)
 - one Windows setting: QuickEdit is turned off for the server's console window only (`HKCU\Console\PZ Server - [ServerName]`), because clicking inside that window would freeze the server
 
