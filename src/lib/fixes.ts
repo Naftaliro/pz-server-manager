@@ -1,6 +1,7 @@
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile } from '../store/useAppStore'
 import { downloadAndScan } from './mods'
+import { shortVersion, steamSwitchSteps } from '../../shared/gameVersion'
 
 // What the "Fix" button next to a pre-start problem does. Returns a message to show, if any.
 export async function applyFix(issue: ServerPreflightIssue, profile: ServerProfile): Promise<string | undefined> {
@@ -27,8 +28,9 @@ export async function applyFix(issue: ServerPreflightIssue, profile: ServerProfi
   }
 }
 
-// Ready-to-paste text for the group chat
-export function inviteMessage(profile: ServerProfile, address: string, port?: string): string {
+// Ready-to-paste text for the group chat. game: the Steam branch the server runs, so players
+// on another version know how to switch
+export function inviteMessage(profile: ServerProfile, address: string, port?: string, game?: { branch?: string; version?: string }): string {
   const lines = [
     `Join my Project Zomboid server "${profile.name}"!`,
     '',
@@ -39,6 +41,10 @@ export function inviteMessage(profile: ServerProfile, address: string, port?: st
   if (profile.serverPassword) lines.push(`  Server password: ${profile.serverPassword}`)
   lines.push('', 'Make up any username and password for yourself the first time you join.')
   if (profile.mods.length > 0) lines.push(`It has ${profile.mods.length} mod${profile.mods.length === 1 ? '' : 's'}, they download automatically when you join.`)
+  if (game?.branch && game.branch !== 'public') {
+    const v = shortVersion(game.version)
+    lines.push('', `The server runs ${v ? `game version ${v}` : `the "${game.branch}" version`}, not the normal one. ${steamSwitchSteps(game.branch)}`)
+  }
   return lines.join('\n')
 }
 

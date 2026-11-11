@@ -30,7 +30,8 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
     autoRestart: profile.autoRestart !== false,
     restartOnModUpdate: profile.restartOnModUpdate !== false,
     backupsEnabled: profile.backupsEnabled !== false,
-    backupsToKeep: profile.backupsToKeep || 5,
+    backupEveryMinutes: profile.backupEveryMinutes ?? 30,
+    backupCapGb: profile.backupCapGb || 0,
     dailyRestartHour: profile.dailyRestartHour ?? null,
     discordWebhook: profile.discordWebhook || '',
     discordPlayerEvents: !!profile.discordPlayerEvents,
@@ -69,7 +70,8 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
       autoRestart: form.autoRestart,
       restartOnModUpdate: form.restartOnModUpdate,
       backupsEnabled: form.backupsEnabled,
-      backupsToKeep: form.backupsToKeep,
+      backupEveryMinutes: form.backupEveryMinutes,
+      backupCapGb: form.backupCapGb || null,
       dailyRestartHour: form.dailyRestartHour,
       discordWebhook: form.discordWebhook.trim(),
       discordPlayerEvents: form.discordPlayerEvents,
@@ -196,11 +198,30 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
               </select>
             </Field>
           )}
-          <Toggle label="Back up the world every time it starts" hint="Restore from the World section on the Overview page." value={form.backupsEnabled} onChange={v => set('backupsEnabled', v)} />
+          <Toggle
+            label="Back up the world automatically"
+            hint={'When the server starts, and every so often while people play. Backups only store what changed, and older ones thin out: everything from the last 6 hours, then one an hour, one a day and one a week, for about a month. "Roll back" on the Overview goes back to one.'}
+            value={form.backupsEnabled}
+            onChange={v => set('backupsEnabled', v)}
+          />
           {form.backupsEnabled && (
-            <Field label={`Keep the last ${form.backupsToKeep} backups`}>
-              <input type="range" min={1} max={20} value={form.backupsToKeep} onChange={e => set('backupsToKeep', Number(e.target.value))} className="w-full" />
-            </Field>
+            <div className="grid grid-cols-2 gap-3 pl-[3.25rem]">
+              <Field label="While it's running">
+                <select value={form.backupEveryMinutes} onChange={e => set('backupEveryMinutes', Number(e.target.value))} className="input">
+                  {[15, 30, 60, 120].map(m => <option key={m} value={m}>Every {m < 60 ? `${m} minutes` : m === 60 ? 'hour' : `${m / 60} hours`}</option>)}
+                  <option value={0}>Only when it starts</option>
+                </select>
+              </Field>
+              <Field label="Space for backups">
+                <select value={form.backupCapGb} onChange={e => set('backupCapGb', Number(e.target.value))} className="input">
+                  <option value={0}>No limit</option>
+                  {[5, 10, 20, 50, 100].map(g => <option key={g} value={g}>Up to {g} GB</option>)}
+                </select>
+              </Field>
+              <p className="col-span-2 text-xs text-pz-muted -mt-1">
+                Backups you make yourself and the last 3 from before a game update are always kept. The game's own backup at every start is turned off while this is on, so there's one backup instead of two.
+              </p>
+            </div>
           )}
         </Card>
 

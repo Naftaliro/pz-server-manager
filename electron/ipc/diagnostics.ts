@@ -4,6 +4,7 @@ import os from 'os'
 import { loadSettings } from './appSettings'
 import { listProfiles } from './profileManager'
 import { serverDiagnostics } from './serverManager'
+import { installedBuild } from './steamcmd'
 import { getPlayitState } from './playit'
 import { firewallRuleExists } from './network'
 import { lastDiscordError } from './discord'
@@ -76,7 +77,8 @@ export async function buildDiagnostics(): Promise<string> {
     `windows: ${os.release()} ${os.arch()}`,
     `memory: ${Math.round(os.totalmem() / 1024 ** 3)} GB total, ${Math.round(os.freemem() / 1024 ** 3)} GB free`,
     `cpu: ${os.cpus()[0]?.model || 'unknown'} x${os.cpus().length}`,
-    `server install: ${settings.serverInstallPath} (${settings.steamManaged ? 'steam library' : 'steamcmd'}, ${settings.buildVersion})`,
+    `server install: ${settings.serverInstallPath} (${settings.steamManaged ? 'steam library' : 'steamcmd'}, ${settings.buildVersion}, build ${installedBuild(settings.serverInstallPath).buildId || '?'} on branch ${installedBuild(settings.serverInstallPath).branch})`,
+    `ask before server updates: ${settings.askBeforeServerUpdate !== false}`,
     `steamcmd: ${settings.steamcmdDir}`,
     `setup done: ${settings.setupComplete}, advanced mode: ${settings.advancedMode}`,
   )
@@ -100,7 +102,7 @@ export async function buildDiagnostics(): Promise<string> {
     lines.push(
       `status: ${d.status}${d.pid ? ` (pid ${d.pid})` : ''}, ${d.players} player(s) online`,
       `build: ${p.buildVersion}, ports: ${p.port}/${p.udpPort}, memory: ${p.memory} MB, launch: ${p.launchMode || 'managed'}`,
-      `auto restart: ${p.autoRestart !== false}, restart on mod update: ${p.restartOnModUpdate !== false}, backups: ${p.backupsEnabled !== false} (keep ${p.backupsToKeep || 5})`,
+      `auto restart: ${p.autoRestart !== false}, restart on mod update: ${p.restartOnModUpdate !== false}, backups: ${p.backupsEnabled !== false} (every ${p.backupEveryMinutes ?? 30} min, limit ${p.backupCapGb ? `${p.backupCapGb} GB` : 'none'}), last run on build ${p.lastRunGame?.buildId || '?'} (${p.lastRunGame?.branch || '?'})`,
       `daily restart: ${p.dailyRestartHour == null ? 'off' : `${p.dailyRestartHour}:00`}`,
       `discord: ${p.discordWebhook ? `on${p.discordPlayerEvents ? ' (with joins)' : ''}${lastDiscordError.has(p.discordWebhook) ? `, last error: ${lastDiscordError.get(p.discordWebhook)}` : ''}` : 'off'}`,
       `last started: ${p.lastStarted || 'never'}`,

@@ -8,9 +8,12 @@ import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile } from '../store/useAppStore'
 import StartButton from './StartButton'
 import ConfirmDialog from './ConfirmDialog'
-import { getServerName, dataPath, patchProfile } from '../lib/profile'
+import RollbackDialog from './RollbackDialog'
+import GameUpdateCard from './GameUpdateCard'
+import { getServerName, dataPath, patchProfile, formatBytes } from '../lib/profile'
 import { applyFix, inviteMessage, splitAddress } from '../lib/fixes'
 import { PLAYIT_INTEGRATION } from '../lib/features'
+import { steamSwitchSteps } from '../../shared/gameVersion'
 
 export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
   const { serverStatuses, players, problems, clearProblems, openServer, modUpdates, setModUpdates, settings, setActiveView } = useAppStore()
@@ -24,7 +27,8 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
   const [wipeOpen, setWipeOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const [restarting, setRestarting] = useState(false)
-  const [serverUpdate, setServerUpdate] = useState<{ updateAvailable: boolean; steamManaged: boolean } | null>(null)
+  const [serverUpdate, setServerUpdate] = useState<ServerUpdateInfo | null>(null)
+  const checkUpdate = () => window.electronAPI.steamcmd.checkUpdate(profile.serverInstallPath).then(setServerUpdate).catch(() => undefined)
 
   const say = (msg?: string) => { if (msg) { setNotice(msg); setTimeout(() => setNotice(''), 6000) } }
 
@@ -35,7 +39,7 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
 
   useEffect(() => {
     window.electronAPI.server.networkInfo().then(setNet).catch(() => setNet({ publicIp: null, lanIps: [] }))
-    window.electronAPI.steamcmd.checkUpdate(profile.serverInstallPath).then(setServerUpdate).catch(() => undefined)
+    void checkUpdate()
   }, [profile.id])
 
   const loadWorld = () => {
@@ -62,8 +66,10 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
     loadWorld()
   }
 
-  // only show "update the server" when stopped (preflight covers it then) or as a running banner
-  const showServerUpdate = !!serverUpdate?.updateAvailable && status !== 'stopped'
+  // "42.21 fall-back" next to the status, for anything but the normal version
+  const versionBadge = serverUpdate?.installed && (serverUpdate.branch !== 'public' || serverUpdate.installedVersion)
+    ? [serverUpdate.installedVersion?.replace(/^(\d+\.\d+)\.0$/, '$1'), serverUpdate.branch !== 'public' && serverUpdate.branchLabel].filter(Boolean).join(' · ')
+    : ''
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -78,10 +84,15 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
               <Loader size={26} className="text-pz-yellow animate-spin" />}
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-semibold text-pz-text">
+            <h2 className="text-lg font-semibold text-pz-text flex items-center gap-2 flex-wrap">
               {status === 'running' ? 'Online, friends can join' :
                 status === 'starting' ? 'Starting up...' :
                 status === 'stopping' ? 'Saving and shutting down...' : 'Offline'}
+              {versionBadge && (
+                <span className={`text-[11px] font-medium rounded px-1.5 py-0.5 ${serverUpdate?.branch !== 'public' ? 'text-pz-blue bg-pz-blue/10' : 'text-pz-subtext bg-pz-border'}`} title={`Game server build ${serverUpdate?.installed}, Steam branch ${serverUpdate?.branch}`}>
+                  Game {versionBadge}
+                </span>
+              )}
             </h2>
             <p className="text-sm text-pz-subtext">
               {status === 'running' ? `${online.length} player${online.length !== 1 ? 's' : ''} online` :
@@ -115,15 +126,15 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
           </Banner>
         )}
 
-        {showServerUpdate && (
+        {serverUpdate?.updateAvailable && serverUpdate.steamManaged && status !== 'stopped' && (
           <Banner icon={<Download size={14} />} tone="yellow">
             <p className="flex-1">
               The game got an update. Friends on the new version can't join this server until it's updated.
-              {serverUpdate?.steamManaged ? ' Stop the server and let Steam update "Project Zomboid Dedicated Server".' : ' Stop the server, then update it in App settings.'}
+              Stop the server and let Steam update "Project Zomboid Dedicated Server". The world gets backed up before the new version first runs it.
             </p>
-            {!serverUpdate?.steamManaged && <button onClick={() => setActiveView('appsettings')} className="btn-outline text-xs py-1 px-2">Go there</button>}
           </Banner>
         )}
+        <GameUpdateCard profile={profile} update={serverUpdate} onUpdated={() => { void checkUpdate() }} />
 
         {/* Things that went wrong while running */}
         {serverProblems.length > 0 && (
@@ -157,7 +168,7 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <InviteCard profile={profile} net={net} playitOn={!!settings?.playitEnabled} running={status === 'running'} />
+          <InviteCard profile={profile} net={net} playitOn={!!settings?.playitEnabled} running={status === 'running'} branch={serverUpdate?.branch} gameVersion={serverUpdate?.installedVersion} />
 
           <div className="space-y-4">
             <PlayersCard profile={profile} online={online} running={status === 'running'} say={say} />
@@ -208,11 +219,14 @@ function Banner({ icon, tone, children, onClose }: { icon: React.ReactNode; tone
 
 // ── Invite card ────────────────────────────────────────────────────────────────
 
-function InviteCard({ profile, net, playitOn, running }: {
+function InviteCard({ profile, net, playitOn, running, branch, gameVersion }: {
   profile: ServerProfile
   net: { publicIp: string | null; lanIps: string[] } | null
   playitOn: boolean
   running: boolean
+  // the Steam branch the server runs, players on another one can't join
+  branch?: string
+  gameVersion?: string
 }) {
   const { setActiveView } = useAppStore()
   const [helpOpen, setHelpOpen] = useState(false)
@@ -240,7 +254,7 @@ function InviteCard({ profile, net, playitOn, running }: {
   const port = usePlayit ? (tunnelPort || String(profile.port)) : String(profile.port)
 
   const copyInvite = () => {
-    navigator.clipboard.writeText(inviteMessage(profile, address || 'YOUR-ADDRESS', port))
+    navigator.clipboard.writeText(inviteMessage(profile, address || 'YOUR-ADDRESS', port, { branch, version: gameVersion }))
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -320,7 +334,9 @@ function InviteCard({ profile, net, playitOn, running }: {
               </div>
               {upnp && <p className={upnp.portOpen ? 'text-pz-green' : 'text-pz-yellow'}>{upnp.summary}</p>}
               <p><b className="text-pz-text">Doing it by hand:</b> log into your router (usually <code>192.168.1.1</code> or <code>192.168.0.1</code>, the login is often on a sticker), find "Port Forwarding", and forward <b>UDP {profile.port} and {profile.udpPort}</b> to <b>{net?.lanIps[0] || 'this PC'}</b>.</p>
-              <p><b className="text-pz-text">Same version:</b> everyone needs the same game version as the server, and nobody should be on a beta branch in Steam.</p>
+              <p><b className="text-pz-text">Same version:</b> everyone needs the same game version as the server. {branch && branch !== 'public'
+                ? <>This server runs the "{branch}" version: {steamSwitchSteps(branch)}</>
+                : 'Nobody should be on a beta branch in Steam.'}</p>
             </div>
           )}
         </div>
@@ -427,87 +443,78 @@ function WorldCard({ profile, world, stopped, onWipe, say }: {
   onWipe: () => void
   say: (m?: string) => void
 }) {
-  const [backups, setBackups] = useState<Array<{ name: string; sizeMb: number }>>([])
-  const [showBackups, setShowBackups] = useState(false)
-  const [restore, setRestore] = useState<string | null>(null)
+  const [summary, setSummary] = useState<Awaited<ReturnType<typeof window.electronAPI.backups.summary>> | null>(null)
+  const [dialog, setDialog] = useState<null | 'pick' | 'list' | 'undo'>(null)
+  const [undoOpen, setUndoOpen] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  const load = () => window.electronAPI.server.listBackups(profile.id).then(setBackups).catch(() => setBackups([]))
-  useEffect(() => { load() }, [profile.id, stopped])
-
-  // "2026-10-21_19-04-33_manual" -> "Oct 21, 7:04 PM (manual)"
-  const pretty = (name: string) => {
-    const m = name.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})(?:_(.+))?$/)
-    if (!m) return name
-    const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6])
-    const label = m[7] === 'manual' ? ' (made by you)' : m[7] === 'before-restore' ? ' (before a restore)' : ''
-    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + label
-  }
+  const load = () => window.electronAPI.backups.summary(profile.id).then(setSummary).catch(() => setSummary(null))
+  useEffect(() => { void load() }, [profile.id, stopped, profile.updatedAt])
+  useEffect(() => window.electronAPI.backups.onChanged(id => { if (id === profile.id) void load() }), [profile.id])
 
   const backupNow = async () => {
     setBusy(true)
     const r = await window.electronAPI.server.backupNow(profile.id)
     setBusy(false)
     say(r.message)
-    load()
+    void load()
   }
 
-  const doRestore = async () => {
-    if (!restore) return
-    const name = restore
-    setRestore(null)
-    setBusy(true)
-    const r = await window.electronAPI.server.restoreBackup(profile.id, name)
-    setBusy(false)
-    say(r.message)
-    load()
-  }
+  const every = profile.backupEveryMinutes ?? 30
+  const count = summary?.count || 0
+  const lr = summary?.lastRollback
 
   return (
     <div className="card p-5 space-y-3">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex-1 min-w-48">
-          <h3 className="text-sm font-semibold text-pz-text">World</h3>
+          <h3 className="text-sm font-semibold text-pz-text">World & backups</h3>
           <p className="text-xs text-pz-subtext">
             {world?.exists ? 'Your saved world. ' : 'No world yet, one gets made the first time you start. '}
-            {profile.backupsEnabled !== false ? `A backup is made every time the server starts (last ${profile.backupsToKeep || 5} kept).` : 'Automatic backups are off.'}
+            {profile.backupsEnabled !== false
+              ? `Backed up when the server starts${every ? ` and every ${every >= 60 ? `${every / 60} hour${every === 60 ? '' : 's'}` : `${every} minutes`} while people play` : ''}.`
+              : 'Automatic backups are off.'}
+            {count > 0 && ` ${count} backup${count === 1 ? '' : 's'}${summary?.usageBytes ? `, ${formatBytes(summary.usageBytes)} on disk` : ''}.`}
           </p>
         </div>
-        <button onClick={backupNow} disabled={busy || !world?.exists} className="btn-outline text-xs disabled:opacity-40"><Archive size={12} /> Back up now</button>
-        <button onClick={() => setShowBackups(s => !s)} className="btn-outline text-xs"><History size={12} /> Backups ({backups.length})</button>
+        <button onClick={() => setDialog('pick')} disabled={count === 0} className="btn-primary text-xs" title={count === 0 ? 'No backups yet' : 'Go back to an earlier backup'}>
+          <History size={12} /> Roll back
+        </button>
+        <button onClick={backupNow} disabled={busy || !world?.exists} className="btn-outline text-xs disabled:opacity-40">
+          {busy ? <Loader size={12} className="animate-spin" /> : <Archive size={12} />} Back up now
+        </button>
+        <button onClick={() => setDialog('list')} disabled={count === 0} className="btn-outline text-xs">All backups ({count})</button>
         {world?.path && <button onClick={() => window.electronAPI.shell.openPath(world.path!)} className="btn-outline text-xs"><FolderOpen size={12} /> Open folder</button>}
         <button onClick={onWipe} disabled={!world?.exists || !stopped} className="btn-outline text-xs text-pz-red disabled:opacity-40"><Trash2 size={12} /> Wipe world</button>
       </div>
 
-      {showBackups && (
-        <div className="bg-pz-darker rounded-lg p-3 space-y-1.5">
-          {backups.length === 0 ? (
-            <p className="text-xs text-pz-muted">No backups yet. One gets made the next time the server starts.</p>
-          ) : backups.map(b => (
-            <div key={b.name} className="flex items-center gap-3 text-sm">
-              <span className="text-pz-text flex-1">{pretty(b.name)}</span>
-              <span className="text-xs text-pz-muted">{b.sizeMb} MB</span>
-              <button onClick={() => setRestore(b.name)} disabled={!stopped || busy} className="btn-ghost text-xs py-0.5 px-2 disabled:opacity-40" title={stopped ? 'Go back to this backup' : 'Stop the server first'}>
-                Restore
-              </button>
-            </div>
-          ))}
-          <button
-            onClick={async () => window.electronAPI.shell.openPath(await window.electronAPI.server.openBackups(profile.id))}
-            className="text-xs text-pz-green hover:underline"
-          >
-            Open backups folder
-          </button>
+      {lr && (
+        <div className="flex items-center gap-3 text-sm bg-pz-blue/10 border border-pz-blue/30 rounded-lg px-3 py-2">
+          <RotateCcw size={14} className="text-pz-blue flex-shrink-0" />
+          <p className="flex-1 text-pz-text">
+            You went back to an earlier backup {new Date(lr.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.
+            {lr.branchAfter && lr.branchBefore && lr.branchAfter !== lr.branchBefore && <span className="text-pz-subtext"> The game version changed with it.</span>}
+          </p>
+          <button onClick={() => setUndoOpen(true)} className="btn-outline text-xs py-1 px-2 flex-shrink-0">Undo</button>
         </div>
       )}
 
+      {dialog && (
+        <RollbackDialog
+          profile={profile}
+          startWith={dialog === 'list' ? 'list' : undefined}
+          undo={dialog === 'undo'}
+          onClose={() => { setDialog(null); void load() }}
+        />
+      )}
+
       <ConfirmDialog
-        isOpen={!!restore}
-        title="Go back to this backup?"
-        message={`The world goes back to how it was at ${restore ? pretty(restore) : ''}. Anything since then is lost, but the current world is backed up first so you can undo this.`}
-        confirmLabel="Restore"
-        onConfirm={doRestore}
-        onCancel={() => setRestore(null)}
+        isOpen={undoOpen}
+        title="Undo going back?"
+        message={`The world goes back to how it was right before you rolled back, with its mods and settings${lr?.branchAfter && lr.branchBefore !== lr.branchAfter ? ', and the game server switches back to its old version' : ''}. ${stopped ? '' : 'The server stops first (players get a 1 minute warning).'}`}
+        confirmLabel="Undo"
+        onConfirm={() => { setUndoOpen(false); setDialog('undo') }}
+        onCancel={() => setUndoOpen(false)}
       />
     </div>
   )

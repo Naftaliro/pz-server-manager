@@ -131,6 +131,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  // World backups, going back to one, and game updates with a backup first
+  backups: {
+    summary: (profileId: string) => ipcRenderer.invoke('backups:summary', profileId),
+    check: (profileId: string, id: string) => ipcRenderer.invoke('backups:check', profileId, id),
+    rollback: (profileId: string, id: string, opts: unknown) => ipcRenderer.invoke('backups:rollback', profileId, id, opts),
+    undoRollback: (profileId: string, opts?: unknown) => ipcRenderer.invoke('backups:undoRollback', profileId, opts),
+    delete: (profileId: string, id: string) => ipcRenderer.invoke('backups:delete', profileId, id),
+    updateGame: (installDir: string, opts?: unknown) => ipcRenderer.invoke('backups:updateGame', installDir, opts),
+    onChanged: (callback: (profileId: string) => void) => {
+      const handler = (_e: unknown, profileId: string) => callback(profileId)
+      ipcRenderer.on('backups:changed', handler)
+      return () => ipcRenderer.removeListener('backups:changed', handler)
+    },
+    onProgress: (callback: (profileId: string, text: string) => void) => {
+      const handler = (_e: unknown, profileId: string, text: string) => callback(profileId, text)
+      ipcRenderer.on('backups:progress', handler)
+      return () => ipcRenderer.removeListener('backups:progress', handler)
+    },
+    onUpdateProgress: (callback: (installDir: string, text: string) => void) => {
+      const handler = (_e: unknown, installDir: string, text: string) => callback(installDir, text)
+      ipcRenderer.on('backups:updateProgress', handler)
+      return () => ipcRenderer.removeListener('backups:updateProgress', handler)
+    },
+  },
+
   // Profile management
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),

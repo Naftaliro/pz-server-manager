@@ -108,7 +108,7 @@ interface ElectronAPI {
     playerAction: (profileId: string, action: 'kick' | 'ban' | 'unban' | 'admin' | 'unadmin', name: string) => Promise<{ success: boolean; message?: string }>
     knownPlayers: (profileId: string) => Promise<{ success: boolean; message?: string; players?: Array<{ username: string; lastSeen?: string; role?: string; banned: boolean; banReason?: string }> }>
     restartWithWarning: (profileId: string, minutes: number) => Promise<{ success: boolean; message?: string }>
-    listBackups: (profileId: string) => Promise<Array<{ name: string; sizeMb: number }>>
+    listBackups: (profileId: string) => Promise<BackupInfo[]>
     backupNow: (profileId: string) => Promise<{ success: boolean; message: string }>
     restoreBackup: (profileId: string, name: string) => Promise<{ success: boolean; message: string }>
     openBackups: (profileId: string) => Promise<string>
@@ -118,6 +118,30 @@ interface ElectronAPI {
     onProblem: (callback: (profileId: string, problem: ServerProblem) => void) => () => void
     onConsoleOutput: (profileId: string, callback: (line: string) => void) => () => void
     onStatusChange: (callback: (profileId: string, status: string) => void) => () => void
+  }
+  backups: {
+    summary: (profileId: string) => Promise<{
+      success: boolean; message?: string; count?: number; usageBytes?: number
+      current?: GameNow
+      lastRollback?: { at: string; backupId: string; beforeId?: string; branchBefore?: string; branchAfter?: string }
+    }>
+    check: (profileId: string, id: string) => Promise<{
+      success: boolean; message?: string
+      compat?: import('../../shared/backups').CompatResult
+      current?: GameNow
+      legacy?: boolean
+      backup?: BackupInfo
+      running?: boolean
+      players?: number
+      sharedWith?: Array<{ name: string; running: boolean }>
+    }>
+    rollback: (profileId: string, id: string, opts: RollbackOpts) => Promise<RollbackOutcome>
+    undoRollback: (profileId: string, opts?: { stopFirst?: boolean; warnMinutes?: number }) => Promise<RollbackOutcome>
+    delete: (profileId: string, id: string) => Promise<{ success: boolean; message?: string }>
+    updateGame: (installDir: string, opts?: { branch?: string; warnMinutes?: number }) => Promise<{ success: boolean; message: string; branch?: string }>
+    onChanged: (callback: (profileId: string) => void) => () => void
+    onProgress: (callback: (profileId: string, text: string) => void) => () => void
+    onUpdateProgress: (callback: (installDir: string, text: string) => void) => () => void
   }
   profiles: {
     list: () => Promise<import('../store/useAppStore').ServerProfile[]>
@@ -228,6 +252,48 @@ interface ElectronAPI {
   }
 }
 
+// one world backup, as the list shows it
+interface BackupInfo {
+  name: string
+  sizeMb: number
+  createdAt: string
+  reason: import('../../shared/backups').BackupReason
+  legacy: boolean
+  game: { buildId?: string; branch?: string; version?: string; worldVersion?: number; label?: string }
+  modCount: number
+  configFiles: number
+  savedFirst?: boolean
+  unsettledFiles?: number
+}
+
+// the game server a server runs on right now
+interface GameNow {
+  buildId: string | null
+  branch: string
+  version?: string
+  label: string
+  worldVersion?: number
+}
+
+interface RollbackOpts {
+  switchBranch?: string | null
+  restoreMods?: boolean
+  restoreSettings?: boolean
+  force?: boolean
+  stopFirst?: boolean
+  warnMinutes?: number
+}
+
+interface RollbackOutcome {
+  success: boolean
+  message: string
+  beforeId?: string
+  gameChanged?: { branch: string; label: string; version?: string }
+  playerSteps?: string
+  modsRestored?: boolean
+  settingsRestored?: boolean
+}
+
 interface SteamBranchInfo {
   name: string
   buildId: string
@@ -326,6 +392,10 @@ declare global {
   type ModFileInfo = ModInfo
   type ModDownloadProgress = ModDownloadEvent
   type ServerUpdateInfo = ServerUpdateState
+  type WorldBackup = BackupInfo
+  type GameVersionNow = GameNow
+  type RollbackOptions = RollbackOpts
+  type RollbackResult = RollbackOutcome
   type SteamBranchOption = SteamBranchInfo
   type ServerPreflightIssue = PreflightIssue
   type ServerProblemReport = ServerProblem
