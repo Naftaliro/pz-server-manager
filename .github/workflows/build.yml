@@ -21,9 +21,13 @@ jobs:
       # builds unsigned and never gets the Azure secrets.
       SIGN: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
     steps:
-      - uses: actions/checkout@v5
+      # Actions are pinned to a commit (a tag can be moved to other code), the version is in the comment.
+      # The build never pushes, so the token isn't left in .git/config for the later steps
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -71,7 +75,7 @@ jobs:
             }
           }
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: knox-launcher-windows
           path: |
@@ -86,7 +90,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: knox-launcher-windows
           path: dist
