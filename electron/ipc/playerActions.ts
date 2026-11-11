@@ -33,9 +33,18 @@ const REFUSED = [
   /^usage\b|\bwrong (?:number|argument)/i,
 ]
 
+// The reply with the player's name taken out, so a player called "Unknown" or "Error" doesn't
+// read as the game saying no ("User Unknown kicked.")
+function withoutName(reply: string, name: string): string {
+  const n = name.trim()
+  if (!n) return reply
+  const escaped = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return reply.replace(new RegExp(`(^|[^\\w])${escaped}(?![\\w])`, 'gi'), '$1<player>')
+}
+
 export function actionResult(action: PlayerAction, name: string, reply: string): { success: boolean; message: string } {
   const text = reply.trim()
-  if (REFUSED.some(r => r.test(text))) return { success: false, message: text || `The server said no to that.` }
+  if (REFUSED.some(r => r.test(withoutName(text, name)))) return { success: false, message: text || `The server said no to that.` }
   const done = {
     kick: `Kicked ${name}.`,
     ban: `Banned ${name}.`,

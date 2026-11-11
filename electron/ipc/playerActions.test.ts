@@ -26,6 +26,15 @@ describe('actionResult', () => {
     expect(actionResult('ban', 'bob', 'User bob is now banned')).toEqual({ success: true, message: 'Banned bob.' })
     expect(actionResult('unban', 'bob', 'User bob is now un-banned')).toEqual({ success: true, message: 'bob can join again.' })
   })
+  it("doesn't take a player's name for the game saying no", () => {
+    expect(actionResult('kick', 'Unknown', 'User Unknown kicked.')).toEqual({ success: true, message: 'Kicked Unknown.' })
+    expect(actionResult('ban', 'Error', 'User Error is now banned')).toEqual({ success: true, message: 'Banned Error.' })
+    expect(actionResult('admin', 'CantStop', 'User CantStop is now admin')).toEqual({ success: true, message: 'CantStop is an admin now.' })
+    expect(actionResult('admin', 'not found', 'User "not found" is now admin').success).toBe(true)
+    // and still hears a no when the name is one of those words
+    expect(actionResult('kick', 'Unknown', "User Unknown doesn't exist.").success).toBe(false)
+    expect(actionResult('unban', 'Error', 'User Error is not banned').success).toBe(false)
+  })
 })
 
 describe('knownName', () => {
