@@ -560,6 +560,9 @@ function handleCrash(profileId: string) {
     return
   }
   restarting.add(profileId)
+  // the crashed server's window would stay at a prompt next to the new one's. It's only left
+  // open when nothing restarts it, in case the crash is in there
+  void closeLauncherWindows(getServerName(profile))
   notify(profile, `💥 ${name} crashed, restarting it...`, DISCORD_COLORS.red)
   emitProblem(profileId, 'The server crashed, restarting it automatically...', 'Server process exited unexpectedly')
   emitConsoleOutput(profileId, `[Knox] Server crashed, restarting in 10 seconds (${recent.length}/3)...`)
@@ -1027,6 +1030,9 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
     } catch {
       try { logOffset = statSync(logPath).size } catch { /* gone already */ }
     }
+
+    // a window left open by the last crash or failed start has been read by now
+    await closeLauncherWindows(serverName)
 
     const windowTitle = `PZ Server - ${serverName}`
     if (!(await disableQuickEdit(windowTitle))) {
