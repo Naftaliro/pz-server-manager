@@ -522,7 +522,9 @@ function rollbackNow(profileId: string, id: string, opts: RollbackOptions, progr
     forgetFolderSize(worldDir(files))
 
     const latest = getProfile(profileId) || profile
-    const restoreMods = !!opts.restoreMods && !backup.legacy && backup.mods.length > 0
+    // an empty list is a real answer here (the server had no mods then), only old world-only
+    // backups have no mod list at all
+    const restoreMods = !!opts.restoreMods && !backup.legacy
     patchProfile(profileId, {
       lastRollback: { at: new Date().toISOString(), backupId: backup.id, beforeId: before?.id, branchBefore, branchAfter: switched?.branch },
       // the world is the backup's now, so is the game that last ran it
