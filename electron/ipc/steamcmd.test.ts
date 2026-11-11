@@ -135,6 +135,12 @@ describe.runIf(process.platform === 'win32')('updating a server install', () => 
 })
 
 describe('installFailureMessage', () => {
+  it('says plainly when Steam no longer has a branch', () => {
+    const m = installFailureMessage(8, ["ERROR! Failed to set beta 'qa-no-such-branch'"], 'C:\\PZServer')
+    expect(m).toMatch(/doesn't offer the "qa-no-such-branch" version/)
+    expect(m).not.toMatch(/exit code/)
+  })
+
   it("doesn't blame the internet for SteamCMD restarting after its own update", () => {
     const m = installFailureMessage(7, ['[----] Update complete, launching...'], 'C:\\PZServer')
     expect(m).toMatch(/updating itself/)

@@ -386,6 +386,8 @@ export function worthRetrying(code: number | null, output: string[]): boolean {
 // What went wrong when SteamCMD stopped without installing the server, in plain words.
 // Code 7 is it restarting after updating itself, not a connection problem
 export function installFailureMessage(code: number | null, output: string[], installDir: string): string {
+  const badBranch = output.map(l => l.match(/ERROR! Failed to set beta '([^']+)'/i)?.[1]).find(Boolean)
+  if (badBranch) return `Steam doesn't offer the "${badBranch}" version of the server (anymore). Pick another game version in App settings`
   const reason = output.map(l => l.match(/ERROR! Failed to (?:install|update) app '\d+' \(([^)]+)\)/i)?.[1]).find(Boolean)
   if (reason && /disk write|write failure|access denied/i.test(reason)) {
     return `Windows wouldn't let SteamCMD write to ${installDir}. Pick a folder you can write to (not inside Program Files) and try again`
@@ -493,7 +495,10 @@ async function installNow(
       // piped, SteamCMD holds its output back until it's done, so the "Update state ...
       // progress: 42.17 (3003 / 7124 bytes)" lines only show up in its own console log (every 2 s)
       const progress = followFile(join(dirname(steamcmdPath), 'logs', 'console_log.txt'), (line) => {
-        if (/Update state \(0x[0-9a-f]+\)/i.test(line)) sendProgress(line.replace(/^\[[^\]]*\]\s*/, ''))
+        const text = line.replace(/^\[[^\]]*\]\s*/, '')
+        if (/Update state \(0x[0-9a-f]+\)/i.test(line)) sendProgress(text)
+        // its errors (a branch Steam doesn't have...) only show up in this log too
+        else if (/ERROR!/i.test(text)) { output.push(text); if (output.length > 300) output.shift() }
       })
       // the build it's on now, to tell an update that happened from one that didn't
       const buildBefore = installedBuild(installDir).buildId
