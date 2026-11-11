@@ -14,7 +14,7 @@
 // still complete on its own: restoring or deleting one doesn't need any other. Where links
 // don't work (FAT/exFAT drives, some network drives) files are copied.
 
-import { join, dirname } from 'path'
+import { join, dirname, relative } from 'path'
 import { existsSync, createReadStream, type BigIntStats } from 'fs'
 import { promises as fsp } from 'fs'
 import { createHash } from 'crypto'
@@ -370,6 +370,28 @@ export async function createBackup(f: ServerFiles, opts: CreateOptions): Promise
  * up (oldest backup first), and linked from there after that, so the copies share the same
  * way the originals do. The file lists get the new copies' file ids.
  */
+// The backups folder, file by file: every file's size has to match. Each backup's files.tsv is
+// left out because copyBackupsFolder writes it fresh with the new copies' file ids, so it's
+// meant to differ (a few bytes, ids have different lengths)
+export async function backupsCopyProblem(from: string, to: string): Promise<string | null> {
+  const sizes = async (root: string) => {
+    const out = new Map<string, number>()
+    for (const e of await fsp.readdir(root, { recursive: true, withFileTypes: true })) {
+      if (!e.isFile() || e.name.toLowerCase() === 'files.tsv') continue
+      const full = join(e.parentPath, e.name)
+      out.set(relative(root, full).toLowerCase(), (await fsp.lstat(full)).size)
+    }
+    return out
+  }
+  const [a, b] = await Promise.all([sizes(from), sizes(to)])
+  for (const [rel, size] of a) {
+    if (!b.has(rel)) return `${rel} is missing from the copy`
+    if (b.get(rel) !== size) return `${rel} isn't the same size in the copy (${b.get(rel)} of ${size} bytes)`
+  }
+  if (b.size !== a.size) return `the copy has ${b.size - a.size} file(s) the original doesn't`
+  return null
+}
+
 export async function copyBackupsFolder(src: string, dst: string, opsIn: Partial<FsOps> = {}): Promise<{ copied: number; linked: number }> {
   const ops = { ...realOps, ...opsIn }
   await fsp.mkdir(dst, { recursive: true })

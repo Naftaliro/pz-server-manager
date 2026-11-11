@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSy
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
-  createBackup, listBackups, diskUsage, deleteBackup, restoreBackup, recoverInterrupted, readWorldVersion, copyBackupsFolder,
+  createBackup, listBackups, diskUsage, deleteBackup, restoreBackup, recoverInterrupted, readWorldVersion, copyBackupsFolder, backupsCopyProblem,
   worldDir, dbFile, configDir, backupsDir, type ServerFiles,
 } from './backupStore'
 
@@ -186,6 +186,22 @@ describe('listing and space used', () => {
 })
 
 describe('moving the backups to another folder', () => {
+  it('a finished copy passes the check the move does, though every files.tsv was rewritten', async () => {
+    await createBackup(f, opts(0))
+    writeFileSync(join(worldDir(f), 'map', '12', '35.bin'), 'chunk 12 35 changed!')
+    await createBackup(f, opts(30))
+    await createBackup(f, opts(60))
+    write('map/12/34.bin', 'old chunk', join(backupsDir(f), '2026-10-21_19-04-33', 'world'))
+    const to = join(base, 'Own', 'pzm-backups', 'Test')
+    await copyBackupsFolder(backupsDir(f), to)
+    expect(await backupsCopyProblem(backupsDir(f), to)).toBeNull()
+    // a real difference is still caught
+    const one = (await listBackups({ dataDir: join(base, 'Own'), serverName: 'Test' })).find(b => !b.legacy)!
+    writeFileSync(join(one.dir, 'world', 'map', '12', '34.bin'), 'cut')
+    expect(await backupsCopyProblem(backupsDir(f), to)).toMatch(/isn't the same size/)
+    rmSync(join(one.dir, 'world', 'map', '12', '34.bin'))
+    expect(await backupsCopyProblem(backupsDir(f), to)).toMatch(/missing from the copy/)
+  })
   it('keeps the files the backups share as one file on disk, and the space they take', async () => {
     await createBackup(f, opts(0))
     writeFileSync(join(worldDir(f), 'map', '12', '35.bin'), 'chunk 12 35 changed!')
