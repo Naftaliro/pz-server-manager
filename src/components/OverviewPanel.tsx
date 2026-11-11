@@ -67,9 +67,11 @@ export default function OverviewPanel({ profile }: { profile: ServerProfile }) {
   }
 
   // "42.21 fall-back" next to the status, for anything but the normal version
-  const versionBadge = serverUpdate?.installed && (serverUpdate.branch !== 'public' || serverUpdate.installedVersion)
-    ? [serverUpdate.installedVersion?.replace(/^(\d+\.\d+)\.0$/, '$1'), serverUpdate.branch !== 'public' && serverUpdate.branchLabel].filter(Boolean).join(' · ')
-    : ''
+  const shownVersion = serverUpdate?.installedVersion?.replace(/^(\d+\.\d+)\.0$/, '$1')
+  const versionBadge = !serverUpdate?.installed ? ''
+    : serverUpdate.branch === 'public' ? shownVersion || ''
+    // "42.21 fall-back" already says the version
+    : shownVersion && !serverUpdate.branchLabel.startsWith(shownVersion) ? `${shownVersion} · ${serverUpdate.branchLabel}` : serverUpdate.branchLabel
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -472,7 +474,7 @@ function WorldCard({ profile, world, stopped, onWipe, say }: {
           <p className="text-xs text-pz-subtext">
             {world?.exists ? 'Your saved world. ' : 'No world yet, one gets made the first time you start. '}
             {profile.backupsEnabled !== false
-              ? `Backed up when the server starts${every ? ` and every ${every >= 60 ? `${every / 60} hour${every === 60 ? '' : 's'}` : `${every} minutes`} while people play` : ''}.`
+              ? `Backed up when the server starts${every ? ` and every ${every >= 60 ? (every === 60 ? 'hour' : `${every / 60} hours`) : `${every} minute${every === 1 ? '' : 's'}`} while people play` : ''}.`
               : 'Automatic backups are off.'}
             {count > 0 && ` ${count} backup${count === 1 ? '' : 's'}${summary?.usageBytes ? `, ${formatBytes(summary.usageBytes)} on disk` : ''}.`}
           </p>
