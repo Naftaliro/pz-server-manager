@@ -246,7 +246,7 @@ function ServerCard({ server, gameFound, game, onChange }: { server: PlayServer;
 
       {check.toDownload.length > 0 && (
         <p className="text-xs text-pz-muted">
-          {check.toDownload.length} Workshop mod{check.toDownload.length === 1 ? '' : 's'} will download by themselves the first time you join. That can take a few minutes.
+          {check.toDownload.length} Workshop mod{check.toDownload.length === 1 ? '' : 's'} get downloaded the first time you join: the game lists them and its <b>Install</b> button subscribes your Steam account to them. That can take a few minutes.
         </p>
       )}
 
@@ -286,7 +286,7 @@ function ServerCard({ server, gameFound, game, onChange }: { server: PlayServer;
 
       {showLogin && account && (
         <div className="bg-pz-green/10 border border-pz-green/30 rounded-md p-3 space-y-1.5 text-sm">
-          <div className="text-pz-text font-medium">The game is starting. When it asks you to log in, type:</div>
+          <div className="text-pz-text font-medium">The game is starting. If Steam asks how to start it, pick <b>Play</b>. When the game asks you to log in, type:</div>
           <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1 items-center">
             <span className="text-pz-muted text-xs">Account Username</span>
             <b className="text-pz-text font-mono">{account.username}</b>
