@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  planRetention, quickPicks, parseManifest, legacyManifest, checkGame, checkCompat, modChanges, settingChanges,
+  planRetention, quickPicks, newerWorldProblem, parseManifest, legacyManifest, checkGame, checkCompat, modChanges, settingChanges,
   whenLabel, ago, dayLabel, backupStamp, isBackupId, MANIFEST_FORMAT, type RetentionItem, type BackupReason, type BackupManifest,
 } from './backups'
 import type { SteamBranch } from './gameVersion'
@@ -109,6 +109,20 @@ describe('retention', () => {
     const r = planRetention(items, { now: NOW, capBytes: 20, usage })
     expect(r.keep).toEqual(['1h-scheduled', '2h-scheduled', '2026-11-02_10-00-00', '2026-11-01_10-00-00'])
     expect(r.remove).toEqual(['3h-scheduled'])
+  })
+})
+
+describe('a world newer than the game', () => {
+  it("says what happened and what to do when another server's rollback switched the game files", () => {
+    expect(newerWorldProblem({ worldVersion: 251, gameWorldVersion: 249, savedBy: '42.22', installed: '42.21', rolledBackBy: 'Friday' })).toBe(
+      'This world was saved by game 42.22, the server files are now on 42.21 (switched when you rolled back "Friday"). The game can\'t load newer worlds. Switch the game version back in App settings, or roll this server back too.')
+    expect(newerWorldProblem({ worldVersion: 251, gameWorldVersion: 249 })).toMatch(/^This world was saved by a newer game version, the server files are now on an older version\. /)
+  })
+  it('is fine for the same or an older world, or when either is unknown', () => {
+    expect(newerWorldProblem({ worldVersion: 249, gameWorldVersion: 251 })).toBeNull()
+    expect(newerWorldProblem({ worldVersion: 251, gameWorldVersion: 251 })).toBeNull()
+    expect(newerWorldProblem({ worldVersion: 251 })).toBeNull()
+    expect(newerWorldProblem({ gameWorldVersion: 249 })).toBeNull()
   })
 })
 

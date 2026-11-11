@@ -646,13 +646,22 @@ export function setupBackupHandlers(mainWindow: BrowserWindow | null) {
     if (!backup) throw new Error("That backup isn't there anymore.")
     const info = await compatFor(profile, backup)
     const others = serversOn(profile.serverInstallPath).filter(p => p.id !== profileId)
+    // the world version the backup's game saves: another server's world newer than that
+    // won't load on the switched game files
+    const targetWv = (backup.game.buildId && worldVersionOf(backup.game.buildId, learnedBuilds())) || backup.game.worldVersion
+    const tooNew = async (p: ServerProfile) => {
+      try {
+        const wv = await readWorldVersion(worldDir(filesOf(p)))
+        return !!wv && !!targetWv && wv > targetWv
+      } catch { return false }
+    }
     return {
       ...info,
       backup: summaryOf(backup),
       running: serverStatus(profileId) !== 'stopped',
       players: serverPlayers(profileId).length,
       // other servers on the same install: a version switch changes them too
-      sharedWith: others.map(p => ({ name: p.name, running: serverStatus(p.id) !== 'stopped' })),
+      sharedWith: await Promise.all(others.map(async p => ({ name: p.name, running: serverStatus(p.id) !== 'stopped', newerWorld: await tooNew(p) }))),
     }
   }))
 

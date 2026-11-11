@@ -396,13 +396,25 @@ function CheckStep({ profile, backup, id, now, running, onBack, onGo }: {
         )}
       </div>
 
-      {switching && (check.sharedWith || []).length > 0 && (
-        <p className={`text-xs rounded-md px-3 py-2 border ${othersRunning.length ? 'text-pz-red bg-pz-red/10 border-pz-red/30' : 'text-pz-subtext bg-pz-darker border-pz-border'}`}>
-          {othersRunning.length
-            ? `Stop ${othersRunning.map(s => `"${s.name}"`).join(', ')} first: ${othersRunning.length === 1 ? 'it uses' : 'they use'} the same game server files, which switch version too.`
-            : `${(check.sharedWith || []).map(s => `"${s.name}"`).join(', ')} ${(check.sharedWith || []).length === 1 ? 'uses' : 'use'} the same game server files and switch${(check.sharedWith || []).length === 1 ? 'es' : ''} version too (their worlds get backed up first).`}
-        </p>
-      )}
+      {switching && (check.sharedWith || []).length > 0 && (() => {
+        const shared = check.sharedWith || []
+        const names = (l: typeof shared) => l.map(s => `"${s.name}"`).join(', ')
+        // their worlds were saved by the newer game: they can't open on the older one
+        const stuck = shared.filter(s => s.newerWorld)
+        const fine = shared.filter(s => !s.newerWorld)
+        const to = g.kind === 'switch' ? g.version || g.label : 'that version'
+        return (
+          <p className={`text-xs rounded-md px-3 py-2 border ${othersRunning.length ? 'text-pz-red bg-pz-red/10 border-pz-red/30' : stuck.length ? 'text-pz-yellow bg-pz-yellow/10 border-pz-yellow/30' : 'text-pz-subtext bg-pz-darker border-pz-border'}`}>
+            {othersRunning.length
+              ? `Stop ${names(othersRunning)} first: ${othersRunning.length === 1 ? 'it uses' : 'they use'} the same game server files, which switch version too.`
+              : <>
+                  {names(shared)} {shared.length === 1 ? 'uses' : 'use'} the same game server files, so {shared.length === 1 ? 'it switches' : 'they switch'} to {to} too (their worlds get backed up first).
+                  {stuck.length > 0 && ` ${names(stuck)} won't start until you switch the game version back in App settings (or roll ${stuck.length === 1 ? 'it' : 'them'} back too): ${stuck.length === 1 ? 'its world was' : 'their worlds were'} saved by a newer version.`}
+                  {stuck.length === 0 && fine.length > 0 && ` ${shared.length === 1 ? 'Its world loads' : 'Their worlds load'} on ${to} fine.`}
+                </>}
+          </p>
+        )
+      })()}
 
       {running && !blocked && (
         <p className="text-xs text-pz-yellow bg-pz-yellow/10 border border-pz-yellow/30 rounded-md px-3 py-2">

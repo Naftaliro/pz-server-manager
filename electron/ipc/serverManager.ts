@@ -12,7 +12,11 @@ import type { ServerProfile } from './profileManager'
 import { rconCommand } from './rcon'
 import { knownPlayers } from './playerDb'
 import { playerCommand, actionResult, knownName, type PlayerAction } from './playerActions'
-import { isServerInstalled, checkServerUpdate } from './steamcmd'
+import { isServerInstalled, checkServerUpdate, installedBuild, cachedBranches, sameInstall } from './steamcmd'
+import { learnedBuilds } from './gameBuilds'
+import { readWorldVersion } from './backupStore'
+import { KNOWN_BUILDS, worldVersionOf, versionOf, shortVersion } from '../../shared/gameVersion'
+import { newerWorldProblem } from '../../shared/backups'
 import { workshopContentDir, scanWorkshopItem, fetchModDetails, PZ_APP_ID } from './modManager'
 import { formatModIds, orderModIds, buildMapLine, enabledIds, wrongBuildMods, isWorkshopId, type ModSnapshot } from '../../shared/modCore'
 import { loadSettings } from './appSettings'
@@ -881,6 +885,26 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
       fix: 'open-settings',
     })
   }
+
+  // a world saved by a newer game than the one installed: the game can't load it. Happens to
+  // the other servers on these game files when one of them was rolled back to an older version
+  try {
+    const inst = installedBuild(profile.serverInstallPath)
+    const learned = learnedBuilds()
+    const worldVersion = await readWorldVersion(join(resolveDataPath(profile.worldSavePath), 'Saves', 'Multiplayer', getServerName(profile)))
+    const versionOfWorld = (wv?: number) => Object.values({ ...KNOWN_BUILDS, ...learned }).find(b => b.worldVersion === wv)?.version
+    const switchedBy = listProfiles()
+      .filter(p => p.id !== profile.id && p.lastRollback?.branchAfter === inst.branch && sameInstall(p.serverInstallPath, profile.serverInstallPath))
+      .sort((a, b) => Date.parse(b.lastRollback!.at) - Date.parse(a.lastRollback!.at))[0]
+    const problem = newerWorldProblem({
+      worldVersion,
+      gameWorldVersion: worldVersionOf(inst.buildId, learned),
+      savedBy: shortVersion(profile.lastRunGame?.version) || shortVersion(versionOfWorld(worldVersion)),
+      installed: shortVersion(versionOf(inst.buildId, { learned, branches: cachedBranches() })),
+      rolledBackBy: switchedBy?.name,
+    })
+    if (problem) issues.push({ level: 'error', message: problem, fix: 'update-server' })
+  } catch { /* nothing to compare */ }
 
   // requirements from the downloaded mod.info files (fresh scan, in case files changed)
   const fresh = new Map<string, Awaited<ReturnType<typeof scanWorkshopItem>>>()

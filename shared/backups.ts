@@ -348,6 +348,30 @@ export function checkCompat(input: CompatInput): CompatResult {
   }
 }
 
+// ── A world the installed game can't load ─────────────────────────────────────
+
+/**
+ * Before a start: a world saved by a newer game than the one installed now. That happens to
+ * the other servers on one set of game files when one of them is rolled back to an older
+ * version. The game can't load newer worlds, so this says what to do instead (null = fine)
+ */
+export function newerWorldProblem(o: {
+  // map_t.bin of the live world, and the world version the installed build saves
+  worldVersion?: number
+  gameWorldVersion?: number
+  // the game that last ran this world, and the one installed now ("42.22", "42.21")
+  savedBy?: string
+  installed?: string
+  // the other server whose rollback switched these game files, if that's what happened
+  rolledBackBy?: string
+}): string | null {
+  if (!o.worldVersion || !o.gameWorldVersion || o.worldVersion <= o.gameWorldVersion) return null
+  const saved = o.savedBy ? `game ${o.savedBy}` : 'a newer game version'
+  const now = o.installed ? ` ${o.installed}` : ' an older version'
+  return `This world was saved by ${saved}, the server files are now on${now}${o.rolledBackBy ? ` (switched when you rolled back "${o.rolledBackBy}")` : ''}. `
+    + 'The game can\'t load newer worlds. Switch the game version back in App settings, or roll this server back too.'
+}
+
 // ── Saying when ───────────────────────────────────────────────────────────────
 
 const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()

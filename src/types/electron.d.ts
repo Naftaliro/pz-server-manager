@@ -140,7 +140,8 @@ interface ElectronAPI {
       backup?: BackupInfo
       running?: boolean
       players?: number
-      sharedWith?: Array<{ name: string; running: boolean }>
+      // newerWorld: its world won't load on the game version this switches to
+      sharedWith?: Array<{ name: string; running: boolean; newerWorld?: boolean }>
     }>
     rollback: (profileId: string, id: string, opts: RollbackOpts) => Promise<RollbackOutcome>
     undoRollback: (profileId: string, opts?: { stopFirst?: boolean; warnMinutes?: number }) => Promise<RollbackOutcome>
