@@ -896,12 +896,14 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
   }
 
   // two servers with one data folder write one log, so each sees the other's (and the
-  // game's own backups rotate across both)
+  // game's own backups rotate across both). The app leaves the running one's log alone, but
+  // the game starts server-console.txt over when the second one starts, so this stops Start
+  // (with "Start anyway")
   const sharing = sharingWith(profile, listProfiles(), process.env).filter(p => runningServers.has(p.id))
   for (const other of sharing) {
     issues.push({
-      level: 'warning',
-      message: `"${other.name}" is running and uses the same data folder as this server, so their consoles, start checks and the game's own backups get mixed up. Give this server its own folder on its Settings tab, or stop "${other.name}" first.`,
+      level: 'error',
+      message: `"${other.name}" is running and uses the same data folder as this server, so starting this one wipes its log and mixes up their consoles, start checks and the game's own backups. Give this server its own folder on its Settings tab, or stop "${other.name}" first.`,
       fix: 'open-settings',
     })
   }
