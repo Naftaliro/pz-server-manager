@@ -21,14 +21,26 @@ import { setupDiscordHandlers } from './ipc/discord'
 import { allowedFile, allowedFolder, localPath } from './ipc/allowedPaths'
 import { configFolders, appFolders } from './ipc/appFolders'
 import { lockDownSession } from './ipc/workshopSession'
+import { STARTUP_ARG, secondLaunch } from './ipc/startup'
 
 // vite-plugin-electron passes the dev server address when running `npm run dev`
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
 
 let mainWindow: BrowserWindow | null = null
 
-// what Windows passes when it starts the app at login
-const STARTUP_ARG = '--started-with-windows'
+
+// One copy of the app at a time. A second one (another click on the shortcut, or the installed
+// copy next to a portable one, they share one data folder) would start the same servers, run
+// SteamCMD next to the first one's and post everything to Discord twice. Electron hands its
+// command line to the first copy, which comes to the front, and the second one quits
+const firstInstance = app.requestSingleInstanceLock()
+if (!firstInstance) app.quit()
+app.on('second-instance', (_event, argv) => {
+  if (!mainWindow || secondLaunch(argv) === 'ignore') return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+})
 
 // the packaged app's one page, the only thing its window may load
 const appPage = pathToFileURL(join(__dirname, '../dist/index.html')).href
@@ -144,6 +156,8 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 app.whenReady().then(() => {
+  // the second copy only had to hand over its command line
+  if (!firstInstance) return
   lockDownWorkshopSession()
   createWindow()
 
