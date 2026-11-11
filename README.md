@@ -22,11 +22,12 @@ a windows app for playing project zomboid (b42) with your friends. host a server
 
 - setup wizard downloads the game server for you (or uses the one already in your steam library)
 - make a server in 3 steps: name, difficulty, mods
+- **ready-made modded servers**: tested setups for a quick modded game (vanilla+, road trip, homestead). pick one and the mods, load order and settings are done for you, and friends join with one server pack
 - the real steam workshop right inside the app. hit **+ add** on any mod, required mods get added too, whole collections work
 - mods download straight away and the app reads the actual mod ids out of the files (no more guessing ids from the description)
 - warns you when a mod needs another mod you don't have, adds map mods to the map list for you
 - load order: drag to reorder, or **sort automatically** using what each mod says it needs (`require`, `loadModAfter`, `loadModBefore`). warns about mods that clash or are made for the other build
-- **modpacks**: paste a workshop collection link to add everything in it, or check how your list compares
+- **modpacks**: paste a workshop collection link to add everything in it (with the mods they need, build 41 mods left out, sorted once downloaded), or check how your list compares
 - **share with players** saves a server pack for your friends
 - checks everything before starting (ports, memory, missing mods) and tells you how to fix it
 - knows when the server is actually ready, shows who's online, console with commands over rcon
@@ -81,6 +82,19 @@ npm install
 npm run dev        # dev mode
 npm run build:win  # windows build, ends up in release/
 ```
+
+### the ready-made modded servers
+
+the lists live in `src/lib/modPresets.ts`, everything read from steam and the mod files in `src/lib/presetData.json`. `scripts/verify-presets.mjs` keeps that file up to date and test-starts each one on a real dedicated server:
+
+```bash
+# after changing a list: download, read mod.info, names/pictures/sizes from steam, sort
+node scripts/verify-presets.mjs refresh --install C:\PZServer --steamcmd C:\PZServerManager\steamcmd\steamcmd.exe
+# after every game update and before every release: start each one, check the log, save the result
+node scripts/verify-presets.mjs verify --install C:\PZServer --steamcmd C:\PZServerManager\steamcmd\steamcmd.exe --update
+```
+
+`verify` uses its own data folder for every start (`-cachedir`, under your temp folder or `--work`), ports 16661-16663 (`--port`), 4 GB (`--memory`), and writes a results json with the errors grouped by mod. stop any server on those ports first. commit `presetData.json` afterwards, the app shows "checked on 42.x" from it.
 
 made with electron, react, typescript, tailwind, zustand and vite. catppuccin mocha forever.
 
