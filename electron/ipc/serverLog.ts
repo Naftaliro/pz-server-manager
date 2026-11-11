@@ -138,6 +138,54 @@ export function requiredModHint(line: string, enabled: string[]): string | null 
   return `A mod needs "${id}", which isn't in your list. Add it on the Mods tab.`
 }
 
+// "LOG  : General      f:0 st:6,743,647> text" -> "text" (the counters differ on every line)
+function logText(line: string): string {
+  return line.replace(/^(?:LOG|WARN|ERROR|DEBUG)\s*:\s*\S+\s+f:\d+\s+st:[\d,]+\s*(?:at\s+[^>]*)?>\s*/, '').trim()
+}
+
+// The diagnostics report's view of the last start's log. B42 logs thousands of lines, most of
+// them sprite and texture warnings, so the end of the file says nothing. This keeps what helps:
+// the game version, the mods it loaded, the start (or why it gave up), every distinct error
+// once (with how often), and the last few lines that aren't warnings
+export function logSummary(lines: string[], maxErrors = 30): string[] {
+  const out: string[] = []
+  const version = lines.find(l => /> version=/.test(l))
+  if (version) out.push(`game: ${logText(version)}`)
+
+  const mods = lines.filter(l => /^LOG\s*:\s*Mod\b.*>\s*loading\s+\S/.test(l)).map(l => logText(l).replace(/^loading\s+/, ''))
+  out.push(`mods loaded (${mods.length}): ${mods.join(', ') || 'none'}`)
+
+  const installed = lines.filter(l => /> Workshop: \d+ installed to /.test(l)).length
+  if (installed) out.push(`workshop items the server installed itself: ${installed}`)
+  const key = lines.filter(l => /SERVER STARTED|Server Terminated|is listening on port|RCON: listening|required mod .* not found|WorkshopItems|Workshop: /i.test(l) && !/> Workshop: \d+ installed to /.test(l))
+  if (key.length) out.push('key lines:', ...key.slice(-15).map(l => `  ${logText(l)}`))
+
+  // errors, and the exception under each "Exception thrown", once each
+  const watch = new StartWatch()
+  const errors = new Map<string, number>()
+  // mods without every media folder: harmless, and one per mod and folder
+  let missingFolders = 0
+  let after = false
+  for (const l of lines) {
+    const failure = watch.feed(l)
+    if (failure) out.push(`gave up: ${failure.fatalLine}${failure.cause && failure.cause.text !== failure.fatalLine ? ` (cause: ${failure.cause.text})` : ''}`)
+    const exception = after && /^\s+\S+(?:Exception|Error):/.test(l)
+    after = /Exception thrown\s*$/.test(l)
+    if (!/^ERROR\s*:/.test(l) && !exception && !/>\s*ERROR:/.test(l)) continue
+    if (exception && HARMLESS.test(l)) { missingFolders++; continue }
+    const text = exception ? cleanMessage(l.trim()) : logText(l)
+    if (!text || /^Exception thrown$/.test(text.replace(/^.*>\s*/, ''))) continue
+    errors.set(text, (errors.get(text) || 0) + 1)
+  }
+  if (missingFolders) out.push(`missing mod folders (NoSuchFileException, harmless): ${missingFolders}`)
+  out.push(`errors (${errors.size} different)${errors.size > maxErrors ? `, first ${maxErrors}` : ''}:`)
+  for (const [text, n] of [...errors].slice(0, maxErrors)) out.push(`  ${n > 1 ? `${n}x ` : ''}${text.slice(0, 300)}`)
+
+  const tail = lines.filter(l => l.trim() && !/^WARN\s*:/.test(l) && !/^\s/.test(l)).slice(-15)
+  out.push('last lines (no warnings):', ...tail.map(l => `  ${logText(l) || l.trim()}`))
+  return out
+}
+
 // Lines worth showing as "what the server is doing" while it starts: not warnings, not stack traces
 export function isProgressLine(line: string): boolean {
   return /^LOG\s*:/.test(line) && !/^\s/.test(line)

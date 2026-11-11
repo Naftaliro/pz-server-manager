@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { StartWatch, quotedScriptLine, startFailureHint, requiredModHint, isProgressLine } from './serverLog'
+import { StartWatch, quotedScriptLine, startFailureHint, requiredModHint, isProgressLine, logSummary } from './serverLog'
 
 // trimmed from a real 42.22.2 start with Common Sense (2875848298) in the list
 const COMMON_SENSE = `LOG  : Mod          f:0 st:6,729,837> loading BB_CommonSense
@@ -111,6 +111,36 @@ describe('requiredModHint', () => {
   })
   it('ignores other lines', () => {
     expect(requiredModHint('LOG  : Mod f:0> loading gnomeBars', [])).toBeNull()
+  })
+})
+
+describe('logSummary', () => {
+  const noise = Array.from({ length: 500 }, (_, i) => `WARN : General      f:0 st:7,${i}> Sprite "x_${i}" duplicate texture`)
+  const started = [
+    'LOG  : General      f:0 st:4,778,321> version=42.22.2 3d39148846 integrity=pending demo=false',
+    'LOG  : Mod          f:0 st:4,778,400> loading Bandits',
+    'LOG  : Mod          f:0 st:4,778,401> loading ModManager',
+    ...noise,
+    'ERROR: General      f:0 st:6,732,211 at FluidContainerScript.load           > Sanitizing container name \'Large Bucket\', name may not contain whitespaces.',
+    'ERROR: General      f:0 st:6,732,212 at FluidContainerScript.load           > Sanitizing container name \'Large Bucket\', name may not contain whitespaces.',
+    'LOG  : Network      f:0 st:4,806,982> *** SERVER STARTED ****',
+    ...noise,
+  ]
+
+  it('keeps the version, mods, start and errors, not the sprite warnings', () => {
+    const s = logSummary(started).join('\n')
+    expect(s).toContain('game: version=42.22.2 3d39148846')
+    expect(s).toContain('mods loaded (2): Bandits, ModManager')
+    expect(s).toContain('*** SERVER STARTED ****')
+    expect(s).toContain("2x Sanitizing container name 'Large Bucket'")
+    expect(s).not.toMatch(/Sprite/)
+  })
+
+  it('says why a start gave up and lists the exception', () => {
+    const s = logSummary(COMMON_SENSE).join('\n')
+    expect(s).toMatch(/gave up: zombie\.world\.WorldDictionaryException.*\(cause: java\.lang\.Exception: Fluid not found: Alcohol/)
+    expect(s).toContain('java.lang.Exception: Fluid not found: Alcohol. line: fluid 0.1 [Alcohol]')
+    expect(s).toContain('Server Terminated.')
   })
 })
 
