@@ -6,6 +6,7 @@ import ConfirmDialog from './ConfirmDialog'
 import { PRESETS, loadPresets, applyPreset as presetOver } from '../lib/presets'
 import type { PresetKey } from '../lib/presets'
 import { patchProfile, RECOMMENDED_MEMORY_MB, getServerName, dataPath } from '../lib/profile'
+import { useLeaveGuard } from '../lib/leaveGuard'
 import type { SettingsTree } from '../../shared/gameConfig'
 
 // The settings normal people actually change. Everything else is one click away under "More settings".
@@ -51,7 +52,9 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
   useEffect(() => { window.electronAPI.system.startWithWindows().then(setWithWindows).catch(() => undefined) }, [])
 
   const dirty = JSON.stringify(form) !== JSON.stringify(fromProfile())
-  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm(prev => ({ ...prev, [key]: value }))
+  const [leaveOpen, setLeaveOpen] = useState(false)
+  const leaveGuard = useLeaveGuard(dirty, () => setLeaveOpen(true))
+  const set =<K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm(prev => ({ ...prev, [key]: value }))
 
   const save = async () => {
     await patchProfile(profile.id, p => ({
@@ -286,6 +289,15 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
         danger
         onConfirm={remove}
         onCancel={() => setDeleteOpen(false)}
+      />
+      <ConfirmDialog
+        isOpen={leaveOpen}
+        title="Leave without saving?"
+        message="Your changes to these settings will be lost."
+        confirmLabel="Leave"
+        danger
+        onConfirm={() => { setLeaveOpen(false); leaveGuard.leave() }}
+        onCancel={() => { setLeaveOpen(false); leaveGuard.stay() }}
       />
     </div>
   )

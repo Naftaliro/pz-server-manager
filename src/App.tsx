@@ -41,6 +41,9 @@ export default function App() {
       setSettings(s)
       // players who only join friends' servers land on Play, hosts on their servers
       setActiveView(!s.setupComplete ? 'setup' : s.role === 'player' ? 'play' : 'home')
+      // picking the first page isn't somewhere to go back to. The move is recorded in a
+      // microtask, so the reset is queued behind it
+      queueMicrotask(() => useAppStore.getState().resetNav())
       setReady(true)
     })()
 
@@ -54,6 +57,37 @@ export default function App() {
       Object.entries(statuses).forEach(([id, status]) => setServerStatus(id, status as ServerStatus))
     })
     return () => unsubs.forEach(fn => fn())
+  }, [])
+
+  // the back/forward buttons on the side of a mouse, and alt+left/right, move through the
+  // pages you've been on. Inside the Workshop browser they go back a Workshop page instead,
+  // because those clicks land in the webview and never reach this window
+  useEffect(() => {
+    const onMouse = (e: MouseEvent) => {
+      if (e.button !== 3 && e.button !== 4) return
+      // stop Chromium doing its own back/forward on top of ours
+      e.preventDefault()
+      if (e.type !== 'mouseup') return
+      const { goBack, goForward } = useAppStore.getState()
+      if (e.button === 3) goBack()
+      else goForward()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.shiftKey || e.metaKey || e.defaultPrevented) return
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      e.preventDefault()
+      const { goBack, goForward } = useAppStore.getState()
+      if (e.key === 'ArrowLeft') goBack()
+      else goForward()
+    }
+    window.addEventListener('mousedown', onMouse)
+    window.addEventListener('mouseup', onMouse)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onMouse)
+      window.removeEventListener('mouseup', onMouse)
+      window.removeEventListener('keydown', onKey)
+    }
   }, [])
 
   // console output for every server, collected here so nothing is lost while you're on another page

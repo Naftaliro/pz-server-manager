@@ -5,6 +5,7 @@ import GameSettingsEditor from '../components/GameSettingsEditor'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { dataPath as profileDataPath, getServerName, patchProfile } from '../lib/profile'
 import { loadSandboxSchema } from '../lib/gameSettings'
+import { useLeaveGuard } from '../lib/leaveGuard'
 import type { SandboxSchema } from '../lib/gameSettings'
 import { PRESETS, presetValues } from '../lib/presets'
 import type { PresetKey } from '../lib/presets'
@@ -38,6 +39,7 @@ export default function SandboxEditor() {
   const base = useMemo(() => deepMerge(schema?.fileValues || {}, (profile?.sandboxSettings || {}) as SettingsTree), [schema, profile?.sandboxSettings])
   const current = useMemo(() => deepMerge(base, edits), [base, edits])
   const changed = useMemo(() => new Set(flatten(edits).filter(([p, v]) => getPath(base, p) !== v).map(([p]) => pathKey(p))), [edits, base])
+  const leaveGuard = useLeaveGuard(changed.size > 0, () => setConfirm({ kind: 'leave' }))
 
   if (!profile) return null
 
@@ -201,9 +203,9 @@ export default function SandboxEditor() {
         onConfirm={() => {
           if (confirm?.kind === 'preset') applyPresetEdits(confirm.key)
           else if (confirm?.kind === 'reset') resetAll()
-          else { setConfirm(null); openServer(profile.id, 'settings') }
+          else { setConfirm(null); if (!leaveGuard.leave()) openServer(profile.id, 'settings') }
         }}
-        onCancel={() => setConfirm(null)}
+        onCancel={() => { setConfirm(null); leaveGuard.stay() }}
       />
     </div>
   )
