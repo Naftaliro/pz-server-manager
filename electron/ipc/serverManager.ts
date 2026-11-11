@@ -983,7 +983,8 @@ async function newerWorldCheck(profile: ServerProfile): Promise<string | null> {
     return newerWorldProblem({
       worldVersion,
       gameWorldVersion: worldVersionOf(inst.buildId, learned),
-      savedBy: shortVersion(profile.lastRunGame?.version) || shortVersion(versionOfWorld(worldVersion)),
+      // the world file itself is the surest answer, what last ran it can be a start the game refused
+      savedBy: shortVersion(versionOfWorld(worldVersion)) || shortVersion(profile.lastRunGame?.version),
       installed: shortVersion(versionOf(inst.buildId, { learned, branches: cachedBranches() })),
       rolledBackBy: switchedBy?.name,
     })

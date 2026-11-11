@@ -117,6 +117,8 @@ describe('a world newer than the game', () => {
     expect(newerWorldProblem({ worldVersion: 251, gameWorldVersion: 249, savedBy: '42.22', installed: '42.21', rolledBackBy: 'Friday' })).toBe(
       'This world was saved by game 42.22, the server files are now on 42.21 (switched when you rolled back "Friday"). The game can\'t load newer worlds. Switch the game version back in App settings, or roll this server back too.')
     expect(newerWorldProblem({ worldVersion: 251, gameWorldVersion: 249 })).toMatch(/^This world was saved by a newer game version, the server files are now on an older version\. /)
+    // a wrong "last ran" record never makes it say the same version twice
+    expect(newerWorldProblem({ worldVersion: 251, gameWorldVersion: 249, savedBy: '42.21', installed: '42.21' })).toMatch(/^This world was saved by a newer game version, the server files are now on 42\.21\. /)
   })
   it('is fine for the same or an older world, or when either is unknown', () => {
     expect(newerWorldProblem({ worldVersion: 249, gameWorldVersion: 251 })).toBeNull()

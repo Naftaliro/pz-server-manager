@@ -366,7 +366,8 @@ export function newerWorldProblem(o: {
   rolledBackBy?: string
 }): string | null {
   if (!o.worldVersion || !o.gameWorldVersion || o.worldVersion <= o.gameWorldVersion) return null
-  const saved = o.savedBy ? `game ${o.savedBy}` : 'a newer game version'
+  // the same version on both sides would read as nonsense, so then just say "newer"
+  const saved = o.savedBy && o.savedBy !== o.installed ? `game ${o.savedBy}` : 'a newer game version'
   const now = o.installed ? ` ${o.installed}` : ' an older version'
   return `This world was saved by ${saved}, the server files are now on${now}${o.rolledBackBy ? ` (switched when you rolled back "${o.rolledBackBy}")` : ''}. `
     + 'The game can\'t load newer worlds. Switch the game version back in App settings, or roll this server back too.'
