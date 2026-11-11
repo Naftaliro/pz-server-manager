@@ -208,12 +208,20 @@ async function ensureSteamCmd(targetDir: string): Promise<string> {
 // A fresh steamcmd.exe is only the updater: its first run downloads the rest of SteamCMD and
 // exits (code 7) without doing anything it was asked to. Get that over with right after
 // unzipping, so the first real job (the 7 GB server download) doesn't fail. A run that has
-// nothing left to update exits 0
+// nothing left to update exits 0. It also fetches the app info once: with an empty cache the
+// first +app_update fails with "Missing configuration"
+const BOOTSTRAP_ARGS = ['+login', 'anonymous', '+app_info_update', '1', '+quit']
 async function bootstrapSteamCmd(exe: string): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const code = await runSteamCmd(exe, ['+quit'], () => undefined).catch(() => null)
+    const code = await runSteamCmd(exe, BOOTSTRAP_ARGS, () => undefined).catch(() => null)
     if (code === 0) return
   }
+}
+
+// SteamCMD stopped for a reason that goes away when it runs again: it updated itself (7), or
+// its app info cache was still empty ("Missing configuration")
+export function worthRetrying(code: number | null, output: string[]): boolean {
+  return code === 7 || output.some(l => /Failed to install app '\d+' \(Missing configuration\)/i.test(l))
 }
 
 // What went wrong when SteamCMD stopped without installing the server, in plain words.
@@ -285,9 +293,11 @@ function runServerInstall(
       try {
         code = await runSteamCmd(steamcmdPath, args, onLine)
         // steamcmd exits 7 when it updated itself instead of doing the job (a SteamCMD folder from
-        // before the app bootstrapped it, or an update Valve pushed since): run it again, once
-        if (code === 7 && !isServerInstalled(installDir)) {
-          sendProgress('SteamCMD updated itself, starting the download again...')
+        // before the app bootstrapped it, or an update Valve pushed since), and a fresh one can
+        // trip over its empty app info cache: run it again, once
+        if (worthRetrying(code, output) && !isServerInstalled(installDir)) {
+          sendProgress(code === 7 ? 'SteamCMD updated itself, starting the download again...' : 'SteamCMD needed a second go, starting the download again...')
+          output.length = 0
           code = await runSteamCmd(steamcmdPath, args, onLine)
         }
       } finally {

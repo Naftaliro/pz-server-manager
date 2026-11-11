@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 
 vi.mock('electron', () => ({ ipcMain: { handle: () => undefined }, app: { getPath: () => tmpdir(), isPackaged: false } }))
 
-const { installArgs, workshopDownloadArgs, downloadMods, installFailureMessage } = await import('./steamcmd')
+const { installArgs, workshopDownloadArgs, downloadMods, installFailureMessage, worthRetrying } = await import('./steamcmd')
 
 describe('installFailureMessage', () => {
   it("doesn't blame the internet for SteamCMD restarting after its own update", () => {
@@ -16,6 +16,12 @@ describe('installFailureMessage', () => {
   })
   it('says when it really is the connection', () => {
     expect(installFailureMessage(5, ['Connecting anonymously to Steam Public...FAILED (No Connection)'], 'C:\\PZServer')).toMatch(/internet connection/)
+  })
+  it('runs SteamCMD again after a self-update or a cold app info cache, not after a real error', () => {
+    expect(worthRetrying(7, [])).toBe(true)
+    expect(worthRetrying(8, ["ERROR! Failed to install app '380870' (Missing configuration)"])).toBe(true)
+    expect(worthRetrying(8, ["ERROR! Failed to install app '380870' (Disk write failure)"])).toBe(false)
+    expect(worthRetrying(0, [])).toBe(false)
   })
   it('passes on any other reason SteamCMD gives', () => {
     expect(installFailureMessage(8, ["ERROR! Failed to install app '380870' (Missing configuration)"], 'C:\\PZServer')).toMatch(/Missing configuration/)
