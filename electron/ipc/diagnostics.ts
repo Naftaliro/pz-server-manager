@@ -108,7 +108,7 @@ export async function buildDiagnostics(): Promise<string> {
       `auto restart: ${p.autoRestart !== false}, restart on mod update: ${p.restartOnModUpdate !== false}, backups: ${p.backupsEnabled !== false} (every ${p.backupEveryMinutes ?? 30} min, limit ${p.backupCapGb ? `${p.backupCapGb} GB` : 'none'}), last run on build ${p.lastRunGame?.buildId || '?'} (${p.lastRunGame?.branch || '?'})`,
       `daily restart: ${p.dailyRestartHour == null ? 'off' : `${p.dailyRestartHour}:00`}`,
       `discord: ${p.discordWebhook ? `on${p.discordPlayerEvents ? ' (with joins)' : ''}${lastDiscordError.has(p.discordWebhook) ? `, last error: ${lastDiscordError.get(p.discordWebhook)}` : ''}` : 'off'}`,
-      `last started: ${p.lastStarted || 'never'}`,
+      `last successful start: ${p.lastStarted || 'none yet'}`,
       `mods (${p.mods.length}): ${p.mods.map(m => `${m.workshopId} [${m.modId || '?'}]`).join(', ') || 'none'}`,
     )
     if (d.problems.length) {
