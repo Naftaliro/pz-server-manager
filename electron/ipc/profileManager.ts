@@ -8,6 +8,7 @@ import { dropOldSandboxDefaults, SANDBOX_SETTINGS_VERSION } from '../../shared/p
 import type { SettingsTree } from '../../shared/gameConfig'
 import { SECRET_INI_KEYS } from '../../shared/serverPack'
 import { ownDataFolder, expandDataPath } from '../../shared/dataFolder'
+import { freeGamePort, freeRconPort, copyName } from '../../shared/ports'
 
 export interface ModEntry {
   workshopId: string
@@ -328,22 +329,27 @@ export function setupProfileHandlers() {
 
     const now = new Date().toISOString()
     const serverName = uniqueServerName(`${getServerName(original)}_copy`, profiles)
+    // ports nobody else in the list has (the same pick as the create wizard), so the copy can
+    // run next to the original and earlier copies
+    const port = freeGamePort(profiles)
     const duplicate: ServerProfile = {
       ...JSON.parse(JSON.stringify(original)),
       id: randomUUID(),
-      name: `${original.name} (Copy)`,
+      name: copyName(original.name, profiles.map(p => p.name)),
       serverName,
       // a fresh world in a folder of its own
       worldSavePath: ownDataFolder(serverName),
-      port: original.port + 2,
-      udpPort: (original.udpPort || original.port + 1) + 2,
+      port,
+      udpPort: port + 1,
       createdAt: now,
       updatedAt: now,
       lastStarted: undefined,
+      lastStartedMods: undefined,
       iniSettings: {
         ...original.iniSettings,
-        DefaultPort: original.port + 2,
-        RCONPort: Number(original.iniSettings?.RCONPort || 27015) + 1,
+        DefaultPort: port,
+        UDPPort: port + 1,
+        RCONPort: freeRconPort(profiles),
         RCONPassword: randomPassword(),
         ResetID: randomId(),
         ServerPlayerID: randomId(),
