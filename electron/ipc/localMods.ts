@@ -3,6 +3,7 @@ import { join, basename } from 'path'
 import { existsSync, cpSync, mkdirSync, readFileSync } from 'fs'
 import { resolveDataPath } from './serverManager'
 import { listDirs, parseModInfo } from './modManager'
+import { installedBuild } from './steamcmd'
 
 // ---------------------------------------------------------------------------
 // Small fix mods that ship with the app (repo folder local-mods/, packaged as an
@@ -48,6 +49,17 @@ export function installLocalMods(modIds: string[], worldSavePath?: string): { in
 }
 
 export function setupLocalModHandlers() {
+  // which game build a server install has (its Steam build id), so the ready-made modded
+  // servers can say when the server isn't the version they were tested on. Only reads the
+  // install's appmanifest, no SteamCMD
+  ipcMain.handle('presets:serverBuild', async (_event, installDir: string) => {
+    try {
+      return { success: true, ...(typeof installDir === 'string' && installDir ? installedBuild(installDir) : { buildId: null, branch: 'public' }) }
+    } catch (e) {
+      return { success: false, buildId: null, message: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
   ipcMain.handle('localMods:install', async (_event, modIds: string[], worldSavePath?: string) => {
     try {
       return { success: true, ...installLocalMods(modIds, worldSavePath) }

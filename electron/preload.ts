@@ -153,6 +153,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     scanInstalled: (serverInstallPath: string, workshopIds: string[]) => ipcRenderer.invoke('mods:scanInstalled', serverInstallPath, workshopIds),
     resolvePack: (ids: string[], withDeps?: boolean) => ipcRenderer.invoke('mods:resolvePack', ids, withDeps),
     installLocal: (modIds: string[], worldSavePath?: string) => ipcRenderer.invoke('localMods:install', modIds, worldSavePath),
+    // the server install's Steam build id, for "checked on 42.x" on the ready-made servers
+    serverBuild: (installDir: string) => ipcRenderer.invoke('presets:serverBuild', installDir),
   },
 
   // Fix mods on the Workshop (host side)
