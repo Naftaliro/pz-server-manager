@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { pathToFileURL } from 'url'
@@ -20,6 +20,7 @@ import { setupDiagnosticsHandlers } from './ipc/diagnostics'
 import { setupDiscordHandlers } from './ipc/discord'
 import { allowedFile, allowedFolder, localPath } from './ipc/allowedPaths'
 import { configFolders, appFolders } from './ipc/appFolders'
+import { lockDownSession } from './ipc/workshopSession'
 
 // vite-plugin-electron passes the dev server address when running `npm run dev`
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
@@ -106,12 +107,17 @@ const WORKSHOP_HOSTS = ['steamcommunity.com', 'store.steampowered.com']
 const isWorkshopUrl = (url: string) => {
   try { return WORKSHOP_HOSTS.includes(new URL(url).hostname) } catch { return false }
 }
+const WORKSHOP_PARTITION = 'persist:workshop'
+
+const lockDownWorkshopSession = () => lockDownSession(session.fromPartition(WORKSHOP_PARTITION))
 
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (e, webPreferences, params) => {
     delete webPreferences.preload
     webPreferences.nodeIntegration = false
     webPreferences.contextIsolation = true
+    // always its own session (the one with the permission and download rules below), never the app's
+    webPreferences.partition = WORKSHOP_PARTITION
     if (!isWorkshopUrl(params.src)) e.preventDefault()
   })
 
@@ -138,6 +144,7 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 app.whenReady().then(() => {
+  lockDownWorkshopSession()
   createWindow()
 
   // Register all IPC handlers
