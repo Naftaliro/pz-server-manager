@@ -25,8 +25,11 @@ function VersionNote({ preset, serverBuild, long }: { preset: ModdedPreset; serv
   )
 }
 
+// "14 mods + 1 fix · 709 MB": Workshop mods (what downloads), the fix mods that come with the app
 function sizeLine(p: ModdedPreset) {
-  return `${p.mods.length} mods · ${formatBytes(p.downloadBytes)}`
+  const workshop = p.mods.filter(m => m.workshopId).length
+  const fixes = p.localMods.length
+  return `${workshop} mods${fixes ? ` + ${fixes} fix${fixes === 1 ? '' : 'es'}` : ''} · ${formatBytes(p.downloadBytes)}`
 }
 
 export function ModdedPresetList({ presets, serverBuild, onPick }: { presets: ModdedPreset[]; serverBuild: string | null; onPick: (key: string) => void }) {
