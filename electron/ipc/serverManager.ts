@@ -21,6 +21,7 @@ import { folderSize } from './folderSize'
 import { notify, escapeDiscord, DISCORD_COLORS } from './discord'
 import { mergeIni, mergeSandbox, isGameWritten, type SettingsTree } from '../../shared/gameConfig'
 import { patchStartBat,launcherScript, serverWindowCommand, sendKeysScript } from './winScripts'
+import { takeLines } from './logTail'
 
 // 'starting' = java is up but still loading the world/mods, 'running' = friends can join
 type Status = 'starting' | 'running' | 'stopping' | 'stopped'
@@ -32,6 +33,8 @@ interface ServerProcess {
   serverDir: string
   logPath: string
   logOffset: number
+  // the end of the last read, when it stopped partway through a line
+  logRest: Buffer
   watcher: NodeJS.Timeout | null
   logTimer: NodeJS.Timeout | null
   playersTimer: NodeJS.Timeout | null
@@ -263,7 +266,11 @@ function tailLog(profileId: string, srv: ServerProcess) {
   if (!existsSync(srv.logPath)) return
   let size: number
   try { size = statSync(srv.logPath).size } catch { return }
-  if (size < srv.logOffset) srv.logOffset = 0 // file got recreated on launch
+  if (size < srv.logOffset) {
+    // file got recreated on launch
+    srv.logOffset = 0
+    srv.logRest = Buffer.alloc(0)
+  }
   if (size === srv.logOffset) return
 
   const fd = openSync(srv.logPath, 'r')
@@ -272,7 +279,10 @@ function tailLog(profileId: string, srv: ServerProcess) {
     const buf = Buffer.alloc(length)
     readSync(fd, buf, 0, length, srv.logOffset)
     srv.logOffset += length
-    for (const line of buf.toString('utf-8').split(/\r?\n/)) {
+    // a read can stop halfway through a line, that part waits for the next one
+    const { lines, rest } = takeLines(srv.logRest, buf)
+    srv.logRest = rest
+    for (const line of lines) {
       if (!line.trim()) continue
       emitConsoleOutput(profileId, line)
       if (srv.status === 'starting' && READY_PATTERN.test(line)) markRunning(profileId, srv)
@@ -594,7 +604,7 @@ function reattachProfile(profile: ServerProfile, pid: number) {
   const logPath = join(dataPath, 'server-console.txt')
   const srv: ServerProcess = {
     pid, status: 'starting', serverName, serverDir: profile.serverInstallPath,
-    logPath, logOffset: 0, watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
+    logPath, logOffset: 0, logRest: Buffer.alloc(0), watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
     reattached: true,
   }
   runningServers.set(profile.id, srv)
@@ -883,7 +893,7 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
 
     const srv: ServerProcess = {
       pid: null, status: 'starting', serverName, serverDir,
-      logPath, logOffset, watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
+      logPath, logOffset, logRest: Buffer.alloc(0), watcher: null, logTimer: null, playersTimer: null, modTimer: null, players: [], pendingRestart: null,
     }
     runningServers.set(profileId, srv)
     emitStatusChange(profileId, 'starting')
