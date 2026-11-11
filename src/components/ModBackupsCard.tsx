@@ -27,11 +27,11 @@ export default function ModBackupsCard() {
     if (dir) await configure({ dir })
   }
 
-  // every Workshop mod on any server, once
+  // every Workshop mod on any server, once, from the install that server uses
   const allMods = () => {
-    const seen = new Map<string, string>()
-    for (const p of profiles) for (const m of p.mods) if (m.workshopId && !seen.has(m.workshopId)) seen.set(m.workshopId, m.name)
-    return [...seen].map(([workshopId, name]) => ({ workshopId, name }))
+    const seen = new Map<string, { name: string; installDir: string }>()
+    for (const p of profiles) for (const m of p.mods) if (m.workshopId && !seen.has(m.workshopId)) seen.set(m.workshopId, { name: m.name, installDir: p.serverInstallPath })
+    return [...seen].map(([workshopId, m]) => ({ workshopId, ...m }))
   }
 
   const backupNow = async () => {

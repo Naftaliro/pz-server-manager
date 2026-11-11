@@ -143,9 +143,11 @@ export function downloadAndScan(profileId: string, ids: string[]): Promise<void>
   workshopIds.forEach(id => setModDownload(id, { state: 'queued' }))
 
   const job = downloading.then(async () => {
+    // into this server's own install, which isn't always the one in App settings
+    const installDir = useAppStore.getState().profiles.find(p => p.id === profileId)?.serverInstallPath
     const result = await window.electronAPI.steamcmd.downloadMods(workshopIds, (e) => {
       setModDownload(e.workshopId, { state: e.state, bytes: e.bytes, message: e.message })
-    })
+    }, installDir)
     if (!result.success && result.message) {
       workshopIds.forEach(id => setModDownload(id, { state: 'failed', message: result.message }))
     }

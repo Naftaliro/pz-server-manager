@@ -8,6 +8,7 @@ import { workshopContentDir, scanModFolders, listDirs } from './modManager'
 import { resolveDataPath } from './serverManager'
 import { folderSize, forgetFolderSize } from './folderSize'
 import { isWorkshopId, type ModInfo } from '../../shared/modCore'
+import { knownInstalls, sameInstall } from './steamcmd'
 
 // Mod backups: a copy of every Workshop mod the server downloads, in one folder. If a mod
 // gets pulled from the Workshop, or an update breaks something, the saved copy can be put
@@ -55,10 +56,11 @@ function versions(workshopId: string): Array<BackupMeta & { dir: string }> {
 // one at a time, a big mod can take a while to copy
 let queue: Promise<unknown> = Promise.resolve()
 
-export function backupItem(workshopId: string, name?: string): Promise<'saved' | 'same' | 'missing'> {
+// installDir: the server install the mod was downloaded into (each server can have its own)
+export function backupItem(workshopId: string, name?: string, installDir = loadSettings().serverInstallPath): Promise<'saved' | 'same' | 'missing'> {
   const job = queue.then(async () => {
     if (!isWorkshopId(workshopId)) return 'missing' as const
-    const src = join(workshopContentDir(loadSettings().serverInstallPath), workshopId)
+    const src = join(workshopContentDir(installDir), workshopId)
     if (!existsSync(src)) return 'missing' as const
     const s = await stamp(src)
     const have = versions(workshopId)
@@ -77,9 +79,9 @@ export function backupItem(workshopId: string, name?: string): Promise<'saved' |
 }
 
 // after SteamCMD downloads, when backups are on
-export function backupAfterDownload(workshopIds: string[]) {
+export function backupAfterDownload(workshopIds: string[], installDir?: string) {
   if (!loadSettings().modBackups) return
-  for (const id of workshopIds) void backupItem(id).catch(() => undefined)
+  for (const id of workshopIds) void backupItem(id, undefined, installDir).catch(() => undefined)
 }
 
 export function listBackups(): Record<string, { name?: string; savedAt: string; versions: number }> {
@@ -144,10 +146,13 @@ export function setupModBackupHandlers() {
     return {}
   }))
 
-  ipcMain.handle('modBackups:backupNow', wrap(async (items: Array<{ workshopId: string; name?: string }>) => {
+  ipcMain.handle('modBackups:backupNow', wrap(async (items: Array<{ workshopId: string; name?: string; installDir?: string }>) => {
     let saved = 0, same = 0, missing = 0
+    const installs = knownInstalls()
     for (const it of items) {
-      const r = await backupItem(it.workshopId, it.name)
+      // from one of the server installs only, the window can't point this at any folder
+      const dir = installs.find(d => typeof it.installDir === 'string' && sameInstall(d, it.installDir))
+      const r = await backupItem(it.workshopId, it.name, dir)
       if (r === 'saved') saved++; else if (r === 'same') same++; else missing++
     }
     return { saved, same, missing }
