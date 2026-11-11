@@ -210,7 +210,7 @@ function ServerCard({ server, gameFound, game, onChange }: { server: PlayServer;
           <p className="text-pz-text flex items-start gap-2">
             <AlertTriangle size={14} className="text-pz-yellow flex-shrink-0 mt-0.5" />
             <span>
-              This server runs {version.branch === 'public' ? 'the normal version of the game' : <>game {hostVersion || version.branch} (the "{version.branch}" version)</>},
+              This server runs {version.branch === 'public' ? 'the normal version of the game' : hostVersion && hostVersion !== version.branch ? <>game {hostVersion} (the "{version.branch}" version)</> : <>game {version.branch}</>},
               and your game is on {game?.branch === 'public' ? 'the normal version' : `"${game?.branch}"`}. You can't join until they match.
             </span>
           </p>

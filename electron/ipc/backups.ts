@@ -104,6 +104,15 @@ async function saveFirst(profileId: string): Promise<boolean> {
 
 // ── Making backups ────────────────────────────────────────────────────────────
 
+// SteamCMD's " Update state (0x61) downloading, progress: 42.17 (...)" as "<what>: downloading 42%".
+// Its last line is "(0x0) unknown, progress: 0.00", which says nothing
+function steamProgress(line: string, what: string): string {
+  const m = line.match(/Update state \(0x[0-9a-f]+\)\s*([a-z ]+?),\s*progress:\s*([\d.]+)/i)
+  if (!m || /unknown/i.test(m[1])) return `${what}...`
+  const stage = m[1].trim().replace(/^verifying update$/i, 'checking files').replace(/^committing$/i, 'installing files')
+  return `${what}: ${stage} ${Math.round(parseFloat(m[2]))}%`
+}
+
 const mb = (bytes: number) => (bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.max(0.1, Math.round(bytes / 1024 / 1024 * 10) / 10)} MB`)
 
 // the backup itself, not queued (callers are already in the queue)
@@ -438,17 +447,15 @@ export function rollback(profileId: string, id: string, opts: RollbackOptions, p
     const settings = loadSettings()
     let switched: RollbackResult['gameChanged']
     if (opts.switchBranch && g.kind === 'switch') {
-      progress(`Switching the game server to ${g.label}${g.downloadBytes ? ` (up to ${mb(g.downloadBytes)} to download)` : ''}. This can take a few minutes...`)
+      const to = g.branch === 'public' ? `the normal version${g.version ? ` (${g.version})` : ''}` : g.label
+      progress(`Switching the game server to ${to}${g.downloadBytes ? ` (up to ${mb(g.downloadBytes)} to download)` : ''}. This can take a few minutes...`)
       hookSkips.add(profileId)
       try {
         const exe = await ensureSteamCmd(settings.steamcmdDir)
-        const r = await runServerInstall(exe, install, (line) => {
-          const m = line.match(/Update state \(0x[0-9a-f]+\)\s*([a-z ]+?),\s*progress:\s*([\d.]+)/i)
-          if (m) progress(`Switching the game server to ${g.label}: ${m[1].trim()} ${Math.round(parseFloat(m[2]))}%`)
-        }, true, profile.buildVersion, opts.switchBranch)
-        if (!r.success) return fail(`Couldn't switch the game server to ${g.label}: ${r.message}. Nothing else was changed.`)
+        const r = await runServerInstall(exe, install, (line) => progress(steamProgress(line, `Switching the game server to ${to}`)), true, profile.buildVersion, opts.switchBranch)
+        if (!r.success) return fail(`Couldn't switch the game server to ${to}: ${r.message}. Nothing else was changed.`)
       } catch (e) {
-        return fail(`Couldn't switch the game server to ${g.label}: ${e instanceof Error ? e.message : String(e)}. Nothing else was changed.`)
+        return fail(`Couldn't switch the game server to ${to}: ${e instanceof Error ? e.message : String(e)}. Nothing else was changed.`)
       } finally {
         hookSkips.delete(profileId)
       }
@@ -661,10 +668,7 @@ export function setupBackupHandlers(mainWindow: BrowserWindow | null) {
       await Promise.all(wasRunning.map(p => warnAndStop(p.id, Math.max(0, Math.min(10, opts.warnMinutes ?? 1)), 'for a game update', progress)))
       progress('Backing up the worlds...')
       const exe = await ensureSteamCmd(loadSettings().steamcmdDir)
-      const r = await runServerInstall(exe, installDir, (line) => {
-        const m = line.match(/Update state \(0x[0-9a-f]+\)\s*([a-z ]+?),\s*progress:\s*([\d.]+)/i)
-        progress(m ? `Updating the game server: ${m[1].trim()} ${Math.round(parseFloat(m[2]))}%` : 'Updating the game server...')
-      }, true, servers[0]?.buildVersion || loadSettings().buildVersion, opts.branch || undefined)
+      const r = await runServerInstall(exe, installDir, (line) => progress(steamProgress(line, 'Updating the game server')), true, servers[0]?.buildVersion || loadSettings().buildVersion, opts.branch || undefined)
       if (r.success && wasRunning.length) {
         progress('Starting the servers again...')
         for (const p of wasRunning) await startServer(p.id)
