@@ -100,6 +100,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     backupNow: (profileId: string) => ipcRenderer.invoke('server:backupNow', profileId),
     restoreBackup: (profileId: string, name: string) => ipcRenderer.invoke('server:restoreBackup', profileId, name),
     openBackups: (profileId: string) => ipcRenderer.invoke('server:openBackups', profileId),
+    dataFolder: (profileId: string) => ipcRenderer.invoke('server:dataFolder', profileId),
+    useOwnDataFolder: (profileId: string) => ipcRenderer.invoke('server:useOwnDataFolder', profileId),
     onModUpdates: (callback: (profileId: string, names: string[]) => void) => {
       const handler = (_e: unknown, profileId: string, names: string[]) => callback(profileId, names)
       ipcRenderer.on('server:modUpdates', handler)

@@ -22,6 +22,9 @@ import { notify, escapeDiscord, DISCORD_COLORS } from './discord'
 import { mergeIni, mergeSandbox, isGameWritten, type SettingsTree } from '../../shared/gameConfig'
 import { patchStartBat,launcherScript, serverWindowCommand, sendKeysScript } from './winScripts'
 import { takeLines } from './logTail'
+import { resolveDataPath, setupDataFolderHandlers } from './dataFolder'
+import { syncLocalMods } from './localMods'
+import { sharingWith, sameFolder } from '../../shared/dataFolder'
 import { StartWatch, quotedScriptLine, startFailureHint, requiredModHint, isProgressLine, type StartFailure } from './serverLog'
 
 // 'starting' = java is up but still loading the world/mods, 'running' = friends can join
@@ -66,12 +69,9 @@ const recentProblems = new Map<string, Array<{ hint: string; line: string; at: n
 let mainWindowRef: BrowserWindow | null = null
 
 // ---------------------------------------------------------------------------
-// Paths
+// Paths: each server's data folder (world, settings, db, log), see dataFolder.ts
 // ---------------------------------------------------------------------------
-export function resolveDataPath(worldSavePath?: string): string {
-  const raw = worldSavePath || '%USERPROFILE%\\Zomboid'
-  return raw.replace(/%USERPROFILE%/gi, process.env.USERPROFILE || process.env.HOME || '')
-}
+export { resolveDataPath }
 
 // ---------------------------------------------------------------------------
 // Mods: B42 wants Mods=\ModA;\ModB, B41 wants Mods=ModA;ModB
@@ -882,13 +882,27 @@ async function preflight(profileId: string): Promise<PreflightIssue[]> {
   // <data> has the same mods\<Mod>\42\mod.info layout as a workshop item, so the same scan works
   const localMods = profile.mods.filter(m => !m.workshopId)
   if (localMods.length > 0) {
-    const installedLocal = new Set((await scanWorkshopItem(resolveDataPath(profile.worldSavePath))).map(i => i.id))
+    // a server with its own folder gets the ones sitting in the shared Zomboid\mods first
+    await syncLocalMods(profile).catch(() => undefined)
+    const dataPath = resolveDataPath(profile.worldSavePath)
+    const installedLocal = new Set((await scanWorkshopItem(dataPath)).map(i => i.id))
     for (const m of localMods) {
       const absent = enabledIds(m).filter(id => !installedLocal.has(id))
       if (absent.length > 0) {
-        issues.push({ level: 'error', message: `Local mod "${m.name}" isn't in your Zomboid\\mods folder (${absent.join(', ')}).` })
+        issues.push({ level: 'error', message: `Local mod "${m.name}" isn't in this server's mods folder, ${join(dataPath, 'mods')} (${absent.join(', ')}).` })
       }
     }
+  }
+
+  // two servers with one data folder write one log, so each sees the other's (and the
+  // game's own backups rotate across both)
+  const sharing = sharingWith(profile, listProfiles(), process.env).filter(p => runningServers.has(p.id))
+  for (const other of sharing) {
+    issues.push({
+      level: 'warning',
+      message: `"${other.name}" is running and uses the same data folder as this server, so their consoles, start checks and the game's own backups get mixed up. Give this server its own folder on its Settings tab, or stop "${other.name}" first.`,
+      fix: 'open-settings',
+    })
   }
 
   // requirements from the downloaded mod.info files (fresh scan, in case files changed)
@@ -1012,11 +1026,15 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
       emitConsoleOutput(profileId, `[Knox] ⚠ Couldn't patch StartServer64.bat, using stock one: ${e instanceof Error ? e.message : String(e)}`)
     }
 
-    // -cachedir points PZ at a custom data folder so it reads OUR named config files
+    // local mods it uses that are only in the shared Zomboid\mods yet
+    const synced = await syncLocalMods(profile).catch(() => [])
+    if (synced.length) emitConsoleOutput(profileId, `[Knox] ✓ Copied local mods into this server's folder: ${synced.join(', ')}`)
+
+    // -cachedir always, so the game uses this server's data folder (world, db, log, its own
+    // backups) and nothing else, whatever its default is
     const launcherPath = join(serverDir, `_pzm_launch_${serverName}.bat`)
     writeFileSync(launcherPath, launcherScript({
-      serverName, serverDir, startBat: startBatName, adminPassword,
-      cacheDir: dataPath !== resolveDataPath() ? dataPath : undefined,
+      serverName, serverDir, startBat: startBatName, adminPassword, cacheDir: dataPath,
     }))
 
     if (profile.backupsEnabled !== false) {
@@ -1032,10 +1050,17 @@ async function startServer(profileId: string): Promise<{ success: boolean; messa
     // so clear it (PZ makes a fresh one) or skip past it if something has it locked
     const logPath = join(dataPath, 'server-console.txt')
     let logOffset = 0
-    try {
-      if (existsSync(logPath)) unlinkSync(logPath)
-    } catch {
-      try { logOffset = statSync(logPath).size } catch { /* gone already */ }
+    // another running server with the same data folder is writing that log right now
+    const logInUse = [...runningServers.values()].find(s => sameFolder(s.logPath, logPath))
+    if (logInUse) {
+      emitConsoleOutput(profileId, `[Knox] ⚠ "${logInUse.serverName}" is running with the same data folder, so both servers write one log. Give this server its own folder (Settings tab) to keep them apart.`)
+      try { logOffset = statSync(logPath).size } catch { /* not there yet */ }
+    } else {
+      try {
+        if (existsSync(logPath)) unlinkSync(logPath)
+      } catch {
+        try { logOffset = statSync(logPath).size } catch { /* gone already */ }
+      }
     }
 
     // a window left open by the last crash or failed start has been read by now
@@ -1230,6 +1255,12 @@ export function setupServerHandlers(mainWindow: BrowserWindow | null) {
   })
 
   ipcMain.handle('server:preflight', async (_event, profileId: string) => preflight(profileId))
+
+  // moving to its own data folder only while it's off (also when the app lost track of it)
+  setupDataFolderHandlers(async (profileId) => {
+    const profile = getProfile(profileId)
+    return runningServers.has(profileId) || (!!profile && !!(await findServerPid(getServerName(profile))))
+  })
 
   // kick / ban / admin from the players list
   // everyone with an account on the server, banned or not (from the game's database)

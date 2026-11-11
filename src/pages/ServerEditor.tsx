@@ -338,7 +338,7 @@ function BasicsTab({ profile, form, set, errors }: {
           )}
           {pathStatus === 'notfound' && <p className="text-xs text-pz-red mt-1 flex items-center gap-1"><XCircle size={12} /> No StartServer64.bat in that folder.</p>}
         </Field>
-        <Field label="Zomboid folder (optional)" hint="Where the world and settings files live. Leave empty for the usual %USERPROFILE%\Zomboid.">
+        <Field label="Data folder" hint={'Where the world, settings, players and log live. New servers get their own in Zomboid\\Knox servers. Empty = the shared %USERPROFILE%\\Zomboid. Changing it doesn\'t move the world, use "Give this server its own folder" on the Settings tab for that.'}>
           <div className="flex gap-2">
             <input value={form.worldSavePath || ''} onChange={e => set('worldSavePath', e.target.value)} className="input" placeholder="%USERPROFILE%\Zomboid" />
             <button onClick={() => browse('worldSavePath')} className="btn-outline flex-shrink-0" title="Pick the folder"><FolderOpen size={14} /></button>

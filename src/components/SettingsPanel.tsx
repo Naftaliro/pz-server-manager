@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Save, Sliders, FileCode2, Settings2, Copy, Trash2, Skull, CheckCircle, Eye, EyeOff, Send, Loader, AlertCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { Save, Sliders, FileCode2, Settings2, Copy, Trash2, Skull, CheckCircle, Eye, EyeOff, Send, Loader, AlertCircle, ChevronDown, ChevronRight, FolderOpen, FolderInput } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import type { ServerProfile, BuildVersion } from '../store/useAppStore'
 import ConfirmDialog from './ConfirmDialog'
@@ -251,6 +251,8 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
           </div>
         </Card>
 
+        <DataFolderCard profile={profile} running={running} />
+
         <Card title="Server">
           <div className="flex gap-2 flex-wrap">
             <button onClick={duplicate} className="btn-outline"><Copy size={14} /> Make a copy</button>
@@ -284,7 +286,7 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
       <ConfirmDialog
         isOpen={deleteOpen}
         title="Delete this server?"
-        message="The server is removed from the app. Your world save is NOT deleted, it stays in your Zomboid folder."
+        message="The server is removed from the app. Your world save is NOT deleted, it stays in the server's data folder."
         confirmLabel="Delete"
         danger
         onConfirm={remove}
@@ -300,6 +302,64 @@ export default function SettingsPanel({ profile }: { profile: ServerProfile }) {
         onCancel={() => { setLeaveOpen(false); leaveGuard.stay() }}
       />
     </div>
+  )
+}
+
+// Where the world, settings, players and log live. Servers made before 1.6 share the one
+// Zomboid folder; this moves one into a folder of its own (a copy, checked, then switched to)
+function DataFolderCard({ profile, running }: { profile: ServerProfile; running: boolean }) {
+  const { setProfiles } = useAppStore()
+  const [info, setInfo] = useState<{ path: string; shared: boolean; sharedWith: string[] } | null>(null)
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => { window.electronAPI.server.dataFolder(profile.id).then(setInfo).catch(() => undefined) }, [profile.id, profile.worldSavePath])
+
+  const move = async () => {
+    setConfirm(false)
+    setBusy(true)
+    try {
+      const r = await window.electronAPI.server.useOwnDataFolder(profile.id)
+      setResult({ ok: r.success, text: r.message })
+      if (r.success) setProfiles(await window.electronAPI.profiles.list())
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!info) return null
+  const shares = info.shared || info.sharedWith.length > 0
+  return (
+    <Card title="Data folder">
+      <p className="text-xs text-pz-subtext -mt-1">Where this server keeps its world, settings, players and log.</p>
+      <div className="flex items-center gap-2">
+        <code className="text-xs text-pz-text bg-pz-darker border border-pz-border rounded-md px-3 py-1.5 flex-1 truncate select-text" title={info.path}>{info.path}</code>
+        <button onClick={() => window.electronAPI.shell.openPath(info.path)} className="btn-outline text-xs flex-shrink-0"><FolderOpen size={12} /> Open folder</button>
+      </div>
+      {shares && (
+        <div className="text-xs text-pz-subtext space-y-2">
+          <p>
+            {info.shared ? "It's the shared Zomboid folder" : 'Other servers use this folder too'}
+            {info.sharedWith.length > 0 ? `, together with ${info.sharedWith.map(n => `"${n}"`).join(', ')}` : ''}.
+            {' '}Two servers running from one folder write one log, so each one's console and start check shows the other's, and the game's own backups rotate across both.
+          </p>
+          <button onClick={() => setConfirm(true)} disabled={running || busy} className="btn-outline text-xs disabled:opacity-40" title={running ? 'Stop the server first' : ''}>
+            {busy ? <Loader size={12} className="animate-spin" /> : <FolderInput size={12} />} {busy ? 'Copying...' : 'Give this server its own folder'}
+          </button>
+          {running && <p className="text-pz-muted">Stop the server first.</p>}
+        </div>
+      )}
+      {result && <p className={`text-xs ${result.ok ? 'text-pz-green' : 'text-pz-red'}`}>{result.text}</p>}
+      <ConfirmDialog
+        isOpen={confirm}
+        title="Give this server its own folder?"
+        message={`Its world, settings, player list, the app's backups of it and your local mods get copied into Zomboid\\Knox servers\\${getServerName(profile)}. The app checks the copy is complete before it switches over, and the originals stay where they are.`}
+        confirmLabel="Copy and switch"
+        onConfirm={move}
+        onCancel={() => setConfirm(false)}
+      />
+    </Card>
   )
 }
 

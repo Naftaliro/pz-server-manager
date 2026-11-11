@@ -45,7 +45,7 @@ export interface LauncherOptions {
   startBat: string
   // can't contain " (checked before starting)
   adminPassword: string
-  // -cachedir, only when the data folder isn't the default one
+  // -cachedir: the server's data folder (the app always passes it)
   cacheDir?: string
 }
 

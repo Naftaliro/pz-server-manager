@@ -107,7 +107,7 @@ export default function CreateServer() {
         updatedAt: new Date().toISOString(),
       })
       if (pack.localMods.length > 0) {
-        const fixes = await window.electronAPI.client.installPackFixes(path)
+        const fixes = await window.electronAPI.client.installPackFixes(path, saved.worldSavePath)
         if (!fixes.success) setPackError(`The server was made, but its fix mods couldn't be installed: ${fixes.message}`)
       }
       const workshopIds = host.mods.map(m => m.workshopId).filter(Boolean)
