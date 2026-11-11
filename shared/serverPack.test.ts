@@ -202,3 +202,15 @@ describe('settings from a pack someone else made', () => {
     expect(validatePack(pack({ host: badHost }), true).join(' ')).toMatch(/mod list for hosting/)
   })
 })
+
+// security review F4: the pack maker shouldn't know or pick the copy's secrets
+describe('private settings in a pack', () => {
+  it('never come along when hosting a copy', async () => {
+    const { cleanHostSettings, PRIVATE_INI_KEYS } = await import('./serverPack')
+    const ini = Object.fromEntries([...PRIVATE_INI_KEYS].map(k => [k, 'from-the-pack']))
+    const r = cleanHostSettings({ ini: { ...ini, RCONPassword: 'attacker-knows-this', PVP: true }, sandbox: {} })
+    expect(r.ini).toEqual({ PVP: true })
+    // left out quietly: packs this app makes never have them
+    expect(r.dropped).toEqual([])
+  })
+})

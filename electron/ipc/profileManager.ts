@@ -6,6 +6,7 @@ import { loadSettings } from './appSettings'
 import { withValidWorkshopIds, type ModInfo, type ModSnapshot } from '../../shared/modCore'
 import { dropOldSandboxDefaults, SANDBOX_SETTINGS_VERSION } from '../../shared/profileMigrations'
 import type { SettingsTree } from '../../shared/gameConfig'
+import { SECRET_INI_KEYS } from '../../shared/serverPack'
 
 export interface ModEntry {
   workshopId: string
@@ -267,11 +268,13 @@ export function setupProfileHandlers() {
         buildVersion: profile.buildVersion || settings.buildVersion || 'b42',
         serverInstallPath: profile.serverInstallPath || settings.serverInstallPath,
         iniSettings: {
-          ...mergedIni,
+          // whatever the new server was made from (someone's server pack, a preset), its
+          // secrets are its own: nobody else gets to pick or know them
+          ...Object.fromEntries(Object.entries(mergedIni).filter(([k]) => !SECRET_INI_KEYS.has(k))),
           ResetID: randomId(),
           ServerPlayerID: randomId(),
           // the app talks to the server over RCON, so every server gets its own password
-          RCONPassword: (mergedIni.RCONPassword as string) || randomPassword(),
+          RCONPassword: randomPassword(),
         },
         sandboxSettings: mergedSandbox,
         // new profiles only hold what was actually picked

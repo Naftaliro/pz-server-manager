@@ -69,6 +69,13 @@ export const PRIVATE_INI_KEYS = new Set([
   'server_browser_announced_ip', 'Mods', 'WorkshopItems', 'Map', 'PublicName', 'AdminPassword',
 ])
 
+// The secrets and per-server ids among those. A new server always makes its own, whatever
+// settings it was made from (a pack, a preset)
+export const SECRET_INI_KEYS = new Set([
+  'RCONPassword', 'AdminPassword', 'DiscordToken', 'DiscordChannel', 'DiscordChannelID', 'DiscordChatChannel',
+  'DiscordLogChannel', 'DiscordCommandChannel', 'WebhookAddress', 'ResetID', 'ServerPlayerID',
+])
+
 export function publicIni(values: Record<string, unknown>): Record<string, string | number | boolean> {
   const out: Record<string, string | number | boolean> = {}
   for (const [k, v] of Object.entries(values)) {
@@ -104,11 +111,15 @@ function cleanTree(tree: Record<string, unknown>, path: string[], dropped: strin
  * made the pack: a setting name that isn't a plain word could write extra lines into the .ini
  * or code into SandboxVars.lua (the server runs that file), and an .ini value can't have a
  * line break in it. Those are left out, dropped lists them so the user can be told.
+ * Private settings (PRIVATE_INI_KEYS) never come from someone else's pack either: the pack
+ * maker would know the copy's RCON password. The copy makes its own, quietly, since packs
+ * from this app never have them.
  */
 export function cleanHostSettings(host: Pick<PackHost, 'ini' | 'sandbox'>): { ini: PackHost['ini']; sandbox: PackHost['sandbox']; dropped: string[] } {
   const dropped: string[] = []
   const ini: PackHost['ini'] = {}
   for (const [k, v] of Object.entries(host.ini || {})) {
+    if (PRIVATE_INI_KEYS.has(k)) continue
     const ok = isSettingKey(k) && (typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && !/[\r\n\0]/.test(v)))
     if (ok) ini[k] = v
     else dropped.push(shownKey([k]))

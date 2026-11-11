@@ -7,7 +7,7 @@ import type { SettingsTree } from '../../shared/gameConfig'
 import { DEV_PRESETS } from '../lib/devPresets'
 import { saveProfile, RECOMMENDED_MEMORY_MB } from '../lib/profile'
 import { downloadAndScan } from '../lib/mods'
-import { suggestPassword, type ServerPack } from '../../shared/serverPack'
+import { suggestPassword, publicIni, type ServerPack } from '../../shared/serverPack'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 type Step = 0 | 1 | 2
@@ -88,13 +88,15 @@ export default function CreateServer() {
         // their PC might have more memory to spare than this one
         memory: Math.min(host.memory || memory, memory),
         adminPassword: suggestPassword(),
-        serverPassword: pack.server.password || '',
+        // the pack's password is for joining their server, the copy gets one of its own
+        serverPassword: pack.server.password ? suggestPassword() : '',
         maxPlayers: host.maxPlayers,
         mods: host.mods.map(m => ({ workshopId: m.workshopId, modId: m.modId, name: m.name, thumbnailUrl: m.thumbnailUrl })),
         mapOrder: host.mapOrder,
         launchMode: 'managed',
         iniSettings: {
-          ...host.ini,
+          // nothing private from their server (passwords, ports, ids): the copy makes its own
+          ...publicIni(host.ini),
           ...(host.baseMap ? { Map: host.baseMap } : {}),
           PublicName: copyName,
           RCONPort: nextRconPort(),
