@@ -103,7 +103,7 @@ export default function InstallRunner({ steamcmdDir, serverDir, buildVersion, mo
       {phase === 'error' && (
         <div className="flex items-start gap-2 text-sm text-pz-red">
           <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
-          <span>Something went wrong: {error}. Check your internet connection and that the folder isn't read-only, then try again.</span>
+          <span>Something went wrong: {error}{/[.!]$/.test(error) ? '' : '.'}</span>
         </div>
       )}
 

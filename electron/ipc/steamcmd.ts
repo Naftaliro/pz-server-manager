@@ -79,7 +79,7 @@ export function setupSteamCmdHandlers() {
       return { success: true, path, message: 'SteamCMD ready' }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error)
-      return { success: false, message: `Failed to download SteamCMD: ${msg}` }
+      return { success: false, message: `Couldn't download SteamCMD (${msg}). Check your internet connection and try again` }
     }
   })
 
@@ -200,7 +200,37 @@ async function ensureSteamCmd(targetDir: string): Promise<string> {
   await downloadFile(STEAMCMD_URL, zipPath)
   await runCommand('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', expandArchiveScript(zipPath, targetDir)])
   fs.unlinkSync(zipPath)
+  await bootstrapSteamCmd(exe)
   return exe
+}
+
+// A fresh steamcmd.exe is only the updater: its first run downloads the rest of SteamCMD and
+// exits (code 7) without doing anything it was asked to. Get that over with right after
+// unzipping, so the first real job (the 7 GB server download) doesn't fail. A run that has
+// nothing left to update exits 0
+async function bootstrapSteamCmd(exe: string): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const code = await runSteamCmd(exe, ['+quit'], () => undefined).catch(() => null)
+    if (code === 0) return
+  }
+}
+
+// What went wrong when SteamCMD stopped without installing the server, in plain words.
+// Code 7 is it restarting after updating itself, not a connection problem
+export function installFailureMessage(code: number | null, output: string[], installDir: string): string {
+  const reason = output.map(l => l.match(/ERROR! Failed to (?:install|update) app '\d+' \(([^)]+)\)/i)?.[1]).find(Boolean)
+  if (reason && /disk write|write failure|access denied/i.test(reason)) {
+    return `Windows wouldn't let SteamCMD write to ${installDir}. Pick a folder you can write to (not inside Program Files) and try again`
+  }
+  if (reason && /disk space/i.test(reason)) {
+    return `There isn't enough free space for the server in ${installDir} (it needs about 8 GB)`
+  }
+  if ((reason && /connect|timeout|network/i.test(reason)) || output.some(l => /FAILED \(No Connection\)|Connecting anonymously to Steam Public\.\.\.\s*FAILED|Timed out waiting/i.test(l))) {
+    return "SteamCMD couldn't reach Steam. Check your internet connection and try again"
+  }
+  if (reason) return `SteamCMD couldn't install the server: ${reason}. Try again, the details are under "Show details"`
+  if (code === 7) return 'SteamCMD stopped after updating itself, twice in a row. Try again, it usually works the next time'
+  return `SteamCMD stopped without installing the server (exit code ${code ?? 'unknown'}). Try again, the details are under "Show details"`
 }
 
 // Run steamcmd with the given +commands, feeding each output line to onLine. No shell: the
@@ -243,14 +273,22 @@ function runServerInstall(
       sendProgress(`Install directory: ${installDir}`)
       sendProgress(`Branch: ${buildVersion === 'b41' ? 'legacy41 (Build 41)' : 'public (Build 42)'}`)
 
-      const code = await runSteamCmd(steamcmdPath, args, sendProgress)
+      const output: string[] = []
+      const onLine = (line: string) => { output.push(line); if (output.length > 300) output.shift(); sendProgress(line) }
+      let code = await runSteamCmd(steamcmdPath, args, onLine)
+      // steamcmd exits 7 when it updated itself instead of doing the job (a SteamCMD folder from
+      // before the app bootstrapped it, or an update Valve pushed since): run it again, once
+      if (code === 7 && !isServerInstalled(installDir)) {
+        sendProgress('SteamCMD updated itself, starting the download again...')
+        code = await runSteamCmd(steamcmdPath, args, onLine)
+      }
 
       // steamcmd exits 7 after a successful self-update, so trust the files over the exit code
       if (isServerInstalled(installDir) && (code === 0 || code === 7)) {
         sendProgress('Installation complete!')
         return { success: true, message: isUpdate ? 'Server updated successfully' : 'Server installed successfully' }
       }
-      throw new Error(`SteamCMD exited with code ${code}`)
+      throw new Error(installFailureMessage(code, output, installDir))
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error)
       return { success: false, message: msg }
