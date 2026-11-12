@@ -1,0 +1,28 @@
+name: Idea or request
+description: something you wish the app did
+labels: ["idea"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: what are you trying to do?
+      description: the thing you want to get done, not the button you want. "my friends keep joining on the wrong version" is more useful than "add a version popup".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: how would you like it to work?
+      description: optional. rough ideas are fine.
+    validations:
+      required: false
+  - type: dropdown
+    id: who
+    attributes:
+      label: who's it for?
+      options:
+        - people hosting a server
+        - people joining a friend's server
+        - both
+    validations:
+      required: false

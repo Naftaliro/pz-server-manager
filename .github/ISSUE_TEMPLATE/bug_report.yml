@@ -1,0 +1,92 @@
+name: Something's broken
+description: the app, a server or joining a friend isn't working
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        thanks for reporting it. the more of this you fill in, the faster it gets fixed.
+
+        **this is public.** anyone can read it, so don't paste passwords, your public IP, your Steam ID or anything else you'd rather keep to yourself.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: what happened?
+      description: what you did, what you expected, and what happened instead. error messages word for word if there were any.
+      placeholder: |
+        i clicked start, it said "Starting up..." for 10 minutes and then the server stopped.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: how do i make it happen?
+      description: the steps, if you know them. "it happens every time i ..." is great.
+      placeholder: |
+        1. make a new server with the Rising preset
+        2. add the mod ...
+        3. hit start
+    validations:
+      required: false
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: were you hosting or joining?
+      options:
+        - hosting a server
+        - joining a friend's server (Play)
+        - both / not sure
+        - neither (setup, updates, the app itself)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Knox Launcher version
+      description: app settings → About. it's also at the top of the diagnostics.
+      placeholder: "1.6.0"
+    validations:
+      required: true
+
+  - type: input
+    id: game
+    attributes:
+      label: game version / branch
+      description: the Project Zomboid version, and the Steam branch if it isn't the default one (for example the 42.21 fall-back).
+      placeholder: "42.22.2, default branch"
+    validations:
+      required: false
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: diagnostics
+      description: |
+        app settings → About → **Copy diagnostics**, then paste it here. it has the app and Windows versions, your servers' settings and mod lists, and the end of each server's log.
+
+        it leaves out passwords, public IPs, Steam IDs and your Windows username by itself. **still read it before you post**: it does include your server names, your mod list and up to 150 log lines per server, and player names can show up in those. edit out anything you don't want public.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: anything else?
+      description: screenshots help a lot (blur addresses, passwords and Steam IDs first).
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: before you post
+      options:
+        - label: i read the diagnostics and there's nothing in them i want to keep private
+          required: true
+        - label: i'm on the latest version, or the bug is about updating
+          required: false

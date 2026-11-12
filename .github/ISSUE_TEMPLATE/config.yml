@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Guides (hosting, mods, friends can't join, rollback)
+    url: https://3hz.dev/knox/guides/
+    about: most "friends can't connect" problems are covered here, step by step.
+  - name: Questions and show-and-tell
+    url: https://github.com/Naftaliro/pz-server-manager/discussions
+    about: how do i..., setups, modpacks that work well together.
+  - name: Problems with the game itself
+    url: https://theindiestone.com/forums/
+    about: Knox Launcher is a fan-made tool. bugs in Project Zomboid go to The Indie Stone, not here.
