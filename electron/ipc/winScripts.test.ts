@@ -518,11 +518,13 @@ describe.runIf(process.platform === 'win32')('signatures on Windows', () => {
     tampered[0x2000] ^= 0xff
     writeFileSync(join(dir, 'resources', 'helper.exe'), tampered)
     const sigs = run(folderSignaturesScript(dir)) as SignatureInfo[]
-    const byName = Object.fromEntries(sigs.map(s => [s.path!.slice(dir.length + 1), s.status]))
+    const byName = Object.fromEntries(sigs.map(s => [s.rel, s.status]))
     expect(byName).toEqual({ 'PZ Server Manager.exe': 'Valid', 'ffmpeg.dll': 'NotSigned', 'resources\\helper.exe': 'HashMismatch' })
-    expect(Object.fromEntries(sigs.map(s => [s.rel, s.status]))).toEqual(byName)
+    // the full path can spell the temp folder differently (C:\Users\RUNNER~1 vs C:\Users\runneradmin),
+    // which is why the update check goes by rel
+    for (const s of sigs) expect(s.path!.toLowerCase().endsWith('\\' + s.rel!.toLowerCase())).toBe(true)
     // node.exe isn't ours, so this update wouldn't go in either way
-    expect(updatePackageProblem(sigs, join(dir, 'PZ Server Manager.exe'))).toMatch(/isn't signed by/)
+    expect(updatePackageProblem(sigs, sigs.find(s => s.rel === 'PZ Server Manager.exe')!.path!)).toMatch(/isn't signed by/)
     expect(updatePackageProblem(sigs, join(dir, 'PZ Server Manager.exe'), dir)).toMatch(/isn't signed by/)
   }, 90000)
 })
