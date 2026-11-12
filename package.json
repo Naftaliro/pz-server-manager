@@ -1,6 +1,6 @@
 {
   "name": "pz-server-manager",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Knox Launcher: host Project Zomboid servers and join friends' servers with the same mods",
   "main": "dist-electron/main.js",
   "scripts": {

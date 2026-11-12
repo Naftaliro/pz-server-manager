@@ -48,7 +48,7 @@ body:
     attributes:
       label: Knox Launcher version
       description: app settings → About. it's also at the top of the diagnostics.
-      placeholder: "1.6.0"
+      placeholder: "1.6.1"
     validations:
       required: true
 
